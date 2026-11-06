@@ -4,3 +4,4 @@ recordings/
 *.tmp
 *.log
 .DS_Store
+auth/

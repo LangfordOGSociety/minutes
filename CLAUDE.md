@@ -36,26 +36,73 @@ Zoom, and publish the official video 24-48h later. The goal is having video
 
 ## Status
 
-Built and partially tested, NOT yet run against live Zoom.
+First successful live run 2026-11-05 against a test meeting on the owner's
+own free Zoom account (arm64 image, signed-in session). Not yet run against a
+Langford meeting, a webinar, or for longer than a few minutes.
 
-Tested:
+**Zoom blocks anonymous web-client bots.** Without a signed-in session the
+join API returns `errorCode 9516` ("Automated bots aren't allowed to join this
+meeting... sign in to join"). `zoom-capture login` saves a signed-in session
+(Playwright storage state, no password) to `auth/zoom-auth.json`; pass it with
+`--auth`. A session saved from Chrome on macOS was accepted by Chromium 130 in
+the Linux container. The file holds live session tokens: keep it out of git
+and images (it's in .gitignore and .dockerignore). Joining this way is tied to
+the owner's account; that's an accepted risk.
+
+Verified live:
+- `app.zoom.us/wc/join/<id>?pwd=` lands on the browser client.
+- `#input-for-name` and the "Join" button; `--name` is honored when signed in.
+- Waiting room ("We've let them know you're here") -> `waiting`; admit ->
+  `in_meeting` (footer "Leave" button) -> recording after a 3s settle (the
+  meeting UI flashes for <1s right after the Join click, before the waiting
+  room renders).
+- "This meeting has been ended by host" is a dialog caught via
+  `MARKERS.overlays` -> `ended` -> stitch -> exit 0.
+- Zoom auto-joins computer audio; meeting audio recorded from `zoom.monitor`.
+- No mic reaches the meeting: Chromium sees no usable input device ("Cannot
+  detect your microphone"), so `JOIN_AUDIO` and `MUTE_SELECTOR` never fire.
+  The footer mic button's aria-label is just `audio`, so `MUTE_SELECTOR` would
+  not match it anyway. Re-check this if audio routing changes.
+- `docker stop` closes the part cleanly and stitches.
+- Toasts live in `#notificationManager` (now made transparent via
+  `MARKERS.hideCss`); `--kiosk` had no effect, so the window is shifted up by
+  the browser-UI height instead (`hideBrowserUi`, verified offline on Xvfb,
+  not yet in a live meeting).
+
+Known issue: the image's Node ships tzdata 2024a, which predates BC's move to
+permanent daylight time (2026-11-01). A `--start` without an offset is read
+as UTC-8 instead of UTC-7, an hour late. Pass an explicit offset
+(`--start 2026-11-16T19:00-07:00`) until that's fixed.
+
+Debugging: `CAPTURE_DEBUG=1` writes a screenshot and every frame's HTML to
+`<slug>/debug/NNN-<state>.png|html` on each state change.
+
+Tested offline:
 - Strict TS build, CLI parsing, `webClientUrl()` for /j/, /w/, bare IDs.
 - Stitch: 3 parts incl. one SIGKILLed mid-write -> repaired, chapters with gap
   lengths, correct offsets.
 - Recorder lifecycle with `scripts/fake-ffmpeg.sh`: graceful 'q' stop (~150ms,
   exit 0), detection of ffmpeg dying on its own, new part after a crash.
 
-Untested (needs a real browser + Zoom):
-- `pageAgent` classification and the `__ccSignal` binding across frames.
-- Every regex/selector in `MARKERS`, `JOIN_BUTTON`, `JOIN_AUDIO`, `MUTE_SELECTOR`.
-  These are best guesses at the current web client and are the most likely
-  thing to need fixing. In particular `MARKERS.overlays`: while the meeting UI
-  is up, ended/reconnect text is only matched inside those overlays (so chat
-  and captions can't end a recording). If Zoom's real end-of-meeting dialog
-  or reconnect banner isn't one of them, it will be missed while the footer
-  is still in the DOM.
-- `app.zoom.us/wc/join/<id>` URL form actually landing on the browser client.
-- VAAPI / NVENC paths.
+Interruptions, live run 2026-11-05 (livetest-4):
+- Killed ffmpeg: `ffmpeg_died` within 1.4s, new part in the same session. OK.
+- Killed Chromium: `dead` within 0.5s, part closed, 5s backoff, rejoined in
+  12s (needs the host to admit again if there's a waiting room). OK.
+- Network cut 70s: FAILED before the fix, fixed but not re-run live. Zoom
+  showed "Reconnecting" only in a sr-only role=alert for ~1s, then a
+  full-screen `.loading-layer` ("Meeting Disconnected / Trying to
+  reconnect..."), then after the network returned gave up with a zm-modal
+  "Joining Meeting Timeout or Browser restriction" (Retry / Leave). None of
+  that matched, so the bot stayed `in_meeting` recording black. Now all three
+  are in `MARKERS.reconnect` / `overlays`, and the saved live HTML of the
+  disconnected screen classifies as `reconnecting` offline. Re-run this live:
+  expected `reconnecting` -> 45s -> `feed_lost` -> rejoin.
+
+Still untested live:
+- Webinars (`/w/` links, registration), host-removed, meeting-not-started.
+- Session expiry: how long a saved login lasts, and whether the write-back
+  after each meeting keeps it alive.
+- amd64 image live, VAAPI / NVENC paths.
 
 ## Suggested next steps
 

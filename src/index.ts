@@ -2,12 +2,17 @@
 // 7pm local, not 7pm wherever the container thinks it is.
 process.env.TZ ??= "America/Vancouver";
 
+import { existsSync } from "node:fs";
 import { parseArgs } from "node:util";
+import { login } from "./login.js";
 import { Capture, type Config } from "./runner.js";
 import type { Encoder } from "./recorder.js";
 
 const USAGE = `usage: zoom-capture --link <zoom link or id> --start <ISO datetime> [options]
+       zoom-capture login --auth <file>   sign in once in a browser window, save the session
 
+  --auth <file>            Zoom session from "login" (env CAPTURE_AUTH). Needed
+                           when Zoom blocks anonymous web-client joins.
   --slug <name>            output folder/file name (default meeting-YYYYMMDD-HHMM)
   --name <display name>    name shown in Zoom (default "Recorder")
   --out <dir>              default /recordings
@@ -45,6 +50,7 @@ function parse(): Config {
       fps: { type: "string", default: env.CAPTURE_FPS ?? "30" },
       quality: { type: "string", default: env.CAPTURE_QUALITY ?? "23" },
       encoder: { type: "string", default: env.CAPTURE_ENCODER ?? "x264" },
+      auth: { type: "string", default: env.CAPTURE_AUTH },
       help: { type: "boolean", short: "h" },
     },
     strict: true,
@@ -55,6 +61,8 @@ function parse(): Config {
 
   const start = new Date(v.start);
   if (Number.isNaN(start.getTime())) fail(`can't parse --start ${v.start}`);
+
+  if (v.auth && !existsSync(v.auth)) fail(`--auth file not found: ${v.auth}`);
 
   const encoder = v.encoder as Encoder;
   if (!["x264", "vaapi", "nvenc"].includes(encoder)) fail(`unknown encoder ${encoder}`);
@@ -75,6 +83,8 @@ function parse(): Config {
     tz: env.TZ!,
     out: v.out!,
     displayName: v.name!,
+    auth: v.auth ?? null,
+    debug: /^(1|true|yes)$/i.test(env.CAPTURE_DEBUG ?? ""),
     display: env.DISPLAY ?? ":99",
     sink: env.CAPTURE_SINK ?? "zoom",
     width: num("width", env.CAPTURE_WIDTH ?? "1920"),
@@ -92,6 +102,15 @@ function parse(): Config {
     retryBaseMs: num("retry-base-s", v["retry-base-s"]) * 1_000,
     retryMaxMs: num("retry-max-s", v["retry-max-s"]) * 1_000,
   };
+}
+
+if (process.argv[2] === "login") {
+  const { values } = parseArgs({
+    args: process.argv.slice(3),
+    options: { auth: { type: "string", default: process.env.CAPTURE_AUTH ?? "auth/zoom-auth.json" } },
+    strict: true,
+  });
+  process.exit(await login(values.auth!));
 }
 
 const capture = new Capture(parse());

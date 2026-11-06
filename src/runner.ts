@@ -24,6 +24,7 @@ const log = logger("runner");
 
 const FF_MIN_PART_MS = 10_000;     // a part shorter than this is a fast failure
 const FF_MAX_BACKOFF_MS = 60_000;
+const IN_MEETING_SETTLE_MS = 3_000; // IN_MEETING must hold this long before recording
 
 export interface Config {
   link: string;
@@ -32,6 +33,8 @@ export interface Config {
   tz: string;
   out: string;
   displayName: string;
+  auth: string | null;      // Playwright storage state from `zoom-capture login`
+  debug: boolean;           // dump screenshot + HTML to <dir>/debug on every state change
   display: string;
   sink: string;
   width: number;
@@ -50,7 +53,7 @@ export interface Config {
   retryMaxMs: number;
 }
 
-type SessionResult = "ended" | "interrupted" | "not_started" | "stopped";
+type SessionResult = "ended" | "interrupted" | "not_started" | "stopped" | "blocked";
 
 export class Capture {
   private dir: string;
@@ -64,6 +67,7 @@ export class Capture {
   // as fast failures and push the next start back exponentially.
   private ffFastFails = 0;
   private ffRetryAt = 0;
+  private dumpSeq = 0;
 
   constructor(private cfg: Config) {
     this.dir = path.join(cfg.out, cfg.slug);
@@ -125,7 +129,7 @@ export class Capture {
     while (!this.stopped) {
       attempt++;
       this.event("session_open", { attempt });
-      const session = new ZoomSession(cfg.link, cfg.displayName, cfg.width, cfg.height);
+      const session = new ZoomSession(cfg.link, cfg.displayName, cfg.width, cfg.height, cfg.auth);
       session.onChange = () => this.waker.kick();
       let result: SessionResult = "interrupted";
       try {
@@ -182,6 +186,7 @@ export class Capture {
     let waitingSince: number | null = null;
     let troubleSince: number | null = null;
     let lastState: State | null = null;
+    let inMeetingSince: number | null = null;
 
     while (!this.stopped) {
       const st = await session.state();
@@ -189,14 +194,29 @@ export class Capture {
       if (st !== lastState) {
         this.event("state", { state: st });
         lastState = st;
+        if (cfg.debug) await session.dump(path.join(this.dir, "debug"), `${String(++this.dumpSeq).padStart(3, "0")}-${st}`);
       }
+      inMeetingSince = st === State.IN_MEETING ? (inMeetingSince ?? now) : null;
 
       if (st === State.ENDED) return "ended";
+      if (st === State.BLOCKED) {
+        // Retrying won't help; it needs a (fresh) signed-in session.
+        this.event("blocked", {
+          hint: cfg.auth
+            ? `Zoom rejected the session in ${cfg.auth}; run "zoom-capture login" again`
+            : "Zoom requires sign-in; run \"zoom-capture login\" and pass --auth",
+        });
+        return "blocked";
+      }
       if (st === State.DEAD) return "interrupted";
 
       if (st === State.IN_MEETING) {
         troubleSince = waitingSince = null;
-        if (!this.rec.alive) {
+        // Seen live: right after the Join click the meeting UI flashes for
+        // under a second before the waiting room renders. Don't start a part
+        // until IN_MEETING has held for a moment.
+        const settling = !this.rec.alive && now - inMeetingSince! < IN_MEETING_SETTLE_MS;
+        if (!this.rec.alive && !settling) {
           const cur = this.rec.current;
           if (cur && cur.ended === null) {
             // Died on its own since the last tick. Close it now so the
@@ -217,8 +237,12 @@ export class Capture {
             this.writeManifest();
           }
         }
+        if (settling) {
+          await this.waker.wait(500);
+          continue;
+        }
         await session.advance(st);
-        if (now - this.parts[0].started.getTime() > cfg.maxDurationMs) {
+        if (this.parts.length && now - this.parts[0].started.getTime() > cfg.maxDurationMs) {
           this.event("max_duration_hit");
           return "ended";
         }
