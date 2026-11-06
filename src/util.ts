@@ -61,3 +61,13 @@ export function logger(name: string) {
     error: (m: string, ...r: unknown[]) => out("ERROR", m, r),
   };
 }
+
+/** Folder/file name for a meeting when none is given: meeting-YYYYMMDD-HHMM (local time). */
+export function defaultSlug(start: Date): string {
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `meeting-${start.getFullYear()}${pad(start.getMonth() + 1)}${pad(start.getDate())}` +
+    `-${pad(start.getHours())}${pad(start.getMinutes())}`;
+}
+
+/** Slugs become directory and file names, so keep them boring. */
+export const SLUG_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$/;

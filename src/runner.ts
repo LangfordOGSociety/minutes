@@ -53,7 +53,7 @@ export interface Config {
   retryMaxMs: number;
 }
 
-type SessionResult = "ended" | "interrupted" | "not_started" | "stopped" | "blocked";
+type SessionResult = "ended" | "interrupted" | "not_started" | "stopped" | "blocked" | "invalid_link";
 
 export class Capture {
   private dir: string;
@@ -116,6 +116,15 @@ export class Capture {
 
   async run(): Promise<number> {
     const { cfg } = this;
+
+    // Make a wrong UTC offset obvious up front (stale tzdata got BC's 2026
+    // switch to permanent UTC-7 wrong by an hour).
+    this.event("config", {
+      tz: cfg.tz,
+      tzdata: process.versions.tz ?? "unknown",
+      scheduledStartLocal: cfg.start.toString(),
+      scheduledStartUtc: cfg.start.toISOString(),
+    });
 
     const begin = cfg.start.getTime() - cfg.leadMs;
     if (begin > Date.now()) {
@@ -207,6 +216,10 @@ export class Capture {
             : "Zoom requires sign-in; run \"zoom-capture login\" and pass --auth",
         });
         return "blocked";
+      }
+      if (st === State.INVALID) {
+        this.event("invalid_link", { hint: "Zoom says this meeting link or ID is invalid; check it" });
+        return "invalid_link";
       }
       if (st === State.DEAD) return "interrupted";
 

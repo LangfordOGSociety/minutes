@@ -27,12 +27,13 @@ export enum State {
   RECONNECTING = "reconnecting", // in meeting, Zoom says the link is bad
   ENDED = "ended",
   BLOCKED = "blocked",           // Zoom refused us (bot check, sign-in required)
+  INVALID = "invalid",           // the link/ID doesn't point at a meeting
   DEAD = "dead",                 // browser or page gone
 }
 
 // When frames disagree, the most significant answer wins.
 const PRIORITY: Record<string, number> = {
-  loading: 0, prejoin: 1, waiting: 2, in_meeting: 3, reconnecting: 4, ended: 5, blocked: 6,
+  loading: 0, prejoin: 1, waiting: 2, in_meeting: 3, reconnecting: 4, ended: 5, blocked: 6, invalid: 6,
 };
 
 // --- markers: VERIFY AGAINST A LIVE MEETING ------------------------------
@@ -53,6 +54,8 @@ export const MARKERS = {
   // sign in to join the meeting." Also any redirect to the sign-in page.
   blocked: String.raw`bots aren.t allowed to join|sign in to join (this|the) meeting|only (signed[- ]in|authenticated) users can join`,
   blockedPath: String.raw`^/signin`,
+  // Seen live 2026-11-06 for a made-up ID: "This meeting link is invalid (3,001)".
+  invalid: String.raw`meeting link is invalid|invalid meeting id|meeting id is (not valid|invalid)|this meeting (id )?does not exist`,
   // Footer controls stay in the DOM when auto-hidden. Plain CSS only, these
   // run in the page via querySelector.
   inMeeting: ["button[aria-label*='Leave' i]", ".footer__leave-btn"],
@@ -104,6 +107,7 @@ function pageAgent(m: Markers): void {
   const reconnect = new RegExp(m.reconnect, "i");
   const blocked = new RegExp(m.blocked, "i");
   const blockedPath = new RegExp(m.blockedPath, "i");
+  const invalid = new RegExp(m.invalid, "i");
   const has =(sels: string[]) =>
     sels.some((s) => {
       try { return !!document.querySelector(s); } catch { return false; }
@@ -132,6 +136,7 @@ function pageAgent(m: Markers): void {
     }
     const text = document.body?.innerText ?? "";
     if (blocked.test(text) || blockedPath.test(location.pathname)) return "blocked";
+    if (invalid.test(text)) return "invalid";
     if (ended.test(text)) return "ended";
     if (waiting.test(text)) return "waiting";
     if (has(m.name)) return "prejoin";

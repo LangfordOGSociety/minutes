@@ -4,12 +4,18 @@ process.env.TZ ??= "America/Vancouver";
 
 import { existsSync } from "node:fs";
 import { parseArgs } from "node:util";
+import { fileURLToPath } from "node:url";
 import { login } from "./login.js";
+import { serve } from "./serve.js";
 import { Capture, type Config } from "./runner.js";
 import type { Encoder } from "./recorder.js";
+import { SLUG_RE, defaultSlug } from "./util.js";
 
 const USAGE = `usage: zoom-capture --link <zoom link or id> --start <ISO datetime> [options]
        zoom-capture login --auth <file>   sign in once in a browser window, save the session
+       zoom-capture serve [--port 8080] [--auth <file>] [--max-jobs 2]
+                                          web interface: schedule meetings, replay recordings
+                                          (env CAPTURE_WEB_TOKEN sets a password)
 
   --auth <file>            Zoom session from "login" (env CAPTURE_AUTH). Needed
                            when Zoom blocks anonymous web-client joins.
@@ -72,9 +78,8 @@ function parse(): Config {
     if (!Number.isFinite(n) || n < 0) fail(`--${k} must be a number`);
     return n;
   };
-  const pad = (n: number) => String(n).padStart(2, "0");
-  const slug = v.slug ??
-    `meeting-${start.getFullYear()}${pad(start.getMonth() + 1)}${pad(start.getDate())}-${pad(start.getHours())}${pad(start.getMinutes())}`;
+  const slug = v.slug ?? defaultSlug(start);
+  if (!SLUG_RE.test(slug)) fail(`--slug must be letters, digits, '.', '_' or '-': ${slug}`);
 
   return {
     link: v.link,
@@ -111,6 +116,39 @@ if (process.argv[2] === "login") {
     strict: true,
   });
   process.exit(await login(values.auth!));
+}
+
+if (process.argv[2] === "serve") {
+  const env = process.env;
+  const { values: v } = parseArgs({
+    args: process.argv.slice(3),
+    options: {
+      port: { type: "string", default: env.CAPTURE_PORT ?? "8080" },
+      host: { type: "string", default: env.CAPTURE_HOST ?? "0.0.0.0" },
+      out: { type: "string", default: env.CAPTURE_OUT ?? "/recordings" },
+      auth: { type: "string", default: env.CAPTURE_AUTH },
+      name: { type: "string", default: env.CAPTURE_NAME ?? "Recorder" },
+      "lead-min": { type: "string", default: "15" },
+      "no-show-min": { type: "string", default: "120" },
+      "max-jobs": { type: "string", default: env.CAPTURE_MAX_JOBS ?? "2" },
+    },
+    strict: true,
+  });
+  const n = (k: string, x: string | undefined, min = 0) => {
+    const r = Number(x);
+    if (!Number.isFinite(r) || r < min) fail(`--${k} must be a number >= ${min}`);
+    return r;
+  };
+  if (v.auth && !existsSync(v.auth)) fail(`--auth file not found: ${v.auth}`);
+  if (!v.auth) console.error("warning: no --auth session; Zoom blocks anonymous web-client joins (see `zoom-capture login`)");
+  const entry = fileURLToPath(new URL("./index.js", import.meta.url));
+  process.exit(await serve({
+    host: v.host!, port: n("port", v.port, 1), token: env.CAPTURE_WEB_TOKEN || null, tz: env.TZ!,
+    out: v.out!, auth: v.auth ?? null, defaultName: v.name!,
+    leadMs: n("lead-min", v["lead-min"]) * 60_000, noShowMs: n("no-show-min", v["no-show-min"]) * 60_000,
+    maxConcurrent: n("max-jobs", v["max-jobs"], 1),
+    width: n("width", env.CAPTURE_WIDTH ?? "1920", 1), height: n("height", env.CAPTURE_HEIGHT ?? "1080", 1),
+  }, entry));
 }
 
 const capture = new Capture(parse());

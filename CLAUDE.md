@@ -18,6 +18,17 @@ Zoom, and publish the official video 24-48h later. The goal is having video
   self-contained (it's serialized, so no references outside the function).
 - `src/recorder.ts` ffmpeg x11grab + pulse -> MKV parts. Encoders: x264, vaapi, nvenc.
 - `src/stitch.ts` remux-repair each part, concat with chapters, re-encode fallback.
+- `src/login.ts` `zoom-capture login`: human signs in once, saves storage state.
+- `src/serve.ts` `zoom-capture serve`: node:http web UI + JSON API, Range
+  serving for video, optional Basic auth (CAPTURE_WEB_TOKEN), same-origin
+  check on writes. Only serves .mp4/.mkv/.png/.json directly inside a slug dir.
+- `src/jobs.ts` scheduler: jobs.json (atomic), launches the normal CLI as a
+  child per job with its own Xvfb display (:100+) and null sink (zoom_<n>)
+  via DISPLAY / CAPTURE_SINK / PULSE_SINK. Never touches the default source.
+  Links are restricted to *.zoom.us or bare IDs; the meeting password never
+  leaves the server (API returns meetingId only).
+- `src/webui.ts` the page, as a String.raw template: its script must not use
+  backticks or dollar-brace. All data goes in via textContent.
 - `entrypoint.sh` starts Xvfb + PulseAudio with two null sinks (see below).
 
 ## Invariants, don't break these
@@ -69,10 +80,26 @@ Verified live:
   the browser-UI height instead (`hideBrowserUi`, verified offline on Xvfb,
   not yet in a live meeting).
 
-Known issue: the image's Node ships tzdata 2024a, which predates BC's move to
-permanent daylight time (2026-11-01). A `--start` without an offset is read
-as UTC-8 instead of UTC-7, an hour late. Pass an explicit offset
-(`--start 2026-11-16T19:00-07:00`) until that's fixed.
+Timezone data: the image's Node ships tzdata 2024a, and even Node 24's 2025b
+predates BC's move to permanent daylight time (2026-11-01, UTC-7), so
+`--start` and chapter times were an hour off. The Dockerfile now installs ICU
+tz files for 2026f (pinned, sha256-checked) and sets ICU_TIMEZONE_FILES_DIR;
+verified `--start 2026-11-16T19:00` -> 02:00Z and chapter clock correct. The
+`config` event at startup logs `tzdata` and the resolved start with offset:
+check it. Running outside the image (plain `node dist/index.js`) still uses
+Node's built-in tzdata, so pass an explicit offset there.
+
+Web interface, verified 2026-11-06 (arm64 image): API validation (non-Zoom
+links, bad/past starts, bad slugs, duplicates, cross-origin writes, path
+traversal all refused), schedule/cancel, immediate launch on its own display
++ sink with live screenshot and log, Stop -> cleanup of Xvfb and sink,
+graceful server SIGTERM, playback + chapter seek in desktop Chrome, layout at
+390px and dark mode. Playwright's bundled Chromium can't play H.264 MP4, so
+test playback with `channel: "chrome"`. Not yet run: a scheduled job against
+a live meeting end to end, two overlapping live captures.
+
+Invalid links: "This meeting link is invalid (3,001)" -> `invalid` state ->
+outcome `invalid_link` within seconds (was: 2h of `loading`).
 
 Debugging: `CAPTURE_DEBUG=1` writes a screenshot and every frame's HTML to
 `<slug>/debug/NNN-<state>.png|html` on each state change.
@@ -94,9 +121,14 @@ Interruptions, live run 2026-11-05 (livetest-4):
   reconnect..."), then after the network returned gave up with a zm-modal
   "Joining Meeting Timeout or Browser restriction" (Retry / Leave). None of
   that matched, so the bot stayed `in_meeting` recording black. Now all three
-  are in `MARKERS.reconnect` / `overlays`, and the saved live HTML of the
-  disconnected screen classifies as `reconnecting` offline. Re-run this live:
-  expected `reconnecting` -> 45s -> `feed_lost` -> rejoin.
+  are in `MARKERS.reconnect` / `overlays`. Re-run live (livetest-5): cut at
+  07:31:54, sr-only alert blip at +9s, `.loading-layer` -> `reconnecting` at
+  +24s and held, `feed_lost` at +70s (45s grace), part closed, rejoined 6s
+  after the network returned. Stitched with a 24.6s gap chapter. OK.
+- Open question: runs 4 and 5 recorded near-silent audio (peak -40 to -52 dB)
+  in every part, vs -6.4 dB in run 3. Bot-side audio state was identical in
+  the dumps; most likely the host was muted/quiet. Confirm with a run where
+  someone talks.
 
 Still untested live:
 - Webinars (`/w/` links, registration), host-removed, meeting-not-started.

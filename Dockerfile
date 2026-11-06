@@ -21,6 +21,24 @@ RUN set -e; \
       mesa-va-drivers $intel; \
     rm -rf /var/lib/apt/lists/*
 
+# Newer timezone data for Node's ICU. The bundled Node ships tzdata 2024a,
+# which predates BC's move to permanent daylight time (2026-11-01, UTC-7), so
+# --start and chapter times came out an hour off. ICU loads these .res files
+# from ICU_TIMEZONE_FILES_DIR in preference to its built-in data. Bump
+# ICU_TZ_VERSION and the sums together (from unicode-org/icu-data).
+ARG ICU_TZ_VERSION=2026f
+RUN set -e; \
+    mkdir -p /usr/share/icu-tz; cd /usr/share/icu-tz; \
+    base="https://raw.githubusercontent.com/unicode-org/icu-data/main/tzdata/icunew/${ICU_TZ_VERSION}/44/le"; \
+    for f in zoneinfo64 timezoneTypes metaZones windowsZones; do curl -fsSL -o "$f.res" "$base/$f.res"; done; \
+    printf '%s\n' \
+      "d9382726ee8a499514310e63a9e97f1dbdd7fc2db328e1a785dde05f2afbb7e6  zoneinfo64.res" \
+      "5e77ce5afb7374a36cbe3be197d0a6deaa919e6f672c2a372f7a9d91b7f8534f  timezoneTypes.res" \
+      "cc9d283bb2797813a17c00d80c2a86d27bc80da5e1cd24da846e8b4af6dbd860  metaZones.res" \
+      "377691d021bbdd7012806d8188412d13e587a76b64ecc7b79fec4dc36a419deb  windowsZones.res" \
+      | sha256sum -c -
+ENV ICU_TIMEZONE_FILES_DIR=/usr/share/icu-tz
+
 WORKDIR /app
 COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist
@@ -30,5 +48,6 @@ RUN mkdir -p /recordings && chown pwuser:pwuser /recordings
 USER pwuser
 ENV TZ=America/Vancouver \
     CAPTURE_OUT=/recordings
+EXPOSE 8080
 VOLUME ["/recordings"]
 ENTRYPOINT ["/app/entrypoint.sh"]
