@@ -138,20 +138,19 @@ Still untested live:
 
 ## Suggested next steps
 
-1. Dry run on a low-stakes Langford committee meeting with `LOG_LEVEL=DEBUG`.
-   Grab frames from the display (`ffmpeg -f x11grab ... -frames:v 1 shot.png`)
-   at each stage and fix `MARKERS` against what the page really shows.
-   Consider adding a debug mode that saves a screenshot + `page.content()` on
-   every state change, it'll make the markers much faster to tune.
-2. Simulate interruptions during the dry run: `docker network disconnect` for
-   >45s (should produce a new part), kill chromium (DEAD -> rejoin), kill ffmpeg
-   (new part, same session).
-3. Speaker/active-speaker metadata: the web client's DOM exposes the participant
+1. Dry run on a real Langford committee meeting (so far only the owner's own
+   test meetings). Schedule it from the web UI a few minutes ahead to cover
+   the scheduled-job path end to end, with `CAPTURE_DEBUG=1`. Re-run
+   `zoom-capture login` shortly before. (Debug dumps exist; the interruption
+   tests passed on the test meeting.)
+2. Speaker/active-speaker metadata: the web client's DOM exposes the participant
    list and active speaker indicator. Have `pageAgent` emit timestamped
    active-speaker changes into the manifest; this is for labelling transcript
-   speakers later.
-4. Transcription pipeline (separate service): faster-whisper/WhisperX on parts
-   as they close, align to agenda items from the published agenda PDF.
+   speakers later (only useful when speakers are separate Zoom participants).
+3. Transcription service (separate Python container, CPU-only for now):
+   WhisperX on the stitched MP4, pyannote diarization with a speaker range,
+   voiceprint naming, `.vtt` subtitles in the web player. Full design and
+   phased build order in `docs/transcription-plan.md`.
 
 ## Run
 
