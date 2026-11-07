@@ -134,6 +134,15 @@ for a 3h meeting here); first run also downloads ~1.5GB of models into the
 as a second track, clickable/searchable transcript panel, all checked in
 desktop Chrome and at 390px.
 
+Silence gate: Whisper invented fluent sentences on room tone (livetest-4:
+"I must be made. I put in the future..."). Segments whose loudest 50ms RMS
+window is under `SILENCE_DB` (default -40 dB) are dropped from the
+subtitles/text and kept in `<slug>.transcript.json` under `dropped_quiet`.
+Measured: real speech -14..-20 dB, invented text -48..-57 dB, a real "Um."
+-27 dB (kept). Check it against a real meeting: a soft-spoken delegate on a
+far mic is the risk; lower `SILENCE_DB` if real speech lands in
+`dropped_quiet`.
+
 Invalid links: "This meeting link is invalid (3,001)" -> `invalid` state ->
 outcome `invalid_link` within seconds (was: 2h of `loading`).
 

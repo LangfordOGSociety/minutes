@@ -42,6 +42,11 @@ POLL_S = int(os.environ.get("POLL_SECONDS", "60"))
 # Don't compete with a live capture for CPU (each needs about a core).
 WAIT_FOR_CAPTURES = os.environ.get("WAIT_FOR_CAPTURES", "1") not in ("0", "false", "no")
 VOCAB = Path(os.environ.get("VOCAB_FILE", Path(__file__).with_name("vocab.txt")))
+# Whisper invents fluent sentences on near-silent audio (room tone, recesses).
+# Segments whose loudest 50ms window is below this are dropped from the
+# subtitles/text (kept in the JSON under "dropped_quiet" for audit).
+# Measured 2026-11-06: real speech -14..-20 dB, invented text -48..-57 dB.
+SILENCE_DB = float(os.environ.get("SILENCE_DB", "-40"))
 
 FINAL_OUTCOMES_SKIP = {"pending"}
 STATUS = "transcript.status.json"
@@ -162,6 +167,27 @@ def write_outputs(d: Path, slug: str, result: dict, meta: dict) -> None:
     write_atomic(d / f"{slug}.txt", ("\n".join(lines)).strip() + "\n")
 
 
+def level_db(audio, start: float, end: float, sr: int = 16000, win: float = 0.05) -> float:
+    """Loudest short-window RMS in [start, end], dBFS. Windowed so a single
+    click can't make a silent stretch look like speech."""
+    import numpy as np
+    x = audio[int(max(start, 0) * sr):int(max(end, 0) * sr)]
+    if x.size == 0:
+        return -120.0
+    n = int(win * sr)
+    k = x.size // n
+    rms = np.sqrt(np.mean(x[:k * n].reshape(k, n) ** 2, axis=1)).max() if k else np.sqrt(np.mean(x ** 2))
+    return round(20 * float(np.log10(max(float(rms), 1e-6))), 1)
+
+
+def drop_quiet(segs: list[dict], audio) -> tuple[list[dict], list[dict]]:
+    keep, dropped = [], []
+    for s in segs:
+        s["level_db"] = level_db(audio, s.get("start", 0), s.get("end", 0))
+        (keep if s["level_db"] >= SILENCE_DB else dropped).append(s)
+    return keep, dropped
+
+
 def label_speakers(segs: list[dict], spans: list[dict] | None) -> None:
     """Attach Zoom's active speaker (by most overlap) to each segment."""
     if not spans:
@@ -247,15 +273,20 @@ def transcribe(d: Path) -> None:
                                     progress_callback=progress(d, "aligning words", 90, 100))
             timings["align"] = round(time.monotonic() - t, 1)
 
+        result["segments"], dropped = drop_quiet(result["segments"], audio)
+        if dropped:
+            log(f"{slug}: dropped {len(dropped)} segment(s) quieter than {SILENCE_DB} dB (likely invented on silence)")
         label_speakers(result["segments"], read_json(d / f"{slug}.speakers.json"))
         meta = {"model": MODEL, "compute_type": COMPUTE, "language": LANGUAGE, "created": now(),
-                "audio_seconds": round(audio_s, 1), "source": video.name}
+                "audio_seconds": round(audio_s, 1), "source": video.name, "silence_db": SILENCE_DB,
+                "dropped_quiet": [{"start": x.get("start"), "end": x.get("end"), "level_db": x["level_db"],
+                                   "text": x.get("text", "").strip()} for x in dropped]}
         write_outputs(d, slug, result, meta)
         total = round(time.monotonic() - t0, 1)
         work = timings["transcribe"] + timings["align"]
         set_status(d, status="done", stage=None, progress=100, finished=now(), timings=timings, elapsed_seconds=total,
                    realtime_factor=round(work / audio_s, 3) if audio_s else None,
-                   segments=len(result["segments"]), source_mtime=video.stat().st_mtime,
+                   segments=len(result["segments"]), dropped_quiet=len(dropped), source_mtime=video.stat().st_mtime,
                    outputs=[f"{slug}.vtt", f"{slug}.srt", f"{slug}.txt", f"{slug}.transcript.json"])
         log(f"{slug}: done, {audio_s:.0f}s of audio in {total:.0f}s "
             f"(transcribe {timings['transcribe']}s, align {timings['align']}s)")

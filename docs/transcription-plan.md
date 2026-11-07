@@ -150,5 +150,11 @@ the public stay "Speaker N".
 - Web player: transcript track on by default, Zoom captions as a second
   track, transcript panel (click to seek, search, follows playback),
   status badge in the list.
-- Not yet: a long real meeting (the 3h CPU estimate is extrapolated), Canadian
-  spelling, Phase 2 diarization.
+- Silence gate: Whisper hallucinates on near-silent audio. Segments whose
+  loudest 50ms RMS window is below `SILENCE_DB` (-40 dB) are dropped and kept
+  under `dropped_quiet` in the JSON. Speech measured -14..-20 dB, invented
+  text -48..-57 dB. Removed all invented lines from the test recordings and
+  kept every real one.
+- Not yet: a long real meeting (the 3h CPU estimate is extrapolated, and the
+  -40 dB gate needs checking against quiet real speakers), Canadian spelling,
+  Phase 2 diarization.

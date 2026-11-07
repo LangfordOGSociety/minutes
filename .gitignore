@@ -5,3 +5,5 @@ recordings/
 *.log
 .DS_Store
 auth/
+__pycache__/
+*.pyc
