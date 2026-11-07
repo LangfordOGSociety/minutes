@@ -74,6 +74,9 @@ export const MARKERS = {
     ".speaker-bar-container__video-frame--active .video-avatar__avatar-footer",
   ],
   name: ["#input-for-name", "input[placeholder*='name' i]"],
+  // Passcode prompt, shown when the link has no pwd= or only the plain
+  // passcode (Zoom only skips the prompt for the long encoded pwd=).
+  passcode: ["#input-for-pwd", "input[type='password']"],
   // While in the meeting, ended/reconnect text is only trusted inside these
   // overlays, so chat messages and captions can't end or drop a recording.
   // Overlays holding a text input (chat, Q&A panels) are skipped.
@@ -155,7 +158,7 @@ function pageAgent(m: Markers): void {
     if (invalid.test(text)) return "invalid";
     if (ended.test(text)) return "ended";
     if (waiting.test(text)) return "waiting";
-    if (has(m.name)) return "prejoin";
+    if (has(m.name) || has(m.passcode)) return "prejoin";
     return "loading";
   };
 
@@ -228,6 +231,53 @@ function pageAgent(m: Markers): void {
   else document.addEventListener("DOMContentLoaded", observe, { once: true });
 }
 
+/**
+ * Client-side mute, injected into every frame before Zoom's code runs.
+ * Whatever Zoom or its UI does, the page never gets a live microphone,
+ * camera or screen: every audio track it asks for is disabled and can't be
+ * re-enabled (own `enabled` property shadows the prototype setter; clones
+ * stay guarded), video requests are refused, screen share is refused.
+ * Incoming meeting audio is untouched: only tracks we hand out are guarded.
+ * Self-contained: serialized by addInitScript.
+ */
+export function mediaGuard(): void {
+  const md = navigator.mediaDevices;
+  const w = window as unknown as Record<string, unknown>;
+  if (!md || w.__ccMediaGuard) return;
+  w.__ccMediaGuard = true;
+  const guarded = new WeakSet<MediaStreamTrack>();
+  const guard = (t: MediaStreamTrack): MediaStreamTrack => {
+    t.enabled = false;
+    Object.defineProperty(t, "enabled", { get: () => false, set: () => {}, configurable: false });
+    guarded.add(t);
+    return t;
+  };
+  const clone = MediaStreamTrack.prototype.clone;
+  MediaStreamTrack.prototype.clone = function (this: MediaStreamTrack) {
+    const c = clone.call(this);
+    return guarded.has(this) ? guard(c) : c;
+  };
+  const refuse = (what: string) => Promise.reject(new DOMException(what + " disabled by recorder", "NotAllowedError"));
+  const gum = md.getUserMedia.bind(md);
+  md.getUserMedia = async (c?: MediaStreamConstraints) => {
+    if (!c?.audio) return refuse("camera");
+    const s = await gum({ audio: c.audio });   // never pass video through
+    s.getAudioTracks().forEach(guard);
+    return s;
+  };
+  md.getDisplayMedia = () => refuse("screen share");
+}
+
+/** The plain passcode from a link's pwd= (agendas print "Passcode: 429539",
+ *  so links get written as /j/<id>?pwd=429539). Zoom's encoded pwd= is
+ *  longer (32+ chars) and must not be typed into the prompt. */
+export function plainPasscode(link: string): string | null {
+  let u: URL;
+  try { u = new URL(link); } catch { return null; }
+  const pwd = u.searchParams.get("pwd");
+  return pwd && /^[A-Za-z0-9@*_.-]{1,10}$/.test(pwd) ? pwd : null;
+}
+
 /** Invite link (zoom.us/j/<id>?pwd=...) or bare ID -> browser client URL. */
 export function webClientUrl(link: string): string {
   const digits = link.replace(/[\s-]/g, "");
@@ -253,6 +303,8 @@ export class ZoomSession {
   private captionsClicked = false;
   private captionsSeen = false;
   private inMeetingSince = 0;
+  private readonly passcode: string | null;
+  private passcodeTries = 0;
 
   /** Called whenever the page agent reports a change, or the browser dies. */
   onChange: (state: string) => void = () => {};
@@ -265,6 +317,7 @@ export class ZoomSession {
               private width: number, private height: number,
               private authFile: string | null = null) {
     this.url = webClientUrl(link);
+    this.passcode = plainPasscode(link);
   }
 
   private markDead(why: string): void {
@@ -298,7 +351,8 @@ export class ZoomSession {
     this.ctx = ctx;
     if (this.authFile) log.info(`using signed-in session from ${this.authFile}`);
     // Mic only; the container's default source is a silent null sink so
-    // nothing ever reaches the meeting. No camera permission at all.
+    // nothing ever reaches the meeting, and mediaGuard() disables every mic
+    // track the page gets. No camera permission at all.
     await ctx.grantPermissions(["microphone"], { origin: "https://app.zoom.us" });
     await ctx.exposeBinding("__ccCaption", (_src, text: string) => {
       if (text) this.captionsSeen = true;
@@ -312,13 +366,14 @@ export class ZoomSession {
       log.debug(`agent signal: ${s}`);
       this.onChange(s);
     });
+    await ctx.addInitScript(mediaGuard);
     await ctx.addInitScript(pageAgent, MARKERS);
 
     this.page = await ctx.newPage();
     await this.hideBrowserUi(this.page);
     this.page.on("crash", () => this.markDead("renderer crashed"));
     this.page.on("close", () => this.markDead("page closed"));
-    log.info(`opening ${this.url}`);
+    log.info(`opening ${this.url.replace(/([?&]pwd=)[^&]+/, "$1<hidden>")}`);
     await this.page.goto(this.url, { waitUntil: "domcontentloaded", timeout: 60_000 });
   }
 
@@ -441,6 +496,20 @@ export class ZoomSession {
               await name.fill(this.displayName);
             }
           } catch { /* locked or detached */ }
+        }
+        const pass = await this.find(MARKERS.passcode);
+        if (pass) {
+          if (!this.passcode) {
+            if (!this.passcodeTries++) log.warn("Zoom asks for a passcode: add it to the link as ?pwd=<passcode>");
+            return;
+          }
+          try {
+            if ((await pass.inputValue()) !== this.passcode) {
+              // Never log the passcode itself.
+              if (this.passcodeTries++ < 5) log.info("entering meeting passcode");
+              await pass.fill(this.passcode);
+            }
+          } catch { /* detached */ }
         }
         const btn = await this.findButton(JOIN_BUTTON);
         // One click per 10s: the button stays up briefly while Zoom works.

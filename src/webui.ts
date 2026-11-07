@@ -99,6 +99,7 @@ a { color: var(--accent); }
       <form id="form" autocomplete="off">
         <label for="link">Zoom link or meeting ID</label>
         <input id="link" name="link" required placeholder="https://us06web.zoom.us/j/123456789?pwd=...">
+        <small>Only an ID and passcode? Use https://zoom.us/j/ID?pwd=PASSCODE</small>
         <label for="start">Start time <small id="tzlabel"></small></label>
         <input id="start" name="start" type="datetime-local" required>
         <label for="slug">Name <small>(folder and file name, optional)</small></label>

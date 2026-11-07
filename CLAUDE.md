@@ -52,6 +52,13 @@ Zoom, and publish the official video 24-48h later. The goal is having video
   the selector also matches "Unmute". If you touch audio routing, make sure the
   default source can never become `zoom.monitor` (that loops council audio back
   into the meeting).
+- Client-side mute: `mediaGuard()` (zoom.ts) is injected into every frame
+  before Zoom's code. Every mic track the page gets is disabled and can't be
+  re-enabled (clones too), camera and screen share requests are refused.
+  Tested in the image: track stays disabled after `enabled = true`, peak
+  level exactly 0 (fake mic without the guard: audible), video and
+  getDisplayMedia -> NotAllowedError, same inside iframes. Keep it as the
+  first init script.
 - Parts are MKV with `-flush_packets 1 -cluster_time_limit 1000`. Without the
   cluster limit, Matroska buffers ~5s in memory and a hard kill loses it (tested:
   a part killed at 2s was unrecoverable). Don't switch parts to MP4.
@@ -142,6 +149,13 @@ Measured: real speech -14..-20 dB, invented text -48..-57 dB, a real "Um."
 -27 dB (kept). Check it against a real meeting: a soft-spoken delegate on a
 far mic is the risk; lower `SILENCE_DB` if real speech lands in
 `dropped_quiet`.
+
+Passcodes: agendas often print only an ID and a numeric passcode. Write the
+link as `https://zoom.us/j/<id>?pwd=<passcode>`: the browser client
+(`app.zoom.us/wc/join`) accepts the plain passcode in `pwd=` (verified live
+2026-11-06, no prompt; a normal browser on the `zoom.us/j` link does prompt).
+If a prompt ever shows, `advance()` types a plain passcode into
+`MARKERS.passcode` (selector unverified). The log hides `pwd=`.
 
 Invalid links: "This meeting link is invalid (3,001)" -> `invalid` state ->
 outcome `invalid_link` within seconds (was: 2h of `loading`).
