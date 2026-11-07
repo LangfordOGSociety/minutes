@@ -1,6 +1,7 @@
 # Transcription service plan (CPU-only)
 
-Status: design, not built. Sketched 2026-11-06.
+Status: Phase 1 built and tested 2026-11-06 (see "Phase 1 results" at the
+end). Phases 2-3 are still design.
 
 Goal: subtitles and a speaker-labelled transcript for every recording, the
 same night, on CPU. A GPU later should only change `device` / `compute_type`.
@@ -133,3 +134,21 @@ the public stay "Speaker N".
 - Default speaker range (proposed 6-15).
 - Wait for captures to finish, or just run at low priority alongside them.
 - Model choice after measuring on real audio.
+
+## Phase 1 results (2026-11-06)
+
+- `transcriber/` container: python:3.11-slim, torch 2.8.0+cpu, whisperx 3.8.6,
+  faster-whisper 1.2.1 (full pinned set in `requirements.txt`). Image ~2.2GB;
+  models ~1.5GB more in the `models` volume on first run.
+- distil-large-v3, int8, 5 threads on a 6-CPU Docker VM: realtime factor
+  0.51 on continuous speech (42s synthetic council dialogue, 3 voices).
+  Every line correct apart from US spelling ("favor") and casing.
+  Mostly-silent audio is much faster (VAD skips it): 0.09 on a 110s clip.
+- Zoom active-speaker labels (from capture's `<slug>.speakers.json`, built
+  in the same change) attach to segments as `zoom_speaker` and show as
+  `<v Name>` in the VTT. This is Zoom's label, not diarization.
+- Web player: transcript track on by default, Zoom captions as a second
+  track, transcript panel (click to seek, search, follows playback),
+  status badge in the list.
+- Not yet: a long real meeting (the 3h CPU estimate is extrapolated), Canadian
+  spelling, Phase 2 diarization.

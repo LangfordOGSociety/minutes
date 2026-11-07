@@ -70,6 +70,21 @@ pre { background: var(--bg); border: 1px solid var(--line); border-radius: 8px; 
   max-height: 260px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; margin: 10px 0 0; }
 a { color: var(--accent); }
 .hint { color: var(--muted); font-size: 13px; margin-top: 8px; }
+.links { font-size: 14px; }
+.transcript { margin-top: 14px; }
+.thead { display: flex; gap: 10px; align-items: center; justify-content: space-between; flex-wrap: wrap; margin-bottom: 8px; }
+.thead h4 { margin: 0; font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
+.thead input { width: auto; flex: 1 1 200px; max-width: 320px; padding: 6px 10px; }
+.tlist { max-height: 46vh; overflow: auto; border: 1px solid var(--line); border-radius: 8px; }
+.tline { display: grid; grid-template-columns: 4.2em minmax(0, 9em) 1fr; gap: 10px; width: 100%; text-align: left;
+  border: 0; border-bottom: 1px solid var(--line); border-radius: 0; padding: 7px 10px; background: transparent; font-size: 14px; }
+.tline:last-child { border-bottom: 0; }
+.tline:hover { background: var(--bg); }
+.tline.now { background: color-mix(in srgb, var(--accent) 14%, transparent); }
+.tline .tt { color: var(--muted); font-variant-numeric: tabular-nums; }
+.tline .tw { color: var(--accent); font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tline .tx { overflow-wrap: anywhere; }
+@media (max-width: 600px) { .tline { grid-template-columns: 3.6em 1fr; } .tline .tw { grid-column: 2; } .tline .tx { grid-column: 1 / -1; } }
 </style>
 </head>
 <body>
@@ -127,6 +142,13 @@ function el(tag, attrs) {
   }
   return e;
 }
+// replaceChildren() turns a null argument into the text "null"; skip them.
+function fill(node) {
+  var kids = [];
+  for (var i = 1; i < arguments.length; i++) if (arguments[i] !== null && arguments[i] !== undefined && arguments[i] !== false) kids.push(arguments[i]);
+  node.replaceChildren.apply(node, kids);
+  return node;
+}
 function pill(status) { return el("span", { "class": "pill s-" + status, text: status }); }
 var fmtDT = new Intl.DateTimeFormat(undefined, { timeZone: TZ, weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
 function fmt(iso) { return iso ? fmtDT.format(new Date(iso)) : "?"; }
@@ -151,7 +173,7 @@ var ACTIVE = { running: 0, stopping: 1, queued: 2, scheduled: 3 };
 function renderJobs(jobs) {
   lastJobs = jobs;
   var box = document.getElementById("jobs");
-  box.replaceChildren();
+  fill(box);
   var active = jobs.filter(function (j) { return j.status in ACTIVE; })
     .sort(function (a, b) { return ACTIVE[a.status] - ACTIVE[b.status] || a.start.localeCompare(b.start); });
   var past = jobs.filter(function (j) { return !(j.status in ACTIVE); })
@@ -179,15 +201,16 @@ function renderJobs(jobs) {
 
 function renderRecs(recs) {
   var box = document.getElementById("recs");
-  box.replaceChildren();
+  fill(box);
   // Attempts that never got into a meeting have nothing to replay.
-  recs = recs.filter(function (r) { return r.active || r.parts.length; });
+  recs = recs.filter(function (r) { return r.video || r.active || r.parts.length; });
   if (!recs.length) { box.appendChild(el("div", { "class": "empty", text: "No recordings yet." })); return; }
   recs.forEach(function (r) {
     var status = r.active ? "running" : r.outcome;
     var parts = r.parts.length + (r.parts.length === 1 ? " part" : " parts");
     var sub = fmt(r.scheduledStart) + " · " + parts + (r.chapters.length > 1 ? " · " + (r.chapters.length - 1) + " gap(s)" : "") +
-      (r.videoBytes ? " · " + mb(r.videoBytes) : "") + (r.video ? "" : r.active ? " · recording now" : " · no video");
+      (r.videoBytes ? " · " + mb(r.videoBytes) : "") + (r.video ? "" : r.active ? " · recording now" : " · no video") +
+      (r.files && r.files.transcript ? " · transcript" : r.video && transcriptNote(r) ? " · " + transcriptNote(r).toLowerCase() : "");
     var actions = el("div", { "class": "actions" },
       r.video ? el("button", { text: selectedRec === r.slug ? "Playing" : "Play", on: { click: function () { play(r); } } }) : null);
     box.appendChild(el("div", { "class": "row" + (selectedRec === r.slug ? " selected" : "") },
@@ -195,37 +218,95 @@ function renderRecs(recs) {
   });
 }
 
+function media(slug, file) { return "/media/" + encodeURIComponent(slug) + "/" + encodeURIComponent(file); }
+
 function play(r) {
   stopWatching();
   selectedRec = r.slug;
-  var src = "/media/" + encodeURIComponent(r.slug) + "/" + encodeURIComponent(r.video);
-  var v = el("video", { controls: "", preload: "metadata", src: src });
+  var src = media(r.slug, r.video), f = r.files || {};
+  var v = el("video", { controls: "", preload: "metadata", src: src, crossorigin: "anonymous" });
+  // Subtitles: the Whisper transcript on by default; Zoom's own captions as
+  // a second, optional track (reference only).
+  if (f.vtt) v.appendChild(el("track", { kind: "subtitles", srclang: "en", label: "Transcript", src: media(r.slug, f.vtt), "default": "" }));
+  if (f.zoomCaptions) v.appendChild(el("track", { kind: "subtitles", srclang: "en", label: "Zoom captions", src: media(r.slug, f.zoomCaptions) }));
   var chapters = el("div", { "class": "chapters" });
   r.chapters.forEach(function (c) {
     chapters.appendChild(el("button", { text: hms(c.at) + "  " + c.title, on: { click: function () { v.currentTime = c.at; v.play(); } } }));
   });
+  var links = el("span", { "class": "links" }, el("a", { href: src, download: r.video, text: "Video" }));
+  [["txt", "Transcript"], ["srt", "SRT"], ["zoomCaptions", "Zoom captions"]].forEach(function (x) {
+    if (f[x[0]]) { links.appendChild(document.createTextNode(" · ")); links.appendChild(el("a", { href: media(r.slug, f[x[0]]), download: f[x[0]], text: x[1] })); }
+  });
+  links.appendChild(document.createTextNode(" · "));
+  links.appendChild(el("a", { href: media(r.slug, "manifest.json"), target: "_blank", text: "manifest" }));
+  var tpanel = el("div", { "class": "transcript" });
   var p = document.getElementById("player");
-  p.replaceChildren(
-    el("div", { "class": "player-title" }, el("h3", { text: r.slug }),
-      el("span", null, el("a", { href: src, download: r.video, text: "Download" }), " · ",
-        el("a", { href: "/media/" + encodeURIComponent(r.slug) + "/manifest.json", target: "_blank", text: "manifest" }))),
-    v, r.chapters.length > 1 ? chapters : null, el("div", { "class": "hint", text: "Times in " + TZ + "." }));
+  fill(p, 
+    el("div", { "class": "player-title" }, el("h3", { text: r.slug }), links),
+    v, r.chapters.length > 1 ? chapters : null, tpanel);
   p.hidden = false;
   document.getElementById("viewer-h").textContent = "Replay";
+  if (f.transcript) loadTranscript(r, v, tpanel);
+  else tpanel.appendChild(el("div", { "class": "hint", text: transcriptNote(r) || "No transcript." }));
   refresh();
   p.scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+function transcriptNote(r) {
+  var t = r.transcript;
+  if (!t) return r.video ? "Waiting for the transcriber." : "";
+  if (t.status === "done") return "";
+  if (t.status === "failed") return "Transcription failed: " + (t.error || "unknown error");
+  return "Transcribing" + (t.progress !== null ? " " + t.progress + "%" : "") + (t.stage ? " (" + t.stage + ")" : "") + "...";
+}
+
+function loadTranscript(r, v, box) {
+  fill(box, el("div", { "class": "hint", text: "Loading transcript..." }));
+  api("GET", media(r.slug, r.files.transcript)).then(function (t) {
+    var segs = (t && t.segments) || [];
+    var search = el("input", { type: "search", placeholder: "Search transcript", "aria-label": "Search transcript" });
+    var list = el("div", { "class": "tlist" });
+    var rows = segs.map(function (sg) {
+      var row = el("button", { "class": "tline", type: "button", on: { click: function () { v.currentTime = sg.start; v.play(); } } },
+        el("span", { "class": "tt", text: hms(sg.start) }),
+        sg.zoom_speaker ? el("span", { "class": "tw", text: sg.zoom_speaker }) : null,
+        el("span", { "class": "tx", text: (sg.text || "").trim() }));
+      row._seg = sg; list.appendChild(row); return row;
+    });
+    search.addEventListener("input", function () {
+      var q = search.value.trim().toLowerCase();
+      rows.forEach(function (row) {
+        var hit = !q || (row._seg.text || "").toLowerCase().indexOf(q) >= 0 || (row._seg.zoom_speaker || "").toLowerCase().indexOf(q) >= 0;
+        row.hidden = !hit;
+      });
+    });
+    var cur = null;
+    v.addEventListener("timeupdate", function () {
+      var tnow = v.currentTime, found = null;
+      for (var i = 0; i < rows.length; i++) { if (rows[i]._seg.start <= tnow + 0.05) found = rows[i]; else break; }
+      if (found !== cur) {
+        if (cur) cur.classList.remove("now");
+        cur = found;
+        if (cur) { cur.classList.add("now"); if (!search.value) cur.scrollIntoView({ block: "nearest" }); }
+      }
+    });
+    fill(box, 
+      el("div", { "class": "thead" }, el("h4", { text: "Transcript" }), search),
+      segs.length ? list : el("div", { "class": "hint", text: "No speech was found." }),
+      el("div", { "class": "hint", text: "Whisper " + (t.model || "") + " transcript. Names are Zoom's active-speaker label, not voice ID. Times in " + TZ + "." }));
+  }, function (e) { fill(box, el("div", { "class": "hint", text: "Couldn't load the transcript: " + e.message })); });
 }
 
 function watch(id) {
   selectedRec = null;
   document.getElementById("player").hidden = true;
-  document.getElementById("player").replaceChildren();
+  fill(document.getElementById("player"));
   watching = id;
   var live = document.getElementById("live");
   var img = el("img", { alt: "What the recorder's screen shows right now" });
   var log = el("pre", { text: "Loading log..." });
   var j = lastJobs.find(function (x) { return x.id === id; });
-  live.replaceChildren(
+  fill(live, 
     el("div", { "class": "player-title" }, el("h3", { text: (j ? j.slug : "capture") + " (live)" }),
       el("button", { text: "Close", on: { click: function () { stopWatching(); refresh(); } } })),
     img, el("div", { "class": "hint", text: "Screen refreshes every 5 seconds. This is exactly what gets recorded." }), log);
@@ -251,7 +332,7 @@ function watch(id) {
 function stopWatching() {
   watching = null;
   if (liveTimer) { clearInterval(liveTimer); liveTimer = null; }
-  var live = document.getElementById("live"); live.hidden = true; live.replaceChildren();
+  var live = document.getElementById("live"); live.hidden = true; fill(live);
   document.getElementById("viewer-h").textContent = selectedRec ? "Replay" : "Recordings";
 }
 
@@ -260,7 +341,7 @@ function cancel(id) { api("DELETE", "/api/jobs/" + id).then(refresh, function (e
 function refresh() {
   return Promise.all([api("GET", "/api/jobs"), api("GET", "/api/recordings")])
     .then(function (d) { renderJobs(d[0]); renderRecs(d[1]); })
-    .catch(function (e) { document.getElementById("jobs").replaceChildren(el("div", { "class": "empty", text: "Can't reach the server: " + e.message })); });
+    .catch(function (e) { fill(document.getElementById("jobs"), el("div", { "class": "empty", text: "Can't reach the server: " + e.message })); });
 }
 
 document.getElementById("form").addEventListener("submit", function (ev) {

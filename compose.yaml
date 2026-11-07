@@ -1,0 +1,35 @@
+# Web interface + scheduler, and the transcription service, sharing recordings/.
+#
+#   docker compose up -d --build
+#   open http://127.0.0.1:8080/
+#
+# Set CAPTURE_WEB_TOKEN (e.g. in a .env file next to this one) to require a
+# password. The port is published on 127.0.0.1 only.
+services:
+  capture:
+    build: .
+    image: zoom-capture
+    command: ["serve", "--auth", "/auth/zoom-auth.json"]
+    ports: ["127.0.0.1:8080:8080"]
+    shm_size: 1g
+    stop_grace_period: 120s   # let running captures stitch
+    restart: unless-stopped
+    environment:
+      CAPTURE_WEB_TOKEN: ${CAPTURE_WEB_TOKEN:-}
+    volumes:
+      - ./recordings:/recordings
+      - ./auth:/auth
+
+  transcriber:
+    build: ./transcriber
+    image: zoom-transcriber
+    restart: unless-stopped
+    environment:
+      WHISPER_MODEL: ${WHISPER_MODEL:-distil-large-v3}
+      WAIT_FOR_CAPTURES: "1"   # don't take CPU from a live capture
+    volumes:
+      - ./recordings:/recordings
+      - models:/models
+
+volumes:
+  models:

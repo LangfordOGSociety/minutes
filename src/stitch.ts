@@ -50,8 +50,11 @@ function fmtGap(seconds: number): string {
 const metaEscape = (s: string) => s.replace(/([\\=;#\n])/g, "\\$1");
 const concatEscape = (s: string) => s.replace(/'/g, `'\\''`);
 
+/** Where each included part starts in the stitched video (skipped parts are absent). */
+export interface PartOffset { part: number; at: number; dur: number }
+
 export async function stitch(parts: Part[], outdir: string, name: string, tz: string):
-    Promise<{ output: string | null; gaps: Gap[] }> {
+    Promise<{ output: string | null; gaps: Gap[]; offsets: PartOffset[] }> {
   const clock = new Intl.DateTimeFormat("en-CA", {
     timeZone: tz, hour: "2-digit", minute: "2-digit", second: "2-digit", hourCycle: "h23",
   });
@@ -74,13 +77,14 @@ export async function stitch(parts: Part[], outdir: string, name: string, tz: st
     }
     clips.push({ part, src, dur });
   }
-  if (!clips.length) return { output: null, gaps: [] };
+  if (!clips.length) return { output: null, gaps: [], offsets: [] };
 
   const out = path.join(outdir, `${name}.mp4`);
   const listFile = path.join(outdir, "concat.txt");
   const metaFile = path.join(outdir, "chapters.txt");
 
   const gaps: Gap[] = [];
+  const offsets: PartOffset[] = [];
   const meta = [";FFMETADATA1", `title=${metaEscape(name)}`];
   let offset = 0;
   let prevEnd: Date | null = null;
@@ -94,6 +98,7 @@ export async function stitch(parts: Part[], outdir: string, name: string, tz: st
     meta.push("[CHAPTER]", "TIMEBASE=1/1000",
       `START=${Math.round(offset * 1000)}`, `END=${Math.round((offset + dur) * 1000)}`,
       `title=${metaEscape(title)}`);
+    offsets.push({ part: part.index, at: offset, dur });
     offset += dur;
     prevEnd = part.ended ?? new Date(part.started.getTime() + dur * 1000);
   }
@@ -113,7 +118,7 @@ export async function stitch(parts: Part[], outdir: string, name: string, tz: st
 
   for (const c of clips) if (c.src.endsWith(".fixed.mkv")) try { unlinkSync(c.src); } catch { /* fine */ }
 
-  if (!ok) return { output: null, gaps };
+  if (!ok) return { output: null, gaps, offsets };
   log.info(`stitched ${clips.length} part(s) -> ${path.basename(out)} (${offset.toFixed(0)}s)`);
-  return { output: out, gaps };
+  return { output: out, gaps, offsets };
 }

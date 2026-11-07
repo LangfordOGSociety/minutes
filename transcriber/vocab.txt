@@ -1,0 +1,7 @@
+# Words and names Whisper should expect, passed as its initial prompt.
+# Lines starting with # are ignored. Add council members, staff, street and
+# place names: names are where Whisper slips most. Keep it under ~200 words.
+City of Langford council meeting. Mayor, Councillors, Chief Administrative Officer.
+Bylaw, rezoning, development permit, Official Community Plan, staff report,
+motion, moved, seconded, carried, opposed, in camera, delegation, public hearing.
+Langford, Westshore, Goldstream, Bear Mountain, Happy Valley, Colwood, Victoria.

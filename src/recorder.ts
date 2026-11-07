@@ -19,6 +19,10 @@ export interface Part {
   started: Date;
   ended: Date | null;
   exitCode: number | null;
+  /** When the first frame was actually captured. ffmpeg takes a couple of
+   *  seconds to open x11grab + pulse after spawn (measured ~2.2s), so this,
+   *  not `started`, is t=0 of the part's video. From `-progress`. */
+  videoStart: Date | null;
 }
 
 export interface RecorderOpts {
@@ -63,6 +67,8 @@ export class Recorder {
     }
     return [
       "-hide_banner", "-nostats", "-loglevel", "warning", "-y",
+      // key=value progress blocks on stdout; out_time_us gives videoStart.
+      "-progress", "pipe:1",
       ...pre,
       "-thread_queue_size", "1024",
       "-f", "x11grab", "-draw_mouse", "0",
@@ -90,7 +96,7 @@ export class Recorder {
 
     const file = path.join(this.o.outdir, `part_${String(index).padStart(3, "0")}.mkv`);
     const ffLog = createWriteStream(file.replace(/\.mkv$/, ".ffmpeg.log"), { flags: "a" });
-    const proc = spawn("ffmpeg", this.args(file), { stdio: ["pipe", "ignore", "pipe"] });
+    const proc = spawn("ffmpeg", this.args(file), { stdio: ["pipe", "pipe", "pipe"] });
     proc.stderr?.pipe(ffLog);
     this.exitedAt = null;
     this.exited = new Promise((resolve) => {
@@ -105,7 +111,19 @@ export class Recorder {
       });
     });
     this.proc = proc;
-    this.current = { index, file, started: new Date(), ended: null, exitCode: null };
+    const part: Part = { index, file, started: new Date(), ended: null, exitCode: null, videoStart: null };
+    this.current = part;
+    // First progress block with encoded time > 0: video t=0 was that long ago.
+    let buf = "";
+    proc.stdout?.on("data", (chunk: Buffer) => {
+      if (part.videoStart) return;
+      buf = (buf + chunk.toString("utf8")).slice(-4096);
+      const m = /out_time_(?:us|ms)=(\d+)/.exec(buf);
+      if (m && Number(m[1]) > 0) {
+        part.videoStart = new Date(Date.now() - Number(m[1]) / 1000);
+        log.info(`part ${index} first frame ${part.videoStart.getTime() - part.started.getTime()}ms after spawn`);
+      }
+    });
     log.info(`recording part ${index} -> ${path.basename(file)} (${this.o.encoder})`);
     return this.current;
   }

@@ -39,6 +39,9 @@ const MEDIA_TYPES: Record<string, string> = {
   ".mkv": "video/x-matroska",
   ".png": "image/png",
   ".json": "application/json",
+  ".vtt": "text/vtt; charset=utf-8",
+  ".srt": "application/x-subrip; charset=utf-8",
+  ".txt": "text/plain; charset=utf-8",
 };
 const FILE_RE = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 
@@ -113,6 +116,10 @@ interface Recording {
   videoBytes: number | null;
   parts: { index: number; started: string; ended: string | null }[];
   chapters: { title: string; at: number }[];
+  /** From the transcriber's transcript.status.json, if it has seen this one. */
+  transcript: { status: string; stage: string | null; progress: number | null; error: string | null } | null;
+  /** Side files that exist: subtitles, transcript, Zoom captions, speakers. */
+  files: { vtt?: string; srt?: string; txt?: string; transcript?: string; zoomCaptions?: string; speakers?: string };
 }
 
 function listRecordings(out: string, sched: Scheduler, tz: string): Recording[] {
@@ -137,8 +144,18 @@ function listRecordings(out: string, sched: Scheduler, tz: string): Recording[] 
       const when = p ? clock.format(new Date(p.started)) : "?";
       chapters.push({ title: `Part ${g.beforePart} (${when}, after ${Math.round(g.seconds)}s gap)`, at: g.atOffsetSeconds });
     }
+    const has = (f: string) => existsSync(path.join(out, slug, f)) ? f : undefined;
+    const st = (() => { try { return JSON.parse(readFileSync(path.join(out, slug, "transcript.status.json"), "utf8")); } catch { return null; } })();
+    const files = {
+      vtt: has(`${slug}.vtt`), srt: has(`${slug}.srt`), txt: has(`${slug}.txt`),
+      transcript: has(`${slug}.transcript.json`), zoomCaptions: has(`${slug}.zoom-captions.vtt`),
+      speakers: has(`${slug}.speakers.json`),
+    };
     recs.push({
       slug,
+      transcript: st ? { status: String(st.status ?? "unknown"), stage: st.stage ?? null,
+        progress: typeof st.progress === "number" ? st.progress : null, error: st.error ?? null } : null,
+      files: Object.fromEntries(Object.entries(files).filter(([, v]) => v)) as Recording["files"],
       scheduledStart: m.scheduledStart ?? null,
       outcome: m.outcome ?? "unknown",
       active: sched.isActive(slug),

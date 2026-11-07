@@ -28,6 +28,25 @@ Output in `recordings/<slug>/`:
 `docker stop` / SIGTERM closes the current part cleanly and still stitches.
 A second Ctrl-C bails immediately.
 
+## Everything together (web interface + transcription)
+
+    docker compose up -d --build
+    open http://127.0.0.1:8080/
+
+`compose.yaml` runs the web server/scheduler and the transcriber. Finished
+recordings get subtitles (`<slug>.vtt`), a transcript (`.txt`, `.srt`,
+`.transcript.json`) and, in the player, a searchable transcript you can click
+to jump around. CPU-only; roughly half the meeting length to transcribe on a
+6-core machine, longer for big models. The transcriber waits while a capture
+is running so it doesn't take its CPU. Model choice: `WHISPER_MODEL`
+(default `distil-large-v3`). Edit `transcriber/vocab.txt` with council and
+place names; that's where Whisper slips most.
+
+Alongside the video, captures also record who Zoom shows as the active
+speaker (`<slug>.speakers.json`, used to label the transcript) and Zoom's own
+live captions when the host has them on (`<slug>.zoom-captions.vtt`, a second
+subtitle track in the player, kept as a reference).
+
 ## Web interface
 
 Schedule meetings, watch a capture live, and replay recordings in a browser:

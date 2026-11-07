@@ -16,7 +16,8 @@
 import { mkdirSync, renameSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { Recorder, type Encoder, type Part } from "./recorder.js";
-import { stitch, type Gap } from "./stitch.js";
+import { stitch, type Gap, type PartOffset } from "./stitch.js";
+import { appendTimeline, finalizeTimelines, type TimelineKind } from "./timeline.js";
 import { Waker, logger } from "./util.js";
 import { State, ZoomSession } from "./zoom.js";
 
@@ -68,6 +69,7 @@ export class Capture {
   private ffFastFails = 0;
   private ffRetryAt = 0;
   private dumpSeq = 0;
+  private lastSpeaker = "";
 
   constructor(private cfg: Config) {
     this.dir = path.join(cfg.out, cfg.slug);
@@ -104,6 +106,7 @@ export class Capture {
         file: path.basename(p.file),
         started: p.started.toISOString(),
         ended: p.ended?.toISOString() ?? null,
+        videoStart: p.videoStart?.toISOString() ?? null,
         exitCode: p.exitCode,
       })),
       events: this.events,
@@ -140,6 +143,8 @@ export class Capture {
       this.event("session_open", { attempt });
       const session = new ZoomSession(cfg.link, cfg.displayName, cfg.width, cfg.height, cfg.auth);
       session.onChange = () => this.waker.kick();
+      session.onSpeaker = (name) => { this.lastSpeaker = name; this.track("speakers", name); };
+      session.onCaption = (text) => this.track("captions", text);
       let result: SessionResult = "interrupted";
       try {
         await session.open();
@@ -149,6 +154,8 @@ export class Capture {
         this.event("session_error", { error: String(e).slice(0, 300) });
       } finally {
         session.onChange = () => {};
+        session.onSpeaker = () => {};
+        session.onCaption = () => {};
         // Unconditional: if ffmpeg already died, stop() just closes the part.
         await this.rec.stop();
         await session.close();
@@ -181,13 +188,39 @@ export class Capture {
 
     let output: string | null = null;
     let gaps: Gap[] = [];
+    let offsets: PartOffset[] = [];
+    let sidecars: Record<string, string> = {};
     if (this.parts.length) {
       this.event("stitching", { parts: this.parts.length });
-      ({ output, gaps } = await stitch(this.parts, this.dir, cfg.slug, cfg.tz));
+      ({ output, gaps, offsets } = await stitch(this.parts, this.dir, cfg.slug, cfg.tz));
+      if (output) {
+        try {
+          sidecars = finalizeTimelines(this.dir, cfg.slug, offsets,
+            new Map(this.parts.map((p) => [p.index, p.videoStart ?? p.started])));
+        } catch (e) {
+          log.warn("couldn't write speaker/caption timelines", e);
+        }
+      }
     }
-    this.writeManifest({ output: output ? path.basename(output) : null, gaps });
+    this.writeManifest({ output: output ? path.basename(output) : null, gaps, offsets, sidecars });
     log.info(`finished: outcome=${this.outcome} output=${output}`);
     return output ? 0 : 1;
+  }
+
+  /** Record a speaker/caption change against the part being recorded.
+   *  Outside a part (waiting room, between parts) there's no video to pin
+   *  it to, so it's dropped; the speaker is re-stated when a part starts. */
+  private track(kind: TimelineKind, value: string): void {
+    const part = this.rec.current;
+    if (!this.rec.alive || !part || part.ended) return;
+    try {
+      appendTimeline(this.dir, kind, {
+        t: new Date().toISOString(), part: part.index,
+        partOffset: +((Date.now() - part.started.getTime()) / 1000).toFixed(2), value,
+      });
+    } catch (e) {
+      log.debug(`couldn't append ${kind}`, e);
+    }
   }
 
   private async runSession(session: ZoomSession): Promise<SessionResult> {
@@ -248,6 +281,8 @@ export class Capture {
           if (Date.now() >= this.ffRetryAt) {
             this.parts.push(this.rec.start(this.parts.length + 1));
             this.writeManifest();
+            // Each part starts with whoever was already speaking.
+            if (this.lastSpeaker) this.track("speakers", this.lastSpeaker);
           }
         }
         if (settling) {

@@ -21,14 +21,27 @@ Zoom, and publish the official video 24-48h later. The goal is having video
 - `src/login.ts` `zoom-capture login`: human signs in once, saves storage state.
 - `src/serve.ts` `zoom-capture serve`: node:http web UI + JSON API, Range
   serving for video, optional Basic auth (CAPTURE_WEB_TOKEN), same-origin
-  check on writes. Only serves .mp4/.mkv/.png/.json directly inside a slug dir.
+  check on writes. Only serves .mp4/.mkv/.png/.json/.vtt/.srt/.txt directly inside
+  a slug dir.
 - `src/jobs.ts` scheduler: jobs.json (atomic), launches the normal CLI as a
   child per job with its own Xvfb display (:100+) and null sink (zoom_<n>)
   via DISPLAY / CAPTURE_SINK / PULSE_SINK. Never touches the default source.
   Links are restricted to *.zoom.us or bare IDs; the meeting password never
   leaves the server (API returns meetingId only).
 - `src/webui.ts` the page, as a String.raw template: its script must not use
-  backticks or dollar-brace. All data goes in via textContent.
+  backticks or dollar-brace. All data goes in via textContent; build children
+  with `fill()`, not `replaceChildren()` (which renders a null arg as "null").
+- `src/timeline.ts` active speaker + Zoom captions: appended per change to
+  `speakers.jsonl` / `captions.jsonl` while recording, then mapped onto the
+  stitched clock as `<slug>.speakers.json`, `<slug>.zoom-captions.{json,vtt}`.
+  Offsets use each part's `videoStart` (first captured frame, from ffmpeg
+  `-progress`), not spawn time: ffmpeg takes ~1.5-2.6s to open x11grab+pulse.
+- `transcriber/` separate Python container (WhisperX, CPU int8). Watches
+  recordings/, writes `<slug>.{vtt,srt,txt,transcript.json}` and
+  `transcript.status.json`; waits while a capture is running. Uses
+  `<slug>.speakers.json` to label segments (`zoom_speaker`).
+  `requirements.txt` is a pinned freeze; edit `requirements.in`.
+- `compose.yaml` runs the web server and the transcriber together.
 - `entrypoint.sh` starts Xvfb + PulseAudio with two null sinks (see below).
 
 ## Invariants, don't break these
@@ -98,6 +111,29 @@ graceful server SIGTERM, playback + chapter seek in desktop Chrome, layout at
 test playback with `channel: "chrome"`. Not yet run: a scheduled job against
 a live meeting end to end, two overlapping live captures.
 
+Speaker + captions (2026-11-06), verified offline only, through the real CLI
+on a fake meeting page (speaker changes every 6s, captions growing word by
+word, ffmpeg SIGKILLed mid-run): spans follow the 6s cadence across the part
+boundary, graceful-stop timing within 0.19s, captions merge to one cue per
+utterance. NOT verified live: the selectors against a real meeting with
+several participants, and Zoom captions at all (none of the test meetings
+had them on). The "turn captions on" click (`MARKERS.showCaptions`) is a
+guess; it clicks at most once and never once caption text is flowing.
+
+Hard kill loses more than the "about a second" noted above: measured ~2s of
+video at the end of a SIGKILLed ffmpeg part (x264 lookahead + frame threads
+on top of the 1s Matroska cluster). `-tune zerolatency` would cut it at some
+compression cost; not changed.
+
+Transcriber (2026-11-06, Docker VM, 6 CPUs, distil-large-v3 int8): synthetic
+council dialogue (macOS `say`, 3 voices, 42s) transcribed with every line
+correct apart from US spelling ("favor") and some casing; Zoom speaker labels
+correct on all 7 turns. Realtime factor 0.51 on continuous speech (so ~1.5h
+for a 3h meeting here); first run also downloads ~1.5GB of models into the
+`models` volume. Web player: transcript track on by default, Zoom captions
+as a second track, clickable/searchable transcript panel, all checked in
+desktop Chrome and at 390px.
+
 Invalid links: "This meeting link is invalid (3,001)" -> `invalid` state ->
 outcome `invalid_link` within seconds (was: 2h of `loading`).
 
@@ -143,14 +179,12 @@ Still untested live:
    the scheduled-job path end to end, with `CAPTURE_DEBUG=1`. Re-run
    `zoom-capture login` shortly before. (Debug dumps exist; the interruption
    tests passed on the test meeting.)
-2. Speaker/active-speaker metadata: the web client's DOM exposes the participant
-   list and active speaker indicator. Have `pageAgent` emit timestamped
-   active-speaker changes into the manifest; this is for labelling transcript
-   speakers later (only useful when speakers are separate Zoom participants).
-3. Transcription service (separate Python container, CPU-only for now):
-   WhisperX on the stitched MP4, pyannote diarization with a speaker range,
-   voiceprint naming, `.vtt` subtitles in the web player. Full design and
-   phased build order in `docs/transcription-plan.md`.
+2. Done offline: active-speaker and Zoom-caption timelines. Verify on the
+   committee dry run (step 1): check `speakers.json` names against the video,
+   and whether the meeting has captions (and whether the CC click worked).
+3. Transcription: Phase 1 built (transcribe + align, subtitles, transcript
+   panel). Next is Phase 2, pyannote diarization (needs HF_TOKEN), then
+   voiceprints. See `docs/transcription-plan.md`.
 
 ## Run
 

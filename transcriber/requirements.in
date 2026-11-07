@@ -1,0 +1,3 @@
+# Direct deps. requirements.txt is the pinned, resolved set (pip freeze from
+# a working build); regenerate it when bumping anything here.
+whisperx

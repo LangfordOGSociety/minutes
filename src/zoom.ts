@@ -59,6 +59,20 @@ export const MARKERS = {
   // Footer controls stay in the DOM when auto-hidden. Plain CSS only, these
   // run in the page via querySelector.
   inMeeting: ["button[aria-label*='Leave' i]", ".footer__leave-btn"],
+  // Who Zoom shows as speaking (live DOM, 2026-11-05): the name label on the
+  // big tile in speaker view, else the highlighted thumbnail in the strip
+  // (e.g. while a screen share takes the main area). First match wins.
+  // Zoom's own live captions (CC / live transcription). The container is in
+  // the DOM (empty) in every meeting; it fills only when the host has
+  // captions on and this participant shows them. Text read via textContent.
+  captions: [".lt-subtitle-wrap"],
+  // Best guess, NOT seen live yet: the footer / More-menu item that turns
+  // captions on for this participant. Matched against the accessible name.
+  showCaptions: String.raw`^\s*(show captions|captions|closed captions?|cc)\s*$`,
+  activeSpeaker: [
+    ".speaker-active-container__video-frame .video-avatar__avatar-footer",
+    ".speaker-bar-container__video-frame--active .video-avatar__avatar-footer",
+  ],
   name: ["#input-for-name", "input[placeholder*='name' i]"],
   // While in the meeting, ended/reconnect text is only trusted inside these
   // overlays, so chat messages and captions can't end or drop a recording.
@@ -84,7 +98,9 @@ export const MARKERS = {
     .meeting-header,
     #wc-footer,
     .speaker-bar-container__horizontal-view-wrap,
-    .sharee-container__indicator
+    .sharee-container__indicator,
+    /* Zoom captions: recorded as text (captions.jsonl), not burned in */
+    .lt-subtitle-wrap
       { opacity: 0 !important; }`,
 };
 const JOIN_BUTTON = /^\s*join\s*$/i;
@@ -158,6 +174,38 @@ function pageAgent(m: Markers): void {
       last = s;
       try { w.__ccSignal?.(s); } catch { /* binding not ready yet */ }
     }
+    // Active speaker, only while in the meeting. "" (nobody / not shown) is
+    // reported too, so a gap in speaking is visible downstream.
+    const sp = s === "in_meeting" ? speakerName() : "";
+    if (sp !== lastSpeaker) {
+      lastSpeaker = sp;
+      try { w.__ccSpeaker?.(sp); } catch { /* binding not ready yet */ }
+    }
+    const cap = s === "in_meeting" ? captionText() : "";
+    if (cap !== lastCaption) {
+      lastCaption = cap;
+      try { w.__ccCaption?.(cap); } catch { /* binding not ready yet */ }
+    }
+  };
+  let lastSpeaker = "";
+  let lastCaption = "";
+  const captionText = (): string => {
+    for (const sel of m.captions) {
+      try {
+        const t = (document.querySelector(sel)?.textContent ?? "").replace(/\s+/g, " ").trim();
+        if (t) return t.slice(0, 2000);
+      } catch { /* bad selector */ }
+    }
+    return "";
+  };
+  const speakerName = (): string => {
+    for (const sel of m.activeSpeaker) {
+      try {
+        const t = (document.querySelector(sel)?.textContent ?? "").replace(/\s+/g, " ").trim();
+        if (t) return t.slice(0, 80);
+      } catch { /* bad selector */ }
+    }
+    return "";
   };
   const addStyle = () => {
     if (!m.hideCss || document.getElementById("__cc-hide")) return;
@@ -169,7 +217,11 @@ function pageAgent(m: Markers): void {
   const observe = () => {
     addStyle();
     new MutationObserver(() => { timer ??= setTimeout(check, 400); })
-      .observe(document.documentElement, { childList: true, subtree: true, characterData: true });
+      // class attributes too: the active-speaker highlight in the thumbnail
+      // strip is only a class change.
+      .observe(document.documentElement, {
+        childList: true, subtree: true, characterData: true, attributes: true, attributeFilter: ["class"],
+      });
     check();
   };
   if (document.documentElement) observe();
@@ -198,9 +250,16 @@ export class ZoomSession {
   private lastJoinClick = 0;
   private audioJoined = false;
   private muteChecked = false;
+  private captionsClicked = false;
+  private captionsSeen = false;
+  private inMeetingSince = 0;
 
   /** Called whenever the page agent reports a change, or the browser dies. */
   onChange: (state: string) => void = () => {};
+  /** Called when the active speaker Zoom shows changes ("" = none shown). */
+  onSpeaker: (name: string) => void = () => {};
+  /** Called when Zoom's caption text changes ("" = cleared). */
+  onCaption: (text: string) => void = () => {};
 
   constructor(link: string, private displayName: string,
               private width: number, private height: number,
@@ -241,6 +300,14 @@ export class ZoomSession {
     // Mic only; the container's default source is a silent null sink so
     // nothing ever reaches the meeting. No camera permission at all.
     await ctx.grantPermissions(["microphone"], { origin: "https://app.zoom.us" });
+    await ctx.exposeBinding("__ccCaption", (_src, text: string) => {
+      if (text) this.captionsSeen = true;
+      this.onCaption(String(text ?? "").slice(0, 2000));
+    });
+    await ctx.exposeBinding("__ccSpeaker", (_src, name: string) => {
+      log.debug(`active speaker: ${name || "(none)"}`);
+      this.onSpeaker(String(name ?? "").slice(0, 80));
+    });
     await ctx.exposeBinding("__ccSignal", (_src, s: string) => {
       log.debug(`agent signal: ${s}`);
       this.onChange(s);
@@ -402,6 +469,19 @@ export class ZoomSession {
               log.info("mic muted");
             }
             this.muteChecked = true;
+          }
+        }
+        // Turn on Zoom's captions so they can be recorded as text. Only
+        // present when the host enabled captions. Click at most once per
+        // session and never once captions are flowing: the same control
+        // usually toggles, and a second click would hide them again.
+        this.inMeetingSince ||= Date.now();
+        if (!this.captionsClicked && !this.captionsSeen && Date.now() - this.inMeetingSince > 8_000) {
+          const cc = await this.findButton(new RegExp(MARKERS.showCaptions, "i"));
+          if (cc) {
+            this.captionsClicked = true;
+            log.info("turning on Zoom captions");
+            await cc.click();
           }
         }
       }
