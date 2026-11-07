@@ -61,7 +61,9 @@ Open http://127.0.0.1:8080/ (any username, password = `CAPTURE_WEB_TOKEN`).
 
 - **Schedule**: paste a Zoom link or meeting ID and the start time (server
   timezone). It joins `--lead-min` (15) minutes early.
-- **Captures**: status of each job. *Watch* shows a screenshot of exactly
+- **Captures**: status of each job. *Edit* changes a scheduled capture's
+  link, start, name or Zoom display name (leave the link blank to keep it).
+  *Watch* shows a screenshot of exactly
   what's being recorded (every 5s) and the capture log. *Stop* closes the
   current part and stitches what's there.
 - **Recordings**: play any stitched MP4 in the browser, jump between

@@ -28,6 +28,10 @@ Zoom, and publish the official video 24-48h later. The goal is having video
   via DISPLAY / CAPTURE_SINK / PULSE_SINK. Never touches the default source.
   Links are restricted to *.zoom.us or bare IDs; the meeting password never
   leaves the server (API returns meetingId only).
+  Scheduled/queued jobs can be edited (`PATCH /api/jobs/:id`, Edit button):
+  blank fields keep their value (the page never has the link, so a blank
+  link means "keep"), all fields validated before any is applied, refused
+  once the job starts launching.
 - `src/webui.ts` the page, as a String.raw template: its script must not use
   backticks or dollar-brace. All data goes in via textContent; build children
   with `fill()`, not `replaceChildren()` (which renders a null arg as "null").

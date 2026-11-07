@@ -6,6 +6,7 @@
  *   GET    /api/info               server timezone etc. for the form
  *   GET    /api/jobs               scheduled / running / finished captures
  *   POST   /api/jobs               {link, start, slug?, name?}
+ *   PATCH  /api/jobs/:id           edit a scheduled capture {link?, start?, slug?, name?}
  *   DELETE /api/jobs/:id           cancel, or stop a running capture
  *   GET    /api/jobs/:id/screen    PNG of what the bot's display shows now
  *   GET    /api/jobs/:id/log       tail of that capture's log
@@ -233,18 +234,31 @@ export async function serve(o: ServeOpts, entry: string): Promise<number> {
             // The invite link includes the meeting password; show the ID only.
             return send(res, 200, sched.list().map((j) => ({ ...j, link: undefined, meetingId: meetingId(j.link) })));
           }
-          if (parts.length === 2 && method === "POST") {
-            if (!/^application\/json\b/i.test(req.headers["content-type"] ?? "")) return send(res, 415, "send JSON");
-            let body: unknown;
-            try { body = JSON.parse(await readBody(req)); } catch (e) {
+          const jsonBody = async (): Promise<Record<string, unknown> | null> => {
+            if (!/^application\/json\b/i.test(req.headers["content-type"] ?? "")) { send(res, 415, "send JSON"); return null; }
+            try {
+              const b = JSON.parse(await readBody(req));
+              if (b && typeof b === "object" && !Array.isArray(b)) return b as Record<string, unknown>;
+            } catch (e) {
               if (e instanceof BadRequest) throw e;
-              return send(res, 400, { error: "body must be JSON" });
             }
-            const job = sched.add((body ?? {}) as Record<string, unknown>);
+            send(res, 400, { error: "body must be a JSON object" });
+            return null;
+          };
+          if (parts.length === 2 && method === "POST") {
+            const body = await jsonBody();
+            if (!body) return;
+            const job = sched.add(body);
             return send(res, 201, { ...job, link: undefined, meetingId: meetingId(job.link) });
           }
           const job = parts[2] ? sched.get(parts[2]) : undefined;
           if (!job) return send(res, 404, { error: "no such job" });
+          if (parts.length === 3 && method === "PATCH") {
+            const body = await jsonBody();
+            if (!body) return;
+            const j = sched.update(job.id, body);
+            return send(res, 200, { ...j, link: undefined, meetingId: meetingId(j.link) });
+          }
           if (parts.length === 3 && method === "DELETE") {
             const j = sched.cancel(job.id);
             return send(res, 200, { ...j, link: undefined, meetingId: meetingId(j.link) });

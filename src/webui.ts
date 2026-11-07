@@ -47,6 +47,10 @@ button { font: inherit; border-radius: 7px; border: 1px solid var(--line); backg
 button:hover { border-color: var(--muted); }
 button.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); font-weight: 600; padding: 9px 14px; margin-top: 14px; width: 100%; }
 button.danger { color: var(--bad); }
+form .actions { display: flex; gap: 8px; align-items: stretch; }
+form .actions button.primary { flex: 1; }
+#editcancel { margin-top: 14px; }
+#editcancel[hidden] { display: none; }
 .msg { font-size: 13px; margin-top: 10px; min-height: 1em; }
 .msg.err { color: var(--bad); } .msg.ok { color: var(--ok); }
 .list { display: flex; flex-direction: column; gap: 8px; }
@@ -95,7 +99,7 @@ a { color: var(--accent); }
 <main>
   <div>
     <section>
-      <h2>Schedule a meeting</h2>
+      <h2 id="formtitle">Schedule a meeting</h2>
       <form id="form" autocomplete="off">
         <label for="link">Zoom link or meeting ID</label>
         <input id="link" name="link" required placeholder="https://us06web.zoom.us/j/123456789?pwd=...">
@@ -106,7 +110,10 @@ a { color: var(--accent); }
         <input id="slug" name="slug" placeholder="council-2026-11-16" pattern="[A-Za-z0-9][A-Za-z0-9._\-]{0,79}">
         <label for="name">Shown in Zoom as <small>(optional)</small></label>
         <input id="name" name="name" placeholder="Recorder" maxlength="64">
-        <button class="primary" type="submit">Schedule capture</button>
+        <div class="actions">
+          <button class="primary" type="submit" id="submitbtn">Schedule capture</button>
+          <button type="button" id="editcancel" hidden>Cancel edit</button>
+        </div>
         <div class="msg" id="formmsg" role="status"></div>
       </form>
     </section>
@@ -188,6 +195,7 @@ function renderJobs(jobs) {
         if (confirm("Stop recording " + j.slug + "? What's been recorded so far is kept and stitched.")) cancel(j.id);
       } } }));
     } else if (j.status === "scheduled" || j.status === "queued") {
+      actions.appendChild(el("button", { text: editing && editing.id === j.id ? "Editing" : "Edit", on: { click: function () { startEdit(j); } } }));
       actions.appendChild(el("button", { "class": "danger", text: "Cancel", on: { click: function () {
         if (confirm("Cancel " + j.slug + "?")) cancel(j.id);
       } } }));
@@ -195,7 +203,7 @@ function renderJobs(jobs) {
     var sub = "Meeting " + j.meetingId + " · starts " + fmt(j.start) + " · as “" + j.name + "”";
     if (j.outcome) sub += " · outcome " + j.outcome;
     if (j.error) sub += " · " + j.error;
-    box.appendChild(el("div", { "class": "row" + (watching === j.id ? " selected" : "") },
+    box.appendChild(el("div", { "class": "row" + (watching === j.id || (editing && editing.id === j.id) ? " selected" : "") },
       el("div", { "class": "title" }, pill(j.status), j.slug), actions, el("div", { "class": "sub", text: sub })));
   });
 }
@@ -345,9 +353,59 @@ function refresh() {
     .catch(function (e) { fill(document.getElementById("jobs"), el("div", { "class": "empty", text: "Can't reach the server: " + e.message })); });
 }
 
+// "2026-11-09T19:00" for a datetime-local input, in the server's timezone.
+var fmtParts = new Intl.DateTimeFormat("en-CA", { timeZone: TZ, year: "numeric", month: "2-digit", day: "2-digit",
+  hour: "2-digit", minute: "2-digit", hourCycle: "h23" });
+function localInput(iso) {
+  var p = {};
+  fmtParts.formatToParts(new Date(iso)).forEach(function (x) { p[x.type] = x.value; });
+  return p.year + "-" + p.month + "-" + p.day + "T" + p.hour + ":" + p.minute;
+}
+
+// Edit mode reuses the schedule form. The link is never sent to the page
+// (it holds the passcode), so a blank link means "keep the current one".
+var editing = null;
+function setMode(job) {
+  var f = document.getElementById("form");
+  editing = job ? { id: job.id, start: localInput(job.start), slug: job.slug, name: job.name } : null;
+  document.getElementById("formtitle").textContent = job ? "Edit " + job.slug : "Schedule a meeting";
+  document.getElementById("submitbtn").textContent = job ? "Save changes" : "Schedule capture";
+  document.getElementById("editcancel").hidden = !job;
+  f.link.required = !job;
+  f.link.placeholder = job ? "Leave blank to keep meeting " + job.meetingId : "https://us06web.zoom.us/j/123456789?pwd=...";
+  f.reset();
+  if (job) { f.start.value = editing.start; f.slug.value = job.slug; f.name.value = job.name; }
+  if (lastJobs) renderJobs(lastJobs);
+}
+function startEdit(j) {
+  setMode(j);
+  var msg = document.getElementById("formmsg"); msg.className = "msg"; msg.textContent = "";
+  document.getElementById("form").scrollIntoView({ behavior: "smooth", block: "start" });
+}
+document.getElementById("editcancel").addEventListener("click", function () {
+  setMode(null); document.getElementById("formmsg").textContent = "";
+});
+
 document.getElementById("form").addEventListener("submit", function (ev) {
   ev.preventDefault();
   var f = ev.target, msg = document.getElementById("formmsg");
+  if (editing) {
+    // Send only what changed, so an untouched start isn't re-checked.
+    var ch = {};
+    if (f.link.value.trim()) ch.link = f.link.value;
+    if (f.start.value !== editing.start) ch.start = f.start.value;
+    if (f.slug.value.trim() && f.slug.value.trim() !== editing.slug) ch.slug = f.slug.value;
+    if (f.name.value.trim() && f.name.value.trim() !== editing.name) ch.name = f.name.value;
+    if (!Object.keys(ch).length) { msg.className = "msg"; msg.textContent = "Nothing changed."; return; }
+    msg.className = "msg"; msg.textContent = "Saving...";
+    api("PATCH", "/api/jobs/" + editing.id, ch).then(function (j) {
+      setMode(null);
+      msg.className = "msg ok";
+      msg.textContent = "Saved " + j.slug + ": starts " + fmt(j.start) + " as \u201c" + j.name + "\u201d.";
+      refresh();
+    }, function (e) { msg.className = "msg err"; msg.textContent = e.message; });
+    return;
+  }
   var body = { link: f.link.value, start: f.start.value, slug: f.slug.value || undefined, name: f.name.value || undefined };
   msg.className = "msg"; msg.textContent = "Scheduling...";
   api("POST", "/api/jobs", body).then(function (j) {

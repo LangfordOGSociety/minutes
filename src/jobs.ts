@@ -93,6 +93,7 @@ function checkLink(link: string): string {
 export class Scheduler {
   private jobs: Job[] = [];
   private running = new Map<string, Running>();
+  private launching = new Set<string>();
   private file: string;
   private timer?: NodeJS.Timeout;
   private ticking = false;
@@ -136,26 +137,36 @@ export class Scheduler {
     return this.jobs.some((j) => j.slug === slug && ["scheduled", "queued", "running", "stopping"].includes(j.status));
   }
 
-  add(input: NewJob): Job {
-    if (typeof input.link !== "string" || !input.link.trim()) throw new BadRequest("link is required");
-    const link = checkLink(input.link);
-
-    if (typeof input.start !== "string" || !input.start.trim()) throw new BadRequest("start is required");
+  private parseStart(v: string): Date {
     // A bare "2026-11-16T19:00" is local time in the server's TZ, same as the CLI.
-    const start = new Date(input.start.trim());
-    if (Number.isNaN(start.getTime())) throw new BadRequest(`can't parse start time: ${input.start}`);
+    const start = new Date(v.trim());
+    if (Number.isNaN(start.getTime())) throw new BadRequest(`can't parse start time: ${v}`);
     if (start.getTime() < Date.now() - this.o.noShowMs) throw new BadRequest("that start time is too far in the past");
+    return start;
+  }
 
-    const slug = typeof input.slug === "string" && input.slug.trim() ? input.slug.trim() : defaultSlug(start);
+  private checkSlug(slug: string, selfId?: string): string {
     if (!SLUG_RE.test(slug)) throw new BadRequest("name must be letters, digits, '.', '_' or '-' (max 80)");
-    if (this.jobs.some((j) => j.slug === slug && j.status !== "cancelled") || existsSync(path.join(this.o.out, slug))) {
+    if (this.jobs.some((j) => j.id !== selfId && j.slug === slug && j.status !== "cancelled") ||
+        existsSync(path.join(this.o.out, slug))) {
       throw new BadRequest(`a capture named "${slug}" already exists`, 409);
     }
+    return slug;
+  }
 
-    let name = this.o.defaultName;
-    if (typeof input.name === "string" && input.name.trim()) {
-      name = input.name.replace(/[\u0000-\u001f\u007f]/g, "").trim().slice(0, 64);
-    }
+  private static cleanName(v: string): string {
+    return v.replace(/[\u0000-\u001f\u007f]/g, "").trim().slice(0, 64);
+  }
+
+  private static given(v: unknown): v is string { return typeof v === "string" && v.trim() !== ""; }
+
+  add(input: NewJob): Job {
+    if (!Scheduler.given(input.link)) throw new BadRequest("link is required");
+    const link = checkLink(input.link);
+    if (!Scheduler.given(input.start)) throw new BadRequest("start is required");
+    const start = this.parseStart(input.start);
+    const slug = this.checkSlug(Scheduler.given(input.slug) ? input.slug.trim() : defaultSlug(start));
+    const name = Scheduler.given(input.name) ? Scheduler.cleanName(input.name) || this.o.defaultName : this.o.defaultName;
 
     const job: Job = {
       id: randomUUID(), link, start: start.toISOString(), slug, name,
@@ -166,6 +177,30 @@ export class Scheduler {
     log.info(`scheduled ${slug} for ${job.start}`);
     void this.tick();
     return { ...job };
+  }
+
+  /** Edit a job that hasn't launched. Fields left out or blank keep their
+   *  current value (the link is never sent to the browser, so a blank link
+   *  must mean "unchanged"). All fields are checked before any is applied. */
+  update(id: string, input: NewJob): Job {
+    const j = this.get(id);
+    if (!j) throw new BadRequest("no such job", 404);
+    if ((j.status !== "scheduled" && j.status !== "queued") || this.launching.has(id)) {
+      throw new BadRequest(`only scheduled captures can be edited (this one is ${this.launching.has(id) ? "starting" : j.status})`, 409);
+    }
+    const link = Scheduler.given(input.link) ? checkLink(input.link) : j.link;
+    const start = Scheduler.given(input.start) ? this.parseStart(input.start).toISOString() : j.start;
+    const slug = Scheduler.given(input.slug) && input.slug.trim() !== j.slug ? this.checkSlug(input.slug.trim(), id) : j.slug;
+    const name = Scheduler.given(input.name) ? Scheduler.cleanName(input.name) || j.name : j.name;
+    const changed = [link !== j.link && "link", start !== j.start && "start", slug !== j.slug && "slug", name !== j.name && "name"]
+      .filter(Boolean);
+    Object.assign(j, { link, start, slug, name });
+    // A queued job that moved later goes back to waiting for its time.
+    if (j.status === "queued") j.status = "scheduled";
+    this.save();
+    log.info(`edited ${j.slug}: ${changed.join(", ") || "no changes"}`);
+    void this.tick();
+    return { ...j };
   }
 
   /** Cancel a job that hasn't launched, or stop one that's running (the
@@ -241,6 +276,13 @@ export class Scheduler {
   }
 
   private async launch(j: Job): Promise<void> {
+    // Status only becomes "running" after the awaits below; block edits
+    // (slug, link) in between so the child gets what was set up for it.
+    this.launching.add(j.id);
+    try { await this.launchInner(j); } finally { this.launching.delete(j.id); }
+  }
+
+  private async launchInner(j: Job): Promise<void> {
     const n = this.freeDisplay();
     const display = `:${n}`;
     const sink = `zoom_${n}`;
