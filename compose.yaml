@@ -16,6 +16,9 @@ services:
     restart: unless-stopped
     environment:
       CAPTURE_WEB_TOKEN: ${CAPTURE_WEB_TOKEN:-}
+      # Screenshot + every frame's HTML on each state change, in <slug>/debug/.
+      # On for the first real meetings; set CAPTURE_DEBUG=0 in .env to turn off.
+      CAPTURE_DEBUG: ${CAPTURE_DEBUG:-1}
     volumes:
       - ./recordings:/recordings
       - ./auth:/auth
