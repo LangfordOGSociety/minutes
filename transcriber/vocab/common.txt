@@ -1,0 +1,6 @@
+# Always part of Whisper's prompt (initial_prompt), before the council file.
+# Whisper keeps only the last ~220 tokens of the prompt: keep this short.
+Council meeting. Mayor, Councillors, Chief Administrative Officer, Corporate Officer.
+Bylaw, rezoning, development permit, Official Community Plan, staff report, motion,
+moved, seconded, carried, opposed, in camera, delegation, public hearing.
+Lekwungen, Songhees, Xwsepsum, Esquimalt, W̱SÁNEĆ, Tsartlip, Pauquachin, Tsawout, Tseycum, T'Sou-ke, Scia'new.

@@ -27,8 +27,9 @@ services:
     build: ./transcriber
     image: zoom-transcriber
     restart: unless-stopped
+    init: true   # reap ffmpeg children so the container can always stop
     environment:
-      WHISPER_MODEL: ${WHISPER_MODEL:-distil-large-v3}
+      WHISPER_MODEL: ${WHISPER_MODEL:-large-v3-turbo}
       WAIT_FOR_CAPTURES: "1"   # don't take CPU from a live capture
       # Gated pyannote diarization models (Phase 2). Set in .env, never committed.
       HF_TOKEN: ${HF_TOKEN:-}

@@ -86,7 +86,8 @@ a { color: var(--accent); }
 .tline:hover { background: var(--bg); }
 .tline.now { background: color-mix(in srgb, var(--accent) 14%, transparent); }
 .tline .tt { color: var(--muted); font-variant-numeric: tabular-nums; }
-.tline .tw { color: var(--accent); font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tline .tw { color: hsl(var(--h, 220) 60% 36%); font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+@media (prefers-color-scheme: dark) { .tline .tw { color: hsl(var(--h, 220) 70% 72%); } }
 .tline .tx { overflow-wrap: anywhere; }
 @media (max-width: 600px) { .tline { grid-template-columns: 3.6em 1fr; } .tline .tw { grid-column: 2; } .tline .tx { grid-column: 1 / -1; } }
 </style>
@@ -275,17 +276,22 @@ function loadTranscript(r, v, box) {
     var segs = (t && t.segments) || [];
     var search = el("input", { type: "search", placeholder: "Search transcript", "aria-label": "Search transcript" });
     var list = el("div", { "class": "tlist" });
+    // One colour per speaker, in order of first appearance (golden-angle hues).
+    var hues = {}, nh = 0;
+    function who(sg) { return sg.label || sg.zoom_speaker || ""; }
+    function hue(name) { if (!(name in hues)) hues[name] = Math.round((nh++ * 137.5 + 210) % 360); return hues[name]; }
     var rows = segs.map(function (sg) {
+      var w = who(sg);
       var row = el("button", { "class": "tline", type: "button", on: { click: function () { v.currentTime = sg.start; v.play(); } } },
         el("span", { "class": "tt", text: hms(sg.start) }),
-        sg.zoom_speaker ? el("span", { "class": "tw", text: sg.zoom_speaker }) : null,
+        w ? el("span", { "class": "tw", text: w, style: "--h: " + hue(w) }) : null,
         el("span", { "class": "tx", text: (sg.text || "").trim() }));
       row._seg = sg; list.appendChild(row); return row;
     });
     search.addEventListener("input", function () {
       var q = search.value.trim().toLowerCase();
       rows.forEach(function (row) {
-        var hit = !q || (row._seg.text || "").toLowerCase().indexOf(q) >= 0 || (row._seg.zoom_speaker || "").toLowerCase().indexOf(q) >= 0;
+        var hit = !q || (row._seg.text || "").toLowerCase().indexOf(q) >= 0 || who(row._seg).toLowerCase().indexOf(q) >= 0;
         row.hidden = !hit;
       });
     });
@@ -302,7 +308,9 @@ function loadTranscript(r, v, box) {
     fill(box, 
       el("div", { "class": "thead" }, el("h4", { text: "Transcript" }), search),
       segs.length ? list : el("div", { "class": "hint", text: "No speech was found." }),
-      el("div", { "class": "hint", text: "Whisper " + (t.model || "") + " transcript. Names are Zoom's active-speaker label, not voice ID. Times in " + TZ + "." }));
+      el("div", { "class": "hint", text: "Whisper " + (t.model || "") + " transcript. " +
+        (t.diarization ? t.diarization.speakers_found + " voices found (pyannote); a voice shows a Zoom name only when one participant matched one voice."
+                       : "Names are Zoom's active-speaker label, not voice ID.") + " Times in " + TZ + "." }));
   }, function (e) { fill(box, el("div", { "class": "hint", text: "Couldn't load the transcript: " + e.message })); });
 }
 

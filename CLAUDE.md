@@ -43,7 +43,13 @@ Zoom, and publish the official video 24-48h later. The goal is having video
 - `transcriber/` separate Python container (WhisperX, CPU int8). Watches
   recordings/, writes `<slug>.{vtt,srt,txt,transcript.json}` and
   `transcript.status.json`; waits while a capture is running. Uses
-  `<slug>.speakers.json` to label segments (`zoom_speaker`).
+  `<slug>.speakers.json` to label segments (`zoom_speaker`). Phase 2:
+  pyannote diarization (HF_TOKEN in `.env`), voices shown as "Speaker N",
+  and a voice gets a Zoom name only on a one-to-one match (`name_speakers`).
+  Model large-v3-turbo: distil-large-v3 ignores the vocab prompt entirely.
+  Vocab is `vocab/common.txt` + the council file matching the slug prefix;
+  faster-whisper keeps only the last ~223 prompt tokens, so keep it short.
+  `<slug>/transcribe.json` overrides vocab and speaker counts.
   `requirements.txt` is a pinned freeze; edit `requirements.in`.
 - `compose.yaml` runs the web server and the transcriber together.
 - `entrypoint.sh` starts Xvfb + PulseAudio with two null sinks (see below).
@@ -209,9 +215,10 @@ Still untested live:
 2. Done offline: active-speaker and Zoom-caption timelines. Verify on the
    committee dry run (step 1): check `speakers.json` names against the video,
    and whether the meeting has captions (and whether the CC click worked).
-3. Transcription: Phase 1 built (transcribe + align, subtitles, transcript
-   panel). Next is Phase 2, pyannote diarization (needs HF_TOKEN), then
-   voiceprints. See `docs/transcription-plan.md`.
+3. Transcription: Phases 1-2 built (transcribe + align + diarization,
+   subtitles, transcript panel). Next is Phase 3, voiceprints, which should
+   also fix one person split into several "Speaker N". See
+   `docs/transcription-plan.md`.
 
 ## Run
 

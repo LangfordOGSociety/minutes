@@ -1,7 +1,8 @@
 # Transcription service plan (CPU-only)
 
-Status: Phase 1 built and tested 2026-11-06 (see "Phase 1 results" at the
-end). Phases 2-3 are still design.
+Status: Phase 1 built and tested 2026-11-06, Phase 2 (diarization) built
+and tested on a real council meeting 2026-11-07 (see the results sections
+at the end). Phase 3 is still design.
 
 Goal: subtitles and a speaker-labelled transcript for every recording, the
 same night, on CPU. A GPU later should only change `device` / `compute_type`.
@@ -29,7 +30,7 @@ transcriber/
   requirements.txt       whisperx, pyannote.audio, pinned
   transcribe.py          watch loop + pipeline
   enroll.py              build voiceprints for known speakers
-  vocab.txt              names and terms to bias recognition
+  vocab/                 common.txt + one file per council (names, places)
 models/                  volume: cached model weights (download once, then offline)
 voices/                  volume: <name>.npy speaker embeddings
 ```
@@ -44,7 +45,7 @@ voices/                  volume: <name>.npy speaker embeddings
    and its chapters, with no offset bookkeeping across reconnect gaps, and
    speaker labels stay consistent across the whole meeting.
 3. **Transcribe**: WhisperX, `compute_type=int8`, `language="en"`, VAD on
-   (skips silence, recesses, pre-meeting waits). Pass `vocab.txt` as the
+   (skips silence, recesses, pre-meeting waits). Pass `vocab/` as the
    initial prompt: "Langford", council and staff names, street names, bylaw
    terms. Names are Whisper's weakest point. Model: an English distilled or
    turbo large-v3 variant for CPU speed, `medium.en` as the fallback. Check
@@ -158,3 +159,30 @@ the public stay "Speaker N".
 - Not yet: a long real meeting (the 3h CPU estimate is extrapolated, and the
   -40 dB gate needs checking against quiet real speakers), Canadian spelling,
   Phase 2 diarization.
+
+## Phase 2 results (2026-11-07, real meeting)
+
+Test: Langford regular council, 2026-10-05, 1h39m, official video (room
+mics, in person and Zoom delegations). Docker VM, 6 CPUs.
+
+- Model: distil-large-v3 ignores both `initial_prompt` and `hotwords`
+  (names prompt changed almost nothing). large-v3-turbo follows them at the
+  same CPU speed, so it's the default now. On the full meeting it fixed
+  Goodmanson (0 -> 16), Yacucha, Watmough, Guiry; "Walford" still beats
+  "Walfred" 4 to 2. First Nations names in the acknowledgement stay garbled.
+- Vocab: `vocab/common.txt` + `vocab/<council>.txt`. faster-whisper keeps
+  only the last ~223 prompt tokens; Langford's is 188, Oak Bay's 175.
+- Diarization: pyannote/speaker-diarization-community-1 (pyannote.audio
+  4.0.7). 97% of its CPU time is speaker embeddings, which scale with
+  1/step of the 10s window. Default step 0.1 took 8110s for the meeting
+  (RTF 1.36 for diarization alone). `DIARIZE_STEP=0.25`: 3812s, 5% DER
+  from 0.1 on a 5 min slice; 0.5 merged two speakers there.
+- Whole pipeline at step 0.25: transcribe 1957s, align 363s, diarize 3812s,
+  RTF 1.03. A 3h meeting is about 3h: same night, not same hour.
+- 23 voices found where about 15-18 people spoke: the long turns (mayor,
+  moderator, staff, delegations) come out as one voice each, short replies
+  ("Thank you very much") are often a voice of their own. Setting
+  `min/max_speakers` doesn't fix that; voiceprints (Phase 3) should.
+- Silence gate: 0 segments dropped, quietest real line -34 dB, so -40 dB
+  holds on room mics.
+

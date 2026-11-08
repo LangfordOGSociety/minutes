@@ -36,11 +36,23 @@ A second Ctrl-C bails immediately.
 `compose.yaml` runs the web server/scheduler and the transcriber. Finished
 recordings get subtitles (`<slug>.vtt`), a transcript (`.txt`, `.srt`,
 `.transcript.json`) and, in the player, a searchable transcript you can click
-to jump around. CPU-only; roughly half the meeting length to transcribe on a
-6-core machine, longer for big models. The transcriber waits while a capture
-is running so it doesn't take its CPU. Model choice: `WHISPER_MODEL`
-(default `distil-large-v3`). Edit `transcriber/vocab.txt` with council and
-place names; that's where Whisper slips most.
+to jump around, with speakers separated by voice. CPU-only. The transcriber
+waits while a capture is running so it doesn't take its CPU. Model choice:
+`WHISPER_MODEL` (default `large-v3-turbo`).
+
+Names are where Whisper slips most. `transcriber/vocab/common.txt` is always
+used, plus the council's own file (`langford.txt`, `oakbay.txt`) picked from
+the recording's slug prefix, or named in `<slug>/transcribe.json` as
+`{"vocab": "oakbay"}`. Keep each council's list to the mayor, councillors,
+key staff and place names: Whisper only reads about 220 tokens of it.
+
+Speaker separation (pyannote) needs a free Hugging Face token once, to
+download the model: accept the terms of
+`pyannote/speaker-diarization-community-1`, then put `HF_TOKEN=...` in `.env`
+next to `compose.yaml` (it's git- and docker-ignored). Without it,
+transcripts still work, labelled only by Zoom's active speaker. Speaker count
+hints per recording go in `<slug>/transcribe.json`:
+`{"min_speakers": 8, "max_speakers": 20}`.
 
 Alongside the video, captures also record who Zoom shows as the active
 speaker (`<slug>.speakers.json`, used to label the transcript) and Zoom's own

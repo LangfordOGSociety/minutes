@@ -13,7 +13,8 @@ COPY requirements.txt ./
 # CPU wheels for torch (no CUDA download).
 RUN pip install --no-cache-dir --extra-index-url https://download.pytorch.org/whl/cpu -r requirements.txt
 
-COPY transcribe.py vocab.txt ./
+COPY transcribe.py ./
+COPY vocab/ ./vocab/
 # Owned by app so a fresh named volume inherits writable dirs.
 RUN mkdir -p /models/hf /models/torch /models/cache && chown -R app:app /models
 USER app
