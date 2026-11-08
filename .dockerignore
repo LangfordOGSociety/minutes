@@ -2,3 +2,5 @@ node_modules
 dist
 recordings
 auth
+.env
+.env.*
