@@ -10,6 +10,8 @@
  *   DELETE /api/jobs/:id           cancel, or stop a running capture
  *   GET    /api/jobs/:id/screen    PNG of what the bot's display shows now
  *   GET    /api/jobs/:id/log       tail of that capture's log
+ *   GET    /api/session            saved Zoom login: ok|expired|missing|error, last check
+ *   POST   /api/session/check      check (and refresh) the saved login now
  *   GET    /api/recordings         every <out>/<slug>/manifest.json, summarized
  *   GET    /media/:slug/:file      video and stills, with Range support
  *
@@ -23,6 +25,7 @@ import http from "node:http";
 import path from "node:path";
 import { timingSafeEqual } from "node:crypto";
 import { BadRequest, Scheduler, type SchedulerOpts } from "./jobs.js";
+import { SessionKeeper, type KeeperOpts } from "./session.js";
 import { SLUG_RE, logger } from "./util.js";
 import { PAGE } from "./webui.js";
 
@@ -33,6 +36,7 @@ export interface ServeOpts extends Omit<SchedulerOpts, "entry"> {
   port: number;
   token: string | null;
   tz: string;
+  session: Omit<KeeperOpts, "auth" | "out" | "leadMs">;
 }
 
 const MEDIA_TYPES: Record<string, string> = {
@@ -205,6 +209,8 @@ function screenshot(display: string, width: number, height: number): Promise<Buf
 export async function serve(o: ServeOpts, entry: string): Promise<number> {
   const sched = new Scheduler({ ...o, entry });
   sched.start();
+  const keeper = new SessionKeeper({ ...o.session, auth: o.auth, out: o.out, leadMs: o.leadMs }, () => sched.list());
+  keeper.start();
   const page = PAGE.replace("__TZ__", JSON.stringify(o.tz));
 
   const server = http.createServer(async (req, res) => {
@@ -227,6 +233,15 @@ export async function serve(o: ServeOpts, entry: string): Promise<number> {
         if (!read && !sameOrigin(req)) return send(res, 403, "cross-origin request refused");
         if (parts[1] === "info" && read) {
           return send(res, 200, { tz: o.tz, tzdata: process.versions.tz ?? null, leadMinutes: o.leadMs / 60_000, maxConcurrent: o.maxConcurrent });
+        }
+        if (parts[1] === "session") {
+          if (parts.length === 2 && read) return send(res, 200, keeper.get());
+          if (parts[2] === "check" && parts.length === 3 && method === "POST") {
+            if (sched.list().some((j) => j.status === "running" || j.status === "stopping")) {
+              return send(res, 409, { error: "a capture is running; the login is checked after it ends" });
+            }
+            return send(res, 200, await keeper.check("checked from the web page"));
+          }
         }
         if (parts[1] === "recordings" && read) return send(res, 200, listRecordings(o.out, sched, o.tz));
         if (parts[1] === "jobs") {
@@ -295,6 +310,7 @@ export async function serve(o: ServeOpts, entry: string): Promise<number> {
         stopping = true;
         log.info("shutting down; stopping running captures so they stitch");
         server.close();
+        keeper.stop();
         await sched.shutdown();
         resolve(0);
       });

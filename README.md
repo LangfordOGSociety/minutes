@@ -80,6 +80,13 @@ Open http://127.0.0.1:8080/ (any username, password = `CAPTURE_WEB_TOKEN`).
   current part and stitches what's there.
 - **Recordings**: play any stitched MP4 in the browser, jump between
   chapters (one per reconnect gap), download it.
+- **Zoom login**: the bar under the title shows whether the saved login
+  still works. The server checks it daily and 2 hours before each scheduled
+  capture, and saves the refreshed session each time, which keeps it from
+  going stale. It can't sign in for you: when it says *expired*, run
+  `zoom-capture login` again (the bar clears on its own a minute later).
+  Set `CAPTURE_NOTIFY_URL` (e.g. an ntfy.sh topic) to get a push alert too.
+  From the command line: `zoom-capture check-login --auth auth/zoom-auth.json`.
 
 Each capture runs on its own virtual display and audio sink, so meetings can
 overlap (`--max-jobs`, default 2; each 1080p30 x264 capture needs roughly a CPU

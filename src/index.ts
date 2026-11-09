@@ -13,6 +13,7 @@ import { SLUG_RE, defaultSlug } from "./util.js";
 
 const USAGE = `usage: zoom-capture --link <zoom link or id> --start <ISO datetime> [options]
        zoom-capture login --auth <file>   sign in once in a browser window, save the session
+       zoom-capture check-login [--auth <file>]   is the saved session still signed in? (refreshes it)
        zoom-capture serve [--port 8080] [--auth <file>] [--max-jobs 2]
                                           web interface: schedule meetings, replay recordings
                                           (env CAPTURE_WEB_TOKEN sets a password)
@@ -118,6 +119,18 @@ if (process.argv[2] === "login") {
   process.exit(await login(values.auth!));
 }
 
+if (process.argv[2] === "check-login") {
+  const { values } = parseArgs({
+    args: process.argv.slice(3),
+    options: { auth: { type: "string", default: process.env.CAPTURE_AUTH ?? "auth/zoom-auth.json" } },
+    strict: true,
+  });
+  const { checkLogin } = await import("./session.js");
+  const r = await checkLogin(values.auth!);
+  console.log(`${r.state}: ${r.detail}`);
+  process.exit(r.state === "ok" ? 0 : 1);
+}
+
 if (process.argv[2] === "serve") {
   const env = process.env;
   const { values: v } = parseArgs({
@@ -148,6 +161,11 @@ if (process.argv[2] === "serve") {
     leadMs: n("lead-min", v["lead-min"]) * 60_000, noShowMs: n("no-show-min", v["no-show-min"]) * 60_000,
     maxConcurrent: n("max-jobs", v["max-jobs"], 1),
     width: n("width", env.CAPTURE_WIDTH ?? "1920", 1), height: n("height", env.CAPTURE_HEIGHT ?? "1080", 1),
+    session: {
+      refreshMs: n("CAPTURE_LOGIN_REFRESH_H", env.CAPTURE_LOGIN_REFRESH_H ?? "24", 1) * 3_600_000,
+      preflightMs: n("CAPTURE_LOGIN_PREFLIGHT_H", env.CAPTURE_LOGIN_PREFLIGHT_H ?? "2", 0) * 3_600_000,
+      notifyUrl: env.CAPTURE_NOTIFY_URL || null,
+    },
   }, entry));
 }
 

@@ -17,7 +17,7 @@ const log = logger("login");
 
 // Where Zoom lands after a successful sign-in. Best guess; if it doesn't
 // match, close the window yourself and the last periodic save is kept.
-const SIGNED_IN = /^https:\/\/([a-z0-9-]+\.)?zoom\.us\/(myhome|profile|meeting|user|home)|^https:\/\/app\.zoom\.us\/wc\/home/i;
+export const SIGNED_IN = /^https:\/\/([a-z0-9-]+\.)?zoom\.us\/(myhome|profile|meeting|user|home)|^https:\/\/app\.zoom\.us\/wc\/home/i;
 
 export function saveStorageState(file: string, state: unknown): void {
   mkdirSync(path.dirname(file), { recursive: true });

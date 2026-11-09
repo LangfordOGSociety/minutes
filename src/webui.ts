@@ -51,6 +51,12 @@ form .actions { display: flex; gap: 8px; align-items: stretch; }
 form .actions button.primary { flex: 1; }
 #editcancel { margin-top: 14px; }
 #editcancel[hidden] { display: none; }
+#login { margin: 4px 24px 0; padding: 8px 12px; border-radius: 8px; font-size: 13px; color: var(--muted);
+  display: flex; gap: 10px; align-items: center; flex-wrap: wrap; border: 1px solid transparent; }
+#login.bad { color: var(--ink); background: color-mix(in srgb, var(--bad) 12%, transparent); border-color: var(--bad); }
+#login.bad b { color: var(--bad); }
+#login button { padding: 3px 10px; font-size: 13px; }
+@media (max-width: 900px) { #login { margin: 4px 16px 0; } }
 .msg { font-size: 13px; margin-top: 10px; min-height: 1em; }
 .msg.err { color: var(--bad); } .msg.ok { color: var(--ok); }
 .list { display: flex; flex-direction: column; gap: 8px; }
@@ -97,6 +103,7 @@ a { color: var(--accent); }
   <h1>zoom-capture</h1>
   <span class="meta" id="meta"></span>
 </header>
+<div id="login" role="status"></div>
 <main>
   <div>
     <section>
@@ -353,11 +360,37 @@ function stopWatching() {
   document.getElementById("viewer-h").textContent = selectedRec ? "Replay" : "Recordings";
 }
 
+function ago(iso) {
+  var m = Math.round((Date.now() - new Date(iso).getTime()) / 60000);
+  if (m < 1) return "just now";
+  if (m < 60) return m + " min ago";
+  var h = Math.round(m / 60);
+  return h < 48 ? h + " h ago" : Math.round(h / 24) + " days ago";
+}
+var LOGIN_TEXT = { ok: "signed in", expired: "EXPIRED", missing: "MISSING", error: "couldn't check", unchecked: "not checked yet" };
+function renderLogin(s) {
+  var box = document.getElementById("login");
+  var bad = s.state === "expired" || s.state === "missing" || s.state === "error";
+  box.className = bad ? "bad" : "";
+  var when = s.checkedAt ? "checked " + ago(s.checkedAt) : "";
+  var btn = el("button", { type: "button", text: s.checking ? "Checking..." : "Check now", on: { click: function () {
+    btn.disabled = true; btn.textContent = "Checking...";
+    api("POST", "/api/session/check").then(renderLogin, function (e) { alert(e.message); refreshLogin(); });
+  } } });
+  if (s.checking) btn.disabled = true;
+  fill(box,
+    el("span", null, "Zoom login: ", el("b", { text: LOGIN_TEXT[s.state] || s.state }), when ? " · " + when : ""),
+    bad ? el("span", { text: s.detail + (s.state === "expired" || s.state === "missing"
+      ? ". Scheduled captures will fail until you run: zoom-capture login --auth auth/zoom-auth.json" : "") }) : null,
+    btn);
+}
+function refreshLogin() { return api("GET", "/api/session").then(renderLogin, function () {}); }
+
 function cancel(id) { api("DELETE", "/api/jobs/" + id).then(refresh, function (e) { alert(e.message); }); }
 
 function refresh() {
   return Promise.all([api("GET", "/api/jobs"), api("GET", "/api/recordings")])
-    .then(function (d) { renderJobs(d[0]); renderRecs(d[1]); })
+    .then(function (d) { renderJobs(d[0]); renderRecs(d[1]); refreshLogin(); })
     .catch(function (e) { fill(document.getElementById("jobs"), el("div", { "class": "empty", text: "Can't reach the server: " + e.message })); });
 }
 

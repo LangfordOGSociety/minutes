@@ -32,6 +32,14 @@ Zoom, and publish the official video 24-48h later. The goal is having video
   blank fields keep their value (the page never has the link, so a blank
   link means "keep"), all fields validated before any is applied, refused
   once the job starts launching.
+- `src/session.ts` keeps the saved login alive: opens zoom.us/profile with
+  it in headed Chromium on the server's :99 display, writes refreshed cookies
+  back when signed in, never touches the file when not. Daily, once 2h before
+  each scheduled launch, 30 min after an error, and as soon as the auth file
+  changes after a failed check. Skipped while a capture runs (the capture
+  writes the file back itself). State in `<out>/session.json`, banner in the
+  page, optional CAPTURE_NOTIFY_URL. Never types a password: re-login stays
+  manual (`zoom-capture login`). Also `zoom-capture check-login`.
 - `src/webui.ts` the page, as a String.raw template: its script must not use
   backticks or dollar-brace. All data goes in via textContent; build children
   with `fill()`, not `replaceChildren()` (which renders a null arg as "null").

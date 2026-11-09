@@ -19,6 +19,9 @@ services:
       # Screenshot + every frame's HTML on each state change, in <slug>/debug/.
       # On for the first real meetings; set CAPTURE_DEBUG=0 in .env to turn off.
       CAPTURE_DEBUG: ${CAPTURE_DEBUG:-1}
+      # Optional: POST a text alert here when the saved Zoom login expires
+      # (an ntfy.sh topic URL works). Set in .env.
+      CAPTURE_NOTIFY_URL: ${CAPTURE_NOTIFY_URL:-}
     volumes:
       - ./recordings:/recordings
       - ./auth:/auth
