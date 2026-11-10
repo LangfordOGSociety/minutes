@@ -192,7 +192,23 @@ idle). Chromium died with the display and the rejoin failed with "Missing X
 server" until the display came back. Fixes: jobs.ts respawns a job's Xvfb
 on the same display; compose caps the transcriber (`mem_limit`,
 oom_score_adj 800) and protects capture (oom_score_adj -500); the
-transcriber unloads models when idle.
+transcriber unloads models when idle. Respawn verified 2026-11-10: a test job's
+Xvfb was SIGKILLed 80ms after launch, restarted at once, the runner's
+first browser launch failed ("Missing X server"), the retry 5s later
+worked.
+
+Live transcription, Oak Bay 2026-11-09 (2h01m, two parts, 6 CPUs shared
+with the capture): chunks at ~0.7x realtime, memory flat at ~2.2G once
+chunks decoded only their window (decoding the whole growing part got the
+transcriber OOM-killed at its cap; the capture was unaffected). One read of
+a growing part took ~18 min, cause unknown (closed file: 6.5s; a growing
+file doesn't block ffmpeg at EOF); slow reads are now logged.
+
+Bot block (2026-11-10): right after Oak Bay ended, a test join to the same
+meeting got "Automated bots aren't allowed to join this meeting... sign in
+to join" although the saved login checked OK (zoom.us/profile). So a good
+login check doesn't guarantee a join; likely Zoom's bot scoring after five
+joins of one meeting in one evening. Don't hammer test joins.
 
 Invalid links: "This meeting link is invalid (3,001)" -> `invalid` state ->
 outcome `invalid_link` within seconds (was: 2h of `loading`).

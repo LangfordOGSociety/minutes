@@ -417,7 +417,12 @@ def live_step(d: Path, final: bool = False) -> bool:
         # Window from `done`, one extra second past the longest chunk so we can
         # tell whether more audio follows. Times below are part-local.
         base = ps["done"]
+        t_read = time.monotonic()
         audio = part_audio(f, base, LIVE_CHUNK_MAX_S + 1)
+        t_read = time.monotonic() - t_read
+        if t_read > 30:
+            # Seen once (Oak Bay 2026-11-09): one read took ~18 min, cause unknown.
+            log(f"{d.name}: reading part {key} audio from {base:.0f}s took {t_read:.0f}s")
         more = len(audio) / SR > LIVE_CHUNK_MAX_S + 0.5
         avail = base + len(audio) / SR - (0 if closed and not more else 2.0)
         if not closed and avail - base < LIVE_CHUNK_S:
@@ -432,7 +437,8 @@ def live_step(d: Path, final: bool = False) -> bool:
             st["dropped"] += shift(dropped, ps["done"], part=p["index"])
             for k, v in tim.items():
                 st["timings"][k] = round(st["timings"].get(k, 0) + v, 1)
-            log(f"{d.name}: live part {key} {ps['done']:.0f}-{end:.0f}s, {len(keep)} segment(s) in {time.monotonic() - t0:.0f}s")
+            log(f"{d.name}: live part {key} {ps['done']:.0f}-{end:.0f}s, {len(keep)} segment(s) in {time.monotonic() - t0:.0f}s"
+                f" (read {t_read:.0f}s)")
             ps["done"] = round(end, 3)
         ps["complete"] = last and ps["done"] >= avail - 0.01
         sdir.mkdir(exist_ok=True)
