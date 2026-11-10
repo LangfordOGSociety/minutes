@@ -6,8 +6,8 @@ worker `k3s-04` when it fits. Web UI at https://zoom.lab.emc2.build/,
 LAN only (Traefik `ipAllowList` 192.168.0.0/16), no password unless
 `CAPTURE_WEB_TOKEN` is in `.env`.
 
-Resources: capture 3-8 CPU / 3-8 GiB (two overlapping captures), transcriber
-8-12 CPU / 6-12 GiB with 10 threads, live chunks of 60s, and the final pass
+Resources: capture 1.5-8 CPU / 3-8 GiB (two overlapping captures), transcriber
+5-12 CPU / 6-12 GiB with 10 threads, live chunks of 60s, and the final pass
 doesn't wait for other captures (`WAIT_FOR_CAPTURES=0`).
 
 ## Build and deploy

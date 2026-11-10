@@ -25,17 +25,23 @@ args=(--from-literal=HF_TOKEN="${HF_TOKEN:-}")
 [ -n "${CAPTURE_NOTIFY_URL:-}" ] && args+=(--from-literal=CAPTURE_NOTIFY_URL="$CAPTURE_NOTIFY_URL")
 $K create secret generic zoom-capture -n $NS "${args[@]}" --dry-run=client -o yaml | $K apply -f -
 
+# Saved Zoom login (live session tokens). The pod copies it onto its volume
+# only when the volume has none; REPLACE_LOGIN=1 overwrites the pod's copy.
+if [ -f auth/zoom-auth.json ]; then
+  $K create secret generic zoom-auth -n $NS --from-file=zoom-auth.json=auth/zoom-auth.json \
+    --dry-run=client -o yaml | $K apply -f -
+fi
+
 # Manifests, pinned to this tag.
 tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
 cp deploy/k8s/*.yaml "$tmp"/
-sed -i.bak "s/newTag: .*/newTag: $TAG/" "$tmp/kustomization.yaml"
+sed -i.bak "s/newTag: .*/newTag: \"$TAG\"/" "$tmp/kustomization.yaml"
 $K apply -k "$tmp"
 $K rollout status deploy/zoom-capture -n $NS --timeout=10m
 
-# Saved Zoom login (live session tokens) onto the pod's volume, mode 600.
-if [ -f auth/zoom-auth.json ]; then
+if [ "${REPLACE_LOGIN:-0}" = 1 ] && [ -f auth/zoom-auth.json ]; then
   pod=$($K get pod -n $NS -l app=zoom-capture -o jsonpath='{.items[0].metadata.name}')
   $K exec -i -n $NS -c capture "$pod" -- sh -c 'umask 077; cat > /auth/zoom-auth.json' < auth/zoom-auth.json
-  echo "copied auth/zoom-auth.json; check it from the page (Check now)"
+  echo "replaced the pod's Zoom login; press Check now on the page"
 fi
 echo "open https://zoom.lab.emc2.build/ (LAN only)"
