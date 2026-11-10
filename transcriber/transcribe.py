@@ -19,6 +19,16 @@ chamber on one room mic is one Zoom name for many voices: no names then).
 <slug>/transcribe.json {"min_speakers": 6, "max_speakers": 15} (or
 "num_speakers"); defaults from DIARIZE_MIN / DIARIZE_MAX.
 
+Live mode (LIVE=1, default): while a capture is still recording, each
+growing part_NNN.mkv is transcribed and aligned in chunks of about
+LIVE_CHUNK_S seconds, cut at the quietest moment near the chunk end so no
+word is split. Chunks are kept in part-local time in <slug>/.live/state.json
+and shown as a draft in <slug>/live.json (wall-clock times). When the
+capture ends, the final pass maps them onto the stitched video's clock
+(manifest `offsets`) instead of transcribing again, and only speaker
+separation runs on the whole meeting. Live work runs alongside captures, at
+nice 10; the final pass still waits for captures (WAIT_FOR_CAPTURES).
+
 Usage:
   transcribe.py                 watch forever (the container default)
   transcribe.py --once          process what's pending, then exit
@@ -72,6 +82,16 @@ DIARIZE_MAX = int(os.environ["DIARIZE_MAX"]) if os.environ.get("DIARIZE_MAX") el
 # of a council meeting: 0.1 (pyannote's default) 316s, 0.25 126s and 5% DER
 # from 0.1, 0.5 64s but merged two speakers.
 DIARIZE_STEP = float(os.environ.get("DIARIZE_STEP", "0.25"))
+
+LIVE = os.environ.get("LIVE", "1") not in ("0", "false", "no")
+LIVE_CHUNK_S = float(os.environ.get("LIVE_CHUNK_S", "120"))
+# Longest chunk when catching up (joined late, or the transcriber restarted),
+# so the draft grows in steps instead of one long wait.
+LIVE_CHUNK_MAX_S = float(os.environ.get("LIVE_CHUNK_MAX_S", "300"))
+LIVE_POLL_S = 15
+# Drop loaded models after this long with nothing to do: they hold several GB.
+IDLE_UNLOAD_S = int(os.environ.get("IDLE_UNLOAD_S", "600"))
+SR = 16000
 
 FINAL_OUTCOMES_SKIP = {"pending"}
 STATUS = "transcript.status.json"
@@ -304,6 +324,160 @@ def vocab_for(d: Path) -> tuple[str | None, list[str]]:
     return prompt or None, [f.name for f in files if f.exists()]
 
 
+# ------------------------------------------------------------------- live --
+
+def part_audio(f: Path):
+    """All audio in a (possibly still growing) part so far, 16 kHz mono float32.
+    Parts are MKV flushed every second, so a growing file is readable up to
+    its last complete cluster."""
+    import numpy as np
+    r = subprocess.run(["ffmpeg", "-nostdin", "-v", "error", "-i", str(f), "-vn", "-ac", "1", "-ar", str(SR),
+                        "-f", "s16le", "-"], capture_output=True)
+    return np.frombuffer(r.stdout, np.int16).astype(np.float32) / 32768.0
+
+
+def quiet_cut(audio, lo: float, hi: float) -> float:
+    """The quietest 0.3s point in [lo, hi] (seconds), to end a chunk on."""
+    import numpy as np
+    a, b = int(lo * SR), int(hi * SR)
+    x = audio[a:b]
+    n = int(0.3 * SR)
+    k = x.size // n
+    if k < 2:
+        return hi
+    rms = np.sqrt(np.mean(x[:k * n].reshape(k, n) ** 2, axis=1))
+    return lo + (int(np.argmin(rms)) + 0.5) * 0.3
+
+
+def shift(segs: list[dict], by: float, **extra) -> list[dict]:
+    for sg in segs:
+        sg["start"] = round(sg.get("start", 0) + by, 3)
+        sg["end"] = round(sg.get("end", 0) + by, 3)
+        for w in sg.get("words", []):
+            if "start" in w:
+                w["start"] = round(w["start"] + by, 3)
+            if "end" in w:
+                w["end"] = round(w["end"] + by, 3)
+        sg.update(extra)
+    return segs
+
+
+def recognise(d: Path, audio) -> tuple[list[dict], list[dict], dict]:
+    """Transcribe + align + silence gate one stretch of audio (times relative to it)."""
+    from dataclasses import replace
+    whisperx, model, (align_model, align_meta) = models()
+    prompt, _ = vocab_for(d)
+    model.options = replace(model.options, initial_prompt=prompt)
+    t = time.monotonic()
+    result = model.transcribe(audio, batch_size=BATCH, language=LANGUAGE)
+    tt = time.monotonic() - t
+    t = time.monotonic()
+    segs = whisperx.align(result["segments"], align_model, align_meta, audio, "cpu",
+                          return_char_alignments=False)["segments"] if result["segments"] else []
+    keep, dropped = drop_quiet(segs, audio)
+    return keep, dropped, {"transcribe": tt, "align": time.monotonic() - t}
+
+
+def live_candidates() -> list[Path]:
+    if not LIVE:
+        return []
+    jobs = read_json(ROOT / "jobs.json") or []
+    live_slugs = {j.get("slug") for j in jobs if isinstance(j, dict) and j.get("status") in ("running", "stopping")}
+    out = []
+    for d in sorted(p for p in ROOT.iterdir() if p.is_dir() and p.name in live_slugs):
+        m = read_json(d / "manifest.json")
+        if m and m.get("outcome") == "pending" and m.get("parts"):
+            out.append(d)
+    return out
+
+
+def live_step(d: Path, final: bool = False) -> bool:
+    """Transcribe the next chunk of d's parts. True if it did any work.
+    final: the capture has ended, take every part to its end."""
+    m = read_json(d / "manifest.json") or {}
+    sdir = d / ".live"
+    st = read_json(sdir / "state.json") or {"parts": {}, "segments": [], "dropped": [], "timings": {"transcribe": 0, "align": 0}}
+    for p in m.get("parts", []):
+        key = str(p["index"])
+        ps = st["parts"].setdefault(key, {"done": 0.0, "complete": False})
+        if ps["complete"]:
+            continue
+        f = d / p["file"]
+        if not f.exists():
+            continue
+        closed = final or p.get("ended") is not None or p.get("exitCode") is not None
+        if not closed and p.get("started"):
+            # Cheap estimate first: don't decode the whole growing part every poll.
+            began = datetime.fromisoformat(p["started"].replace("Z", "+00:00")).timestamp()
+            if time.time() - began - ps["done"] < LIVE_CHUNK_S + 3:
+                return False
+        audio = part_audio(f)
+        avail = len(audio) / SR - (0 if closed else 2.0)
+        if not closed and avail - ps["done"] < LIVE_CHUNK_S:
+            return False  # wait for more audio in the part being recorded
+        target = min(avail, ps["done"] + LIVE_CHUNK_MAX_S)
+        end = avail if closed and target >= avail else quiet_cut(audio, max(ps["done"], target - 15), target)
+        if end - ps["done"] >= 1.0:
+            t0 = time.monotonic()
+            keep, dropped, tim = recognise(d, audio[int(ps["done"] * SR):int(end * SR)])
+            st["segments"] += shift(keep, ps["done"], part=p["index"])
+            st["dropped"] += shift(dropped, ps["done"], part=p["index"])
+            for k, v in tim.items():
+                st["timings"][k] = round(st["timings"].get(k, 0) + v, 1)
+            log(f"{d.name}: live part {key} {ps['done']:.0f}-{end:.0f}s, {len(keep)} segment(s) in {time.monotonic() - t0:.0f}s")
+            ps["done"] = round(end, 3)
+        ps["complete"] = closed and ps["done"] >= avail - 0.01
+        sdir.mkdir(exist_ok=True)
+        write_atomic(sdir / "state.json", json.dumps(st))
+        write_live(d, m, st)
+        return True
+    return False
+
+
+def write_live(d: Path, m: dict, st: dict) -> None:
+    """Draft for the web page: text with wall-clock times, no words."""
+    starts = {}
+    for p in m.get("parts", []):
+        v = p.get("videoStart") or p.get("started")
+        if v:
+            starts[p["index"]] = datetime.fromisoformat(v.replace("Z", "+00:00")).timestamp()
+    lines = []
+    for sg in st["segments"]:
+        base = starts.get(sg["part"])
+        wall = datetime.fromtimestamp(base + sg["start"], timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z") if base else None
+        lines.append({"at": wall, "part": sg["part"], "text": sg.get("text", "").strip()})
+    write_atomic(d / "live.json", json.dumps({"updated": now(), "model": MODEL,
+                                              "parts": st["parts"], "segments": lines}, ensure_ascii=False))
+
+
+def live_result(d: Path, m: dict) -> tuple[list[dict], list[dict], dict] | None:
+    """Live segments on the stitched clock, if live covered every stitched part."""
+    st = read_json(d / ".live" / "state.json")
+    offs = {o["part"]: o["at"] for o in m.get("offsets") or []}
+    if not st or not offs or not all(st["parts"].get(str(k), {}).get("complete") for k in offs):
+        return None
+    segs, dropped = [], []
+    for sg in st["segments"]:
+        if sg["part"] in offs:
+            segs += shift([sg], offs[sg["part"]])
+    for sg in st["dropped"]:
+        if sg["part"] in offs:
+            dropped += shift([sg], offs[sg["part"]])
+    return segs, dropped, st["timings"]
+
+
+def unload() -> None:
+    global _model, _align, _diarize
+    if _model is None and _align is None and not (_diarize and not isinstance(_diarize, str)):
+        return
+    import gc
+    _model = _align = None
+    if _diarize is not None and not isinstance(_diarize, str):
+        _diarize = None
+    gc.collect()
+    log("idle: models unloaded")
+
+
 def models():
     global _model, _align
     import whisperx  # slow import; only when there's work
@@ -359,6 +533,15 @@ def transcribe(d: Path) -> None:
     timings: dict[str, float] = {}
     try:
         set_status(d, status="running", stage="extracting audio", progress=0, model=MODEL, started=now(), error=None)
+        live = None
+        if LIVE and (d / ".live" / "state.json").exists():
+            # Finish whatever the live pass hadn't reached, then reuse it all.
+            set_status(d, stage="transcribing the last minutes")
+            while live_step(d, final=True):
+                pass
+            live = live_result(d, m)
+            if live is None:
+                log(f"{slug}: live transcript doesn't cover every part; transcribing from scratch")
         with tempfile.TemporaryDirectory() as tmp:
             wav = Path(tmp) / "audio.wav"
             subprocess.run(["ffmpeg", "-nostdin", "-v", "error", "-i", str(video), "-vn", "-ac", "1", "-ar", "16000", str(wav)],
@@ -378,18 +561,24 @@ def transcribe(d: Path) -> None:
 
             audio = whisperx.load_audio(str(wav))
             audio_s = len(audio) / 16000
-            set_status(d, stage="transcribing", audio_seconds=round(audio_s, 1))
-            t = time.monotonic()
-            result = model.transcribe(audio, batch_size=BATCH, language=LANGUAGE,
-                                      progress_callback=progress(d, "transcribing", 0, 70))
-            timings["transcribe"] = round(time.monotonic() - t, 1)
+            if live:
+                segs, live_dropped, lt = live
+                result = {"segments": segs}
+                timings.update(transcribe=lt.get("transcribe", 0), align=lt.get("align", 0), live=True)
+                set_status(d, audio_seconds=round(audio_s, 1))
+            else:
+                set_status(d, stage="transcribing", audio_seconds=round(audio_s, 1))
+                t = time.monotonic()
+                result = model.transcribe(audio, batch_size=BATCH, language=LANGUAGE,
+                                          progress_callback=progress(d, "transcribing", 0, 70))
+                timings["transcribe"] = round(time.monotonic() - t, 1)
 
-            set_status(d, stage="aligning words")
-            t = time.monotonic()
-            result = whisperx.align(result["segments"], align_model, align_meta, audio, "cpu",
-                                    return_char_alignments=False,
-                                    progress_callback=progress(d, "aligning words", 70, 78))
-            timings["align"] = round(time.monotonic() - t, 1)
+                set_status(d, stage="aligning words")
+                t = time.monotonic()
+                result = whisperx.align(result["segments"], align_model, align_meta, audio, "cpu",
+                                        return_char_alignments=False,
+                                        progress_callback=progress(d, "aligning words", 70, 78))
+                timings["align"] = round(time.monotonic() - t, 1)
 
             diar_meta: dict | None = None
             pipe = diarizer()
@@ -408,7 +597,10 @@ def transcribe(d: Path) -> None:
                              # pyannote voice embeddings per speaker: input for voiceprints (Phase 3)
                              "embeddings": {k: [round(float(x), 5) for x in v] for k, v in (emb or {}).items()}}
 
-        result["segments"], dropped = drop_quiet(result["segments"], audio)
+        if live:
+            dropped = live[1]  # gated per chunk already
+        else:
+            result["segments"], dropped = drop_quiet(result["segments"], audio)
         if dropped:
             log(f"{slug}: dropped {len(dropped)} segment(s) quieter than {SILENCE_DB} dB (likely invented on silence)")
         label_speakers(result["segments"], read_json(d / f"{slug}.speakers.json"))
@@ -424,6 +616,8 @@ def transcribe(d: Path) -> None:
         write_outputs(d, slug, result, meta)
         total = round(time.monotonic() - t0, 1)
         work = timings["transcribe"] + timings["align"] + timings.get("diarize", 0)
+        if live:
+            timings["after_end"] = total  # wall time from capture end to transcript
         set_status(d, status="done", stage=None, progress=100, finished=now(), timings=timings, elapsed_seconds=total,
                    realtime_factor=round(work / audio_s, 3) if audio_s else None,
                    segments=len(result["segments"]), dropped_quiet=len(dropped), source_mtime=video.stat().st_mtime,
@@ -463,8 +657,19 @@ def main() -> int:
         if st and st.get("status") in ("failed", "running"):
             set_status(d, status="queued", error=st.get("error"))
 
-    log(f"watching {ROOT} (model {MODEL}, wait for captures: {WAIT_FOR_CAPTURES})")
+    log(f"watching {ROOT} (model {MODEL}, wait for captures: {WAIT_FOR_CAPTURES}, live: {LIVE})")
+    idle_since = time.monotonic()
     while True:
+        # Live chunks first: they run alongside captures (that's the point).
+        worked = False
+        for d in live_candidates():
+            try:
+                worked = live_step(d) or worked
+            except Exception as e:  # noqa: BLE001 - live is best effort; the final pass redoes gaps
+                log(f"{d.name}: live chunk failed: {type(e).__name__}: {e}")
+        if worked:
+            idle_since = time.monotonic()
+            continue
         todo = pending()
         if todo and WAIT_FOR_CAPTURES and captures_running():
             for d in todo:
@@ -475,9 +680,13 @@ def main() -> int:
                 if WAIT_FOR_CAPTURES and captures_running():
                     break
                 transcribe(d)
+        if todo and not (WAIT_FOR_CAPTURES and captures_running()):
+            idle_since = time.monotonic()
+        elif time.monotonic() - idle_since > IDLE_UNLOAD_S and not live_candidates():
+            unload()
         if a.once:
             return 0
-        time.sleep(POLL_S)
+        time.sleep(LIVE_POLL_S if live_candidates() else POLL_S)
 
 
 if __name__ == "__main__":

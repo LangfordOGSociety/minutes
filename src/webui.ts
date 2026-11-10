@@ -51,6 +51,9 @@ form .actions { display: flex; gap: 8px; align-items: stretch; }
 form .actions button.primary { flex: 1; }
 #editcancel { margin-top: 14px; }
 #editcancel[hidden] { display: none; }
+.live-t { max-height: 320px; overflow-y: auto; }
+.live-t .tline { grid-template-columns: 6.5em 1fr; cursor: default; }
+.live-h { font-size: 14px; margin: 14px 0 6px; }
 #login { margin: 4px 24px 0; padding: 8px 12px; border-radius: 8px; font-size: 13px; color: var(--muted);
   display: flex; gap: 10px; align-items: center; flex-wrap: wrap; border: 1px solid transparent; }
 #login.bad { color: var(--ink); background: color-mix(in srgb, var(--bad) 12%, transparent); border-color: var(--bad); }
@@ -167,6 +170,7 @@ function fill(node) {
 }
 function pill(status) { return el("span", { "class": "pill s-" + status, text: status }); }
 var fmtDT = new Intl.DateTimeFormat(undefined, { timeZone: TZ, weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+var fmtClock = new Intl.DateTimeFormat(undefined, { timeZone: TZ, hour: "numeric", minute: "2-digit", second: "2-digit" });
 function fmt(iso) { return iso ? fmtDT.format(new Date(iso)) : "?"; }
 function mb(n) { return n === null || n === undefined ? "" : (n / 1048576).toFixed(n > 1e8 ? 0 : 1) + " MB"; }
 function hms(s) { s = Math.round(s); var h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60), r = s % 60;
@@ -330,10 +334,14 @@ function watch(id) {
   var img = el("img", { alt: "What the recorder's screen shows right now" });
   var log = el("pre", { text: "Loading log..." });
   var j = lastJobs.find(function (x) { return x.id === id; });
+  var draft = el("div", { "class": "tlist live-t" }, el("div", { "class": "empty", text: "Live transcript: waiting for the first chunk (about 2 minutes of audio)..." }));
+  var draftNote = el("div", { "class": "hint" });
+  var shown = 0;
   fill(live, 
     el("div", { "class": "player-title" }, el("h3", { text: (j ? j.slug : "capture") + " (live)" }),
       el("button", { text: "Close", on: { click: function () { stopWatching(); refresh(); } } })),
-    img, el("div", { "class": "hint", text: "Screen refreshes every 5 seconds. This is exactly what gets recorded." }), log);
+    img, el("div", { "class": "hint", text: "Screen refreshes every 5 seconds. This is exactly what gets recorded." }),
+    el("h3", { "class": "live-h", text: "Live transcript (draft)" }), draft, draftNote, log);
   live.hidden = false;
   document.getElementById("viewer-h").textContent = "Live";
   function tick() {
@@ -343,6 +351,19 @@ function watch(id) {
     }
     fetch("/api/jobs/" + id + "/screen").then(function (r) { return r.ok ? r.blob() : null; }).then(function (b) {
       if (!b) return; var old = img.src; img.src = URL.createObjectURL(b); if (old) URL.revokeObjectURL(old);
+    }).catch(function () {});
+    if (j) api("GET", media(j.slug, "live.json")).then(function (t) {
+      if (!t || !t.segments || t.segments.length === shown) return;
+      var atBottom = draft.scrollTop + draft.clientHeight >= draft.scrollHeight - 8;
+      if (!shown) fill(draft);
+      t.segments.slice(shown).forEach(function (sg) {
+        draft.appendChild(el("div", { "class": "tline" }, el("span", { "class": "tt", text: sg.at ? fmtClock.format(new Date(sg.at)) : "" }),
+          el("span", { "class": "tx", text: sg.text })));
+      });
+      shown = t.segments.length;
+      if (atBottom) draft.scrollTop = draft.scrollHeight;
+      draftNote.textContent = "Transcribed in chunks of about 2 minutes while recording; updated " + ago(t.updated) +
+        ". Speakers are added once the meeting ends.";
     }).catch(function () {});
     api("GET", "/api/jobs/" + id + "/log").then(function (t) {
       var atBottom = log.scrollTop + log.clientHeight >= log.scrollHeight - 8;

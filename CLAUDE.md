@@ -58,6 +58,11 @@ Zoom, and publish the official video 24-48h later. The goal is having video
   Vocab is `vocab/common.txt` + the council file matching the slug prefix;
   faster-whisper keeps only the last ~223 prompt tokens, so keep it short.
   `<slug>/transcribe.json` overrides vocab and speaker counts.
+  Live mode (LIVE=1): while a job runs, each growing part is transcribed in
+  ~2 min chunks cut at the quietest point (`live_step`), kept in part-local
+  time in `<slug>/.live/state.json`, drafted to `<slug>/live.json` (Watch
+  panel). The final pass reuses them via manifest `offsets` and only runs
+  diarization. Models unload after IDLE_UNLOAD_S idle.
   `requirements.txt` is a pinned freeze; edit `requirements.in`.
 - `compose.yaml` runs the web server and the transcriber together.
 - `entrypoint.sh` starts Xvfb + PulseAudio with two null sinks (see below).
@@ -180,11 +185,14 @@ recorded" dialog sits mid-screen. `dismissRecordingNotice()` clicks its "OK"
 (only inside an overlay with that text, never Leave/End/Decline); dismissed
 3s after recording started.
 
-Open issue (same meeting): the job's Xvfb :100 died ~90s in, Chromium went
-with it, and ffmpeg hung on the dead display so the runner never rejoined.
-Cause unknown (the Mac was under heavy load). The server now logs when a
-job's Xvfb exits. Still to fix: a recorder watchdog that kills ffmpeg when
-its display is gone, and restarting the display.
+Out of memory (same meeting): the job's Xvfb :100 was killed twice
+(~90s and ~6 min in) when the Docker VM ran out of memory; the first time
+the transcriber was OOM-killed too (it kept ~GBs of models loaded while
+idle). Chromium died with the display and the rejoin failed with "Missing X
+server" until the display came back. Fixes: jobs.ts respawns a job's Xvfb
+on the same display; compose caps the transcriber (`mem_limit`,
+oom_score_adj 800) and protects capture (oom_score_adj -500); the
+transcriber unloads models when idle.
 
 Invalid links: "This meeting link is invalid (3,001)" -> `invalid` state ->
 outcome `invalid_link` within seconds (was: 2h of `loading`).

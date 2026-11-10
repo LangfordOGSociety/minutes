@@ -330,15 +330,29 @@ export class Scheduler {
     proc.stderr?.pipe(capLog, { end: false });
 
     const run: Running = { proc, display: n, xvfb, sinkModule, stopRequested: false, exited: Promise.resolve() };
-    // Seen 2026-11-09: the job's Xvfb died ~90s into a meeting, taking
-    // Chromium with it and leaving ffmpeg stuck on the dead display.
-    xvfb.once("exit", (code, signal) => {
-      if (this.running.get(j.id) === run) log.error(`${j.slug}: Xvfb ${display} exited on its own (code ${code}, signal ${signal})`);
-    });
+    // Seen 2026-11-09 (twice): the VM ran out of memory and the kernel
+    // killed the job's Xvfb mid-meeting, taking Chromium with it; the
+    // runner's rejoin then failed with "Missing X server" until the display
+    // came back. Bring it straight back on the same display: the runner's
+    // next session (and ffmpeg's next part) pick it up.
+    const keepDisplay = (x: ChildProcess) => {
+      x.once("exit", (code, signal) => {
+        if (this.running.get(j.id) !== run || run.stopRequested) return;
+        log.error(`${j.slug}: Xvfb ${display} exited on its own (code ${code}, signal ${signal}); restarting it`);
+        capLog.write(`${new Date().toISOString()} ERROR jobs     Xvfb ${display} died (code ${code}, signal ${signal}); restarting it\n`);
+        setTimeout(() => {
+          if (this.running.get(j.id) !== run) return;
+          run.xvfb = spawn("Xvfb", [display, "-screen", "0", `${this.o.width}x${this.o.height}x24`, "-nolisten", "tcp"],
+            { stdio: "ignore" });
+          keepDisplay(run.xvfb);
+        }, 500);
+      });
+    };
+    keepDisplay(xvfb);
     run.exited = new Promise<void>((resolve) => {
       proc.once("exit", async (code, signal) => {
         this.running.delete(j.id);
-        xvfb!.kill();
+        run.xvfb.kill();
         if (sinkModule) await execFileP("pactl", ["unload-module", sinkModule]).catch(() => {});
         capLog.end();
         j.exitCode = code ?? null;

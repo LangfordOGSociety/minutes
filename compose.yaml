@@ -14,6 +14,11 @@ services:
     shm_size: 1g
     stop_grace_period: 120s   # let running captures stitch
     restart: unless-stopped
+    # Seen 2026-11-09: the VM ran out of memory mid-meeting and the kernel
+    # killed a capture's Xvfb (Chromium and the recording went with it).
+    # Make this container the last choice; Chromium's renderers still set
+    # their own higher score, and a dead renderer is just a rejoin.
+    oom_score_adj: -500
     environment:
       CAPTURE_WEB_TOKEN: ${CAPTURE_WEB_TOKEN:-}
       # Screenshot + every frame's HTML on each state change, in <slug>/debug/.
@@ -31,9 +36,14 @@ services:
     image: zoom-transcriber
     restart: unless-stopped
     init: true   # reap ffmpeg children so the container can always stop
+    # Models take several GB. Capped so it can only run out of its own memory,
+    # never starve a live capture; first in line if the VM runs short anyway.
+    mem_limit: ${TRANSCRIBER_MEM:-4500m}
+    oom_score_adj: 800
     environment:
       WHISPER_MODEL: ${WHISPER_MODEL:-large-v3-turbo}
-      WAIT_FOR_CAPTURES: "1"   # don't take CPU from a live capture
+      WAIT_FOR_CAPTURES: "1"   # final pass waits for captures; live chunks don't
+      LIVE: ${LIVE_TRANSCRIBE:-1}
       # Gated pyannote diarization models (Phase 2). Set in .env, never committed.
       HF_TOKEN: ${HF_TOKEN:-}
     volumes:
