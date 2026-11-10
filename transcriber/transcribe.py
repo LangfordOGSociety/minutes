@@ -326,12 +326,15 @@ def vocab_for(d: Path) -> tuple[str | None, list[str]]:
 
 # ------------------------------------------------------------------- live --
 
-def part_audio(f: Path):
-    """All audio in a (possibly still growing) part so far, 16 kHz mono float32.
-    Parts are MKV flushed every second, so a growing file is readable up to
-    its last complete cluster."""
+def part_audio(f: Path, start: float = 0.0, dur: float | None = None):
+    """Audio of a (possibly still growing) part from `start` for `dur` seconds
+    (or to the end so far), 16 kHz mono float32. Parts are MKV flushed every
+    second, so a growing file is readable up to its last complete cluster.
+    -ss/-t after -i: exact, and only that window is kept in memory (decoding
+    a whole 2h part per chunk OOM-killed the container at its 4.5G cap)."""
     import numpy as np
-    r = subprocess.run(["ffmpeg", "-nostdin", "-v", "error", "-i", str(f), "-vn", "-ac", "1", "-ar", str(SR),
+    win = ["-ss", f"{start:.3f}"] + (["-t", f"{dur:.3f}"] if dur else [])
+    r = subprocess.run(["ffmpeg", "-nostdin", "-v", "error", "-i", str(f), *win, "-vn", "-ac", "1", "-ar", str(SR),
                         "-f", "s16le", "-"], capture_output=True)
     return np.frombuffer(r.stdout, np.int16).astype(np.float32) / 32768.0
 
@@ -411,22 +414,27 @@ def live_step(d: Path, final: bool = False) -> bool:
             began = datetime.fromisoformat(p["started"].replace("Z", "+00:00")).timestamp()
             if time.time() - began - ps["done"] < LIVE_CHUNK_S + 3:
                 return False
-        audio = part_audio(f)
-        avail = len(audio) / SR - (0 if closed else 2.0)
-        if not closed and avail - ps["done"] < LIVE_CHUNK_S:
+        # Window from `done`, one extra second past the longest chunk so we can
+        # tell whether more audio follows. Times below are part-local.
+        base = ps["done"]
+        audio = part_audio(f, base, LIVE_CHUNK_MAX_S + 1)
+        more = len(audio) / SR > LIVE_CHUNK_MAX_S + 0.5
+        avail = base + len(audio) / SR - (0 if closed and not more else 2.0)
+        if not closed and avail - base < LIVE_CHUNK_S:
             return False  # wait for more audio in the part being recorded
-        target = min(avail, ps["done"] + LIVE_CHUNK_MAX_S)
-        end = avail if closed and target >= avail else quiet_cut(audio, max(ps["done"], target - 15), target)
-        if end - ps["done"] >= 1.0:
+        target = min(avail, base + LIVE_CHUNK_MAX_S)
+        last = closed and not more
+        end = avail if last else quiet_cut(audio, max(0.0, target - 15 - base), target - base) + base
+        if end - base >= 1.0:
             t0 = time.monotonic()
-            keep, dropped, tim = recognise(d, audio[int(ps["done"] * SR):int(end * SR)])
+            keep, dropped, tim = recognise(d, audio[:int((end - base) * SR)])
             st["segments"] += shift(keep, ps["done"], part=p["index"])
             st["dropped"] += shift(dropped, ps["done"], part=p["index"])
             for k, v in tim.items():
                 st["timings"][k] = round(st["timings"].get(k, 0) + v, 1)
             log(f"{d.name}: live part {key} {ps['done']:.0f}-{end:.0f}s, {len(keep)} segment(s) in {time.monotonic() - t0:.0f}s")
             ps["done"] = round(end, 3)
-        ps["complete"] = closed and ps["done"] >= avail - 0.01
+        ps["complete"] = last and ps["done"] >= avail - 0.01
         sdir.mkdir(exist_ok=True)
         write_atomic(sdir / "state.json", json.dumps(st))
         write_live(d, m, st)
