@@ -482,6 +482,14 @@ export class ZoomSession {
 
   private noticeWarned = false;
 
+  /** After a click, move the pointer to the bottom-right corner (the
+   *  footer area, which hideCss makes transparent) so it doesn't sit over
+   *  the video and keep Zoom's hover controls up. ffmpeg doesn't draw the
+   *  cursor (-draw_mouse 0); this is about what Zoom shows on hover. */
+  private async parkMouse(): Promise<void> {
+    try { await this.page?.mouse.move(this.width - 2, this.height - 2); } catch { /* page gone */ }
+  }
+
   private async findButton(name: RegExp): Promise<Locator | null> {
     for (const frame of this.page?.frames() ?? []) {
       try {
@@ -512,6 +520,7 @@ export class ZoomSession {
             if (!ok.test(label) || never.test(label) || !(await b.isVisible())) continue;
             log.info(`dismissing recording notice ("${label}")`);
             await b.click({ timeout: 2_000 });
+            await this.parkMouse();
             return;
           }
           if (!this.noticeWarned) {
@@ -557,6 +566,7 @@ export class ZoomSession {
           log.info(`clicking Join as "${this.displayName}"`);
           this.lastJoinClick = Date.now();
           await btn.click();
+          await this.parkMouse();
         }
       } else if (state === State.IN_MEETING) {
         if (!this.audioJoined) {
@@ -592,6 +602,7 @@ export class ZoomSession {
             this.captionsClicked = true;
             log.info("turning on Zoom captions");
             await cc.click();
+            await this.parkMouse();
           }
         }
       }

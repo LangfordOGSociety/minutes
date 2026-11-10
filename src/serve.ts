@@ -199,7 +199,7 @@ function serveFile(req: http.IncomingMessage, res: http.ServerResponse, file: st
 
 function screenshot(display: string, width: number, height: number): Promise<Buffer> {
   return new Promise((resolve, reject) => {
-    execFile("ffmpeg", ["-loglevel", "error", "-f", "x11grab", "-video_size", `${width}x${height}`, "-i", `${display}.0`,
+    execFile("ffmpeg", ["-loglevel", "error", "-f", "x11grab", "-draw_mouse", "0", "-video_size", `${width}x${height}`, "-i", `${display}.0`,
       "-frames:v", "1", "-vf", "scale=960:-1", "-f", "image2pipe", "-vcodec", "png", "-"],
       { encoding: "buffer", maxBuffer: 16 * 1024 * 1024, timeout: 10_000 },
       (err, stdout) => (err ? reject(err) : resolve(stdout)));
