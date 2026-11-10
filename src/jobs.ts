@@ -330,6 +330,11 @@ export class Scheduler {
     proc.stderr?.pipe(capLog, { end: false });
 
     const run: Running = { proc, display: n, xvfb, sinkModule, stopRequested: false, exited: Promise.resolve() };
+    // Seen 2026-11-09: the job's Xvfb died ~90s into a meeting, taking
+    // Chromium with it and leaving ffmpeg stuck on the dead display.
+    xvfb.once("exit", (code, signal) => {
+      if (this.running.get(j.id) === run) log.error(`${j.slug}: Xvfb ${display} exited on its own (code ${code}, signal ${signal})`);
+    });
     run.exited = new Promise<void>((resolve) => {
       proc.once("exit", async (code, signal) => {
         this.running.delete(j.id);

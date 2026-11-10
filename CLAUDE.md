@@ -175,6 +175,17 @@ link as `https://zoom.us/j/<id>?pwd=<passcode>`: the browser client
 If a prompt ever shows, `advance()` types a plain passcode into
 `MARKERS.passcode` (selector unverified). The log hides `pwd=`.
 
+Recording notice (live, Oak Bay 2026-11-09): "This meeting is being
+recorded" dialog sits mid-screen. `dismissRecordingNotice()` clicks its "OK"
+(only inside an overlay with that text, never Leave/End/Decline); dismissed
+3s after recording started.
+
+Open issue (same meeting): the job's Xvfb :100 died ~90s in, Chromium went
+with it, and ffmpeg hung on the dead display so the runner never rejoined.
+Cause unknown (the Mac was under heavy load). The server now logs when a
+job's Xvfb exits. Still to fix: a recorder watchdog that kills ffmpeg when
+its display is gone, and restarting the display.
+
 Invalid links: "This meeting link is invalid (3,001)" -> `invalid` state ->
 outcome `invalid_link` within seconds (was: 2h of `loading`).
 

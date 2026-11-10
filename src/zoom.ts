@@ -73,6 +73,13 @@ export const MARKERS = {
     ".speaker-active-container__video-frame .video-avatar__avatar-footer",
     ".speaker-bar-container__video-frame--active .video-avatar__avatar-footer",
   ],
+  // Recording-consent notice ("This meeting is being recorded", seen live
+  // 2026-11-09 on Oak Bay). Dismissed with a button matching
+  // `recordingNoticeOk`, never one matching `recordingNoticeNever` (the same
+  // dialog can offer "Leave meeting").
+  recordingNotice: String.raw`(meeting|webinar) is being recorded|recording (has )?started|is recording this meeting|consent to (be|being) recorded`,
+  recordingNoticeOk: String.raw`^\s*(got it|ok|okay|continue|i agree|agree|dismiss|close)\s*$`,
+  recordingNoticeNever: String.raw`leave|end|decline|disagree`,
   name: ["#input-for-name", "input[placeholder*='name' i]"],
   // Passcode prompt, shown when the link has no pwd= or only the plain
   // passcode (Zoom only skips the prompt for the long encoded pwd=).
@@ -473,6 +480,8 @@ export class ZoomSession {
     return null;
   }
 
+  private noticeWarned = false;
+
   private async findButton(name: RegExp): Promise<Locator | null> {
     for (const frame of this.page?.frames() ?? []) {
       try {
@@ -481,6 +490,37 @@ export class ZoomSession {
       } catch { /* frame detached */ }
     }
     return null;
+  }
+
+  /** Click "Got it" on Zoom's "this meeting is being recorded" dialog, which
+   *  otherwise sits in the middle of the recording. Only inside an overlay
+   *  whose text is the recording notice, and never a Leave/End button. */
+  private async dismissRecordingNotice(): Promise<void> {
+    const notice = new RegExp(MARKERS.recordingNotice, "i");
+    const ok = new RegExp(MARKERS.recordingNoticeOk, "i");
+    const never = new RegExp(MARKERS.recordingNoticeNever, "i");
+    for (const frame of this.page?.frames() ?? []) {
+      for (const sel of MARKERS.overlays) {
+        try {
+          const dlg = frame.locator(sel).filter({ hasText: notice });
+          if (!(await dlg.count()) || !(await dlg.first().isVisible())) continue;
+          const buttons = dlg.first().getByRole("button");
+          const n = await buttons.count();
+          for (let i = 0; i < n; i++) {
+            const b = buttons.nth(i);
+            const label = ((await b.getAttribute("aria-label")) || (await b.innerText()) || "").trim();
+            if (!ok.test(label) || never.test(label) || !(await b.isVisible())) continue;
+            log.info(`dismissing recording notice ("${label}")`);
+            await b.click({ timeout: 2_000 });
+            return;
+          }
+          if (!this.noticeWarned) {
+            this.noticeWarned = true;
+            log.warn("recording notice showing but no safe button to dismiss it");
+          }
+        } catch { /* frame detached */ }
+      }
+    }
   }
 
   /** Do whatever the current screen needs to get us further in. */
@@ -540,6 +580,7 @@ export class ZoomSession {
             this.muteChecked = true;
           }
         }
+        await this.dismissRecordingNotice();
         // Turn on Zoom's captions so they can be recorded as text. Only
         // present when the host enabled captions. Click at most once per
         // session and never once captions are flowing: the same control
