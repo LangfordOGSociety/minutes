@@ -36,8 +36,7 @@ A second Ctrl-C bails immediately.
 `compose.yaml` runs the web server/scheduler and the transcriber. Finished
 recordings get subtitles (`<slug>.vtt`), a transcript (`.txt`, `.srt`,
 `.transcript.json`) and, in the player, a searchable transcript you can click
-to jump around, with speakers separated by voice. CPU-only. The transcriber
-waits while a capture is running so it doesn't take its CPU. Model choice:
+to jump around, with speakers separated by voice. CPU-only. Model choice:
 `WHISPER_MODEL` (default `large-v3-turbo`).
 
 Names are where Whisper slips most. `transcriber/vocab/common.txt` is always
@@ -53,6 +52,52 @@ next to `compose.yaml` (it's git- and docker-ignored). Without it,
 transcripts still work, labelled only by Zoom's active speaker. Speaker count
 hints per recording go in `<slug>/transcribe.json`:
 `{"min_speakers": 8, "max_speakers": 20}`.
+
+### Live transcription (during the meeting)
+
+So the transcript is ready soon after the meeting ends instead of hours
+later, the transcriber works through the recording while it's still being
+captured (`LIVE_TRANSCRIBE=1`, the default).
+
+1. **While the capture runs**, every 15s the transcriber looks for running
+   jobs (`recordings/jobs.json`). Each part file (`part_NNN.mkv`) is flushed
+   to disk every second, so it can be read while it grows.
+2. Once at least `LIVE_CHUNK_S` (120s) of new audio exists, it decodes only
+   that window, cuts it at the quietest 0.3s near the end (so no word is
+   split), and transcribes and aligns it. A transcriber that falls behind
+   catches up in chunks of at most `LIVE_CHUNK_MAX_S` (300s).
+3. Results are kept per part in `<slug>/.live/state.json` and written as a
+   draft to `<slug>/live.json`, which the Watch panel shows under the live
+   screenshot (new lines about every 2 minutes, no speakers yet).
+4. **When the meeting ends**, the capture stitches the parts into the MP4.
+   The final pass transcribes what's left of each part, maps the live
+   segments onto the stitched video's clock (from `offsets` in
+   `manifest.json`), and then only runs speaker separation over the whole
+   meeting. Separation stays in the final pass because speaker labels must
+   be consistent across the meeting.
+
+Interruptions: a rejoin starts a new part, which gets its own chunks. A
+transcriber restart resumes from `state.json`. A part cut short by a crash
+is clipped to its stitched length. If the live state is missing or
+incomplete for any part, the final pass falls back to transcribing the whole
+MP4, so nothing is lost, it just takes longer.
+
+Measured on Oak Bay council (2h01m, 6-CPU Docker VM shared with the
+capture): chunks ran at about 0.7x realtime alongside the capture, and the
+finished transcript was ready 1h34m after the meeting ended, 65 min of it
+speaker separation. Without live mode, transcribing and aligning would add
+roughly 45 min more. A larger machine shortens both.
+
+Settings (in `.env`):
+
+| Variable | Default | |
+|---|---|---|
+| `LIVE_TRANSCRIBE` | `1` | `0` to transcribe only after the meeting |
+| `LIVE_CHUNK_S` | `120` | Minimum new audio per chunk. 60 on a machine with spare CPU gives a fresher draft |
+| `LIVE_CHUNK_MAX_S` | `300` | Largest catch-up chunk, bounds memory |
+| `DIARIZE_STEP` | `0.25` | Speaker-separation window step; smaller is slower and slightly more accurate |
+| `TRANSCRIBER_MEM` | `4500m` | Memory cap, so the transcriber can never starve a capture |
+| `IDLE_UNLOAD_S` | `600` | Free the models after this long with nothing to do |
 
 Alongside the video, captures also record who Zoom shows as the active
 speaker (`<slug>.speakers.json`, used to label the transcript) and Zoom's own

@@ -44,6 +44,10 @@ services:
       WHISPER_MODEL: ${WHISPER_MODEL:-large-v3-turbo}
       WAIT_FOR_CAPTURES: "1"   # final pass waits for captures; live chunks don't
       LIVE: ${LIVE_TRANSCRIBE:-1}
+      LIVE_CHUNK_S: ${LIVE_CHUNK_S:-120}
+      LIVE_CHUNK_MAX_S: ${LIVE_CHUNK_MAX_S:-300}
+      IDLE_UNLOAD_S: ${IDLE_UNLOAD_S:-600}
+      DIARIZE_STEP: ${DIARIZE_STEP:-0.25}
       MALLOC_ARENA_MAX: "2"   # glibc fragmentation across torch/ctranslate2 threads
       # Gated pyannote diarization models (Phase 2). Set in .env, never committed.
       HF_TOKEN: ${HF_TOKEN:-}
