@@ -1,0 +1,9 @@
+# kubectl apply -k deploy/k8s   (set the tags with: kustomize edit set image ...)
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources: [zoom-capture.yaml]
+images:
+  - name: registry.lab.emc2.build/zoom-capture
+    newTag: latest
+  - name: registry.lab.emc2.build/zoom-transcriber
+    newTag: latest

@@ -92,7 +92,9 @@ torch==2.8.0+cpu
 torch-audiomentations==0.12.0
 torch_pitch_shift==1.2.5
 torchaudio==2.8.0
-torchcodec==0.17.0+cpu
+# whisperx caps torchcodec <0.8 on linux x86_64 only; 0.7 matches torch 2.8.
+torchcodec==0.17.0+cpu ; platform_machine != "x86_64"
+torchcodec==0.7.0 ; platform_machine == "x86_64"
 torchmetrics==1.9.0
 torchvision==0.23.0
 tqdm==4.70.1
