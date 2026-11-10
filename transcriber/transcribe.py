@@ -464,13 +464,27 @@ def live_result(d: Path, m: dict) -> tuple[list[dict], list[dict], dict] | None:
     offs = {o["part"]: o["at"] for o in m.get("offsets") or []}
     if not st or not offs or not all(st["parts"].get(str(k), {}).get("complete") for k in offs):
         return None
+    # A part killed uncleanly can stitch a second or two shorter than the
+    # audio live already read from it: clip to the stitched length so its
+    # tail can't land on the next part's clock.
+    durs = {o["part"]: o.get("dur") for o in m.get("offsets") or []}
+
+    def place(sg) -> list[dict]:
+        dur = durs.get(sg["part"])
+        if dur is not None:
+            if sg["start"] >= dur:
+                return []
+            sg["end"] = min(sg["end"], dur)
+            sg["words"] = [w for w in sg.get("words", []) if w.get("start", 0) < dur]
+        return shift([sg], offs[sg["part"]])
+
     segs, dropped = [], []
     for sg in st["segments"]:
         if sg["part"] in offs:
-            segs += shift([sg], offs[sg["part"]])
+            segs += place(sg)
     for sg in st["dropped"]:
         if sg["part"] in offs:
-            dropped += shift([sg], offs[sg["part"]])
+            dropped += place(sg)
     return segs, dropped, st["timings"]
 
 
