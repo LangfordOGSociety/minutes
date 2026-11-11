@@ -73,6 +73,8 @@ spec:
               valueFrom: { secretKeyRef: { name: zoom-capture, key: CAPTURE_WEB_TOKEN, optional: true } }
             - name: CAPTURE_NOTIFY_URL
               valueFrom: { secretKeyRef: { name: zoom-capture, key: CAPTURE_NOTIFY_URL, optional: true } }
+            - name: CAPTURE_EMAIL
+              valueFrom: { secretKeyRef: { name: zoom-capture, key: CAPTURE_EMAIL, optional: true } }
           resources:
             # x264 1080p30 + Chromium per meeting; two overlapping captures fit.
             # Requests are what's free to reserve on k3s-04; limits use its idle cores.

@@ -27,6 +27,9 @@ services:
       # Optional: POST a text alert here when the saved Zoom login expires
       # (an ntfy.sh topic URL works). Set in .env.
       CAPTURE_NOTIFY_URL: ${CAPTURE_NOTIFY_URL:-}
+      # Optional: typed only when a host requires an email to join (the
+      # host sees it). Without it such meetings end as "email_required".
+      CAPTURE_EMAIL: ${CAPTURE_EMAIL:-}
     volumes:
       - ./recordings:/recordings
       - ./auth:/auth

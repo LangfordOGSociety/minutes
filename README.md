@@ -132,6 +132,10 @@ Open http://127.0.0.1:8080/ (any username, password = `CAPTURE_WEB_TOKEN`).
   `zoom-capture login` again (the bar clears on its own a minute later).
   Set `CAPTURE_NOTIFY_URL` (e.g. an ntfy.sh topic) to get a push alert too.
   From the command line: `zoom-capture check-login --auth auth/zoom-auth.json`.
+- **Meetings that ask for an email**: some hosts require an email address
+  before Join works. Set `CAPTURE_EMAIL` in `.env` to the address to give
+  (the host sees it); it's only typed when Zoom asks. Without it, such a
+  capture stops right away with the outcome `email_required`.
 
 Each capture runs on its own virtual display and audio sink, so meetings can
 overlap (`--max-jobs`, default 2; each 1080p30 x264 capture needs roughly a CPU

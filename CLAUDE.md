@@ -210,6 +210,13 @@ to join" although the saved login checked OK (zoom.us/profile). So a good
 login check doesn't guarantee a join; likely Zoom's bot scoring after five
 joins of one meeting in one evening. Don't hammer test joins.
 
+Email required (live, ANC 6B 2026-11-10, dc-gov.zoom.us): the preview
+page "Enter Meeting Info" has a required `#input-for-email` above the
+name, and Join stays disabled until it's filled. With `CAPTURE_EMAIL` set
+it's typed in (never logged); without it the runner stops with outcome
+`email_required` instead of clicking a disabled Join until the no-show
+limit. Tested offline against that page's saved HTML.
+
 Invalid links: "This meeting link is invalid (3,001)" -> `invalid` state ->
 outcome `invalid_link` within seconds (was: 2h of `loading`).
 

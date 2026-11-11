@@ -81,6 +81,9 @@ export const MARKERS = {
   recordingNoticeOk: String.raw`^\s*(got it|ok|okay|continue|i agree|agree|dismiss|close)\s*$`,
   recordingNoticeNever: String.raw`leave|end|decline|disagree`,
   name: ["#input-for-name", "input[placeholder*='name' i]"],
+  // Seen live 2026-11-10 (ANC 6B, dc-gov.zoom.us): "Enter Meeting Info" with
+  // a required Email above Your Name; Join stays disabled until it's filled.
+  email: ["#input-for-email", "input[autocomplete='email']", "input[type='email']"],
   // Passcode prompt, shown when the link has no pwd= or only the plain
   // passcode (Zoom only skips the prompt for the long encoded pwd=).
   passcode: ["#input-for-pwd", "input[type='password']"],
@@ -312,6 +315,9 @@ export class ZoomSession {
   private inMeetingSince = 0;
   private readonly passcode: string | null;
   private passcodeTries = 0;
+  private emailFilled = false;
+  /** Zoom wants an email to join and none is configured (CAPTURE_EMAIL). */
+  needsEmail = false;
 
   /** Called whenever the page agent reports a change, or the browser dies. */
   onChange: (state: string) => void = () => {};
@@ -322,7 +328,8 @@ export class ZoomSession {
 
   constructor(link: string, private displayName: string,
               private width: number, private height: number,
-              private authFile: string | null = null) {
+              private authFile: string | null = null,
+              private email: string | null = null) {
     this.url = webClientUrl(link);
     this.passcode = plainPasscode(link);
   }
@@ -557,6 +564,27 @@ export class ZoomSession {
               // Never log the passcode itself.
               if (this.passcodeTries++ < 5) log.info("entering meeting passcode");
               await pass.fill(this.passcode);
+            }
+          } catch { /* detached */ }
+        }
+        // Some hosts require an email. Fill the configured one; with none,
+        // report it only if Join really is disabled (never invent one).
+        const email = await this.find(MARKERS.email);
+        if (email) {
+          try {
+            const have = (await email.inputValue()).trim();
+            if (this.email && have !== this.email && (await email.isEditable())) {
+              // Never log the address itself.
+              if (!this.emailFilled) log.info("Zoom asks for an email: entering CAPTURE_EMAIL");
+              this.emailFilled = true;
+              await email.fill(this.email);
+            } else if (!this.email && !have) {
+              const join = await this.findButton(JOIN_BUTTON);
+              if (!join || !(await join.isEnabled())) {
+                if (!this.needsEmail) log.warn("Zoom requires an email to join this meeting: set CAPTURE_EMAIL");
+                this.needsEmail = true;
+                return;
+              }
             }
           } catch { /* detached */ }
         }

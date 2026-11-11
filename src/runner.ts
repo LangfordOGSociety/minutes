@@ -35,6 +35,7 @@ export interface Config {
   out: string;
   displayName: string;
   auth: string | null;      // Playwright storage state from `zoom-capture login`
+  email: string | null;     // typed only when the host requires an email to join
   debug: boolean;           // dump screenshot + HTML to <dir>/debug on every state change
   display: string;
   sink: string;
@@ -54,7 +55,7 @@ export interface Config {
   retryMaxMs: number;
 }
 
-type SessionResult = "ended" | "interrupted" | "not_started" | "stopped" | "blocked" | "invalid_link";
+type SessionResult = "ended" | "interrupted" | "not_started" | "stopped" | "blocked" | "invalid_link" | "email_required";
 
 export class Capture {
   private dir: string;
@@ -141,7 +142,7 @@ export class Capture {
     while (!this.stopped) {
       attempt++;
       this.event("session_open", { attempt });
-      const session = new ZoomSession(cfg.link, cfg.displayName, cfg.width, cfg.height, cfg.auth);
+      const session = new ZoomSession(cfg.link, cfg.displayName, cfg.width, cfg.height, cfg.auth, cfg.email);
       session.onChange = () => this.waker.kick();
       session.onSpeaker = (name) => { this.lastSpeaker = name; this.track("speakers", name); };
       session.onCaption = (text) => this.track("captions", text);
@@ -305,6 +306,11 @@ export class Capture {
       } else {
         // Not recording yet: first join, or a rejoin.
         await session.advance(st);
+        if (session.needsEmail) {
+          // Retrying won't help: the host requires an email and none is set.
+          this.event("email_required", { hint: "the host requires an email to join; set CAPTURE_EMAIL to the address to give" });
+          return "email_required";
+        }
         if (this.parts.length) {
           // Zoom shows the same waiting screen after a meeting ends, so a
           // rejoin that sits here for rejoinWait means it's over.

@@ -71,7 +71,7 @@ form .actions button.primary { flex: 1; }
 .pill { display: inline-block; font-size: 11px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase;
   padding: 2px 7px; border-radius: 999px; border: 1px solid currentColor; margin-right: 6px; vertical-align: 1px; }
 .s-scheduled, .s-queued { color: var(--accent); } .s-running { color: var(--live); } .s-stopping { color: var(--warn); }
-.s-done, .s-ended { color: var(--ok); } .s-failed, .s-blocked, .s-interrupted, .s-invalid_link { color: var(--bad); } .s-cancelled, .s-stopped { color: var(--muted); }
+.s-done, .s-ended { color: var(--ok); } .s-failed, .s-blocked, .s-interrupted, .s-invalid_link, .s-email_required { color: var(--bad); } .s-cancelled, .s-stopped { color: var(--muted); }
 .empty { color: var(--muted); font-size: 14px; padding: 6px 2px; }
 video { width: 100%; max-height: 70vh; background: #000; border-radius: 8px; display: block; }
 .player-title { display: flex; justify-content: space-between; gap: 10px; align-items: baseline; flex-wrap: wrap; margin-bottom: 10px; }

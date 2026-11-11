@@ -22,6 +22,8 @@ const USAGE = `usage: zoom-capture --link <zoom link or id> --start <ISO datetim
                            when Zoom blocks anonymous web-client joins.
   --slug <name>            output folder/file name (default meeting-YYYYMMDD-HHMM)
   --name <display name>    name shown in Zoom (default "Recorder")
+                           (env CAPTURE_EMAIL: typed only if the host
+                           requires an email to join; the host sees it)
   --out <dir>              default /recordings
   --lead-min <n>           join this early, default 15
   --no-show-min <n>        give up if not started by start+n, default 120
@@ -90,6 +92,7 @@ function parse(): Config {
     out: v.out!,
     displayName: v.name!,
     auth: v.auth ?? null,
+    email: env.CAPTURE_EMAIL?.trim() || null,
     debug: /^(1|true|yes)$/i.test(env.CAPTURE_DEBUG ?? ""),
     display: env.DISPLAY ?? ":99",
     sink: env.CAPTURE_SINK ?? "zoom",
