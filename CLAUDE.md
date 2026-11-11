@@ -32,6 +32,9 @@ Zoom, and publish the official video 24-48h later. The goal is having video
   blank fields keep their value (the page never has the link, so a blank
   link means "keep"), all fields validated before any is applied, refused
   once the job starts launching.
+  Optional per-job `email` (typed only when Zoom requires one, overrides
+  CAPTURE_EMAIL for that child): never returned by the API (`publicJob()`
+  sends `hasEmail` only); edit keeps it when blank, `clearEmail` removes it.
 - `src/session.ts` keeps the saved login alive: opens zoom.us/profile with
   it in headed Chromium on the server's :99 display, writes refreshed cookies
   back when signed in, never touches the file when not. Daily, once 2h before

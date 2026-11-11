@@ -83,6 +83,9 @@ pre { background: var(--bg); border: 1px solid var(--line); border-radius: 8px; 
   max-height: 260px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; margin: 10px 0 0; }
 a { color: var(--accent); }
 .hint { color: var(--muted); font-size: 13px; margin-top: 8px; }
+label.check { display: flex; align-items: center; gap: 8px; font-weight: normal; }
+label.check input { width: auto; margin: 0; }
+label.check[hidden] { display: none; }
 .links { font-size: 14px; }
 .transcript { margin-top: 14px; }
 .thead { display: flex; gap: 10px; align-items: center; justify-content: space-between; flex-wrap: wrap; margin-bottom: 8px; }
@@ -121,6 +124,9 @@ a { color: var(--accent); }
         <input id="slug" name="slug" placeholder="council-2026-11-16" pattern="[A-Za-z0-9][A-Za-z0-9._\-]{0,79}">
         <label for="name">Shown in Zoom as <small>(optional)</small></label>
         <input id="name" name="name" placeholder="Recorder" maxlength="64">
+        <label for="email">Email <small>(optional, typed only if the host requires one; the host sees it)</small></label>
+        <input id="email" name="email" type="email" maxlength="254" placeholder="Only used if Zoom asks">
+        <label class="check" id="clearemailrow" hidden><input type="checkbox" id="clearemail" name="clearemail"> Remove the saved email</label>
         <div class="actions">
           <button class="primary" type="submit" id="submitbtn">Schedule capture</button>
           <button type="button" id="editcancel" hidden>Cancel edit</button>
@@ -212,7 +218,7 @@ function renderJobs(jobs) {
         if (confirm("Cancel " + j.slug + "?")) cancel(j.id);
       } } }));
     }
-    var sub = "Meeting " + j.meetingId + " · starts " + fmt(j.start) + " · as “" + j.name + "”";
+    var sub = "Meeting " + j.meetingId + " · starts " + fmt(j.start) + " · as “" + j.name + "”" + (j.hasEmail ? " · email set" : "");
     if (j.outcome) sub += " · outcome " + j.outcome;
     if (j.error) sub += " · " + j.error;
     box.appendChild(el("div", { "class": "row" + (watching === j.id || (editing && editing.id === j.id) ? " selected" : "") },
@@ -429,12 +435,15 @@ function localInput(iso) {
 var editing = null;
 function setMode(job) {
   var f = document.getElementById("form");
-  editing = job ? { id: job.id, start: localInput(job.start), slug: job.slug, name: job.name } : null;
+  editing = job ? { id: job.id, start: localInput(job.start), slug: job.slug, name: job.name, hasEmail: job.hasEmail } : null;
   document.getElementById("formtitle").textContent = job ? "Edit " + job.slug : "Schedule a meeting";
   document.getElementById("submitbtn").textContent = job ? "Save changes" : "Schedule capture";
   document.getElementById("editcancel").hidden = !job;
   f.link.required = !job;
   f.link.placeholder = job ? "Leave blank to keep meeting " + job.meetingId : "https://us06web.zoom.us/j/123456789?pwd=...";
+  // Like the link, a saved email never comes back to the page.
+  f.email.placeholder = job && job.hasEmail ? "Leave blank to keep the saved email" : "Only used if Zoom asks";
+  document.getElementById("clearemailrow").hidden = !(job && job.hasEmail);
   f.reset();
   if (job) { f.start.value = editing.start; f.slug.value = job.slug; f.name.value = job.name; }
   if (lastJobs) renderJobs(lastJobs);
@@ -458,6 +467,8 @@ document.getElementById("form").addEventListener("submit", function (ev) {
     if (f.start.value !== editing.start) ch.start = f.start.value;
     if (f.slug.value.trim() && f.slug.value.trim() !== editing.slug) ch.slug = f.slug.value;
     if (f.name.value.trim() && f.name.value.trim() !== editing.name) ch.name = f.name.value;
+    if (f.email.value.trim()) ch.email = f.email.value;
+    else if (f.clearemail.checked) ch.clearEmail = true;
     if (!Object.keys(ch).length) { msg.className = "msg"; msg.textContent = "Nothing changed."; return; }
     msg.className = "msg"; msg.textContent = "Saving...";
     api("PATCH", "/api/jobs/" + editing.id, ch).then(function (j) {
@@ -468,7 +479,8 @@ document.getElementById("form").addEventListener("submit", function (ev) {
     }, function (e) { msg.className = "msg err"; msg.textContent = e.message; });
     return;
   }
-  var body = { link: f.link.value, start: f.start.value, slug: f.slug.value || undefined, name: f.name.value || undefined };
+  var body = { link: f.link.value, start: f.start.value, slug: f.slug.value || undefined, name: f.name.value || undefined,
+    email: f.email.value.trim() || undefined };
   msg.className = "msg"; msg.textContent = "Scheduling...";
   api("POST", "/api/jobs", body).then(function (j) {
     msg.className = "msg ok";

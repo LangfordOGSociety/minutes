@@ -39,6 +39,7 @@ export interface Job {
   start: string;        // ISO, UTC
   slug: string;
   name: string;
+  email?: string;       // typed only if the host requires one; never sent to the browser
   status: JobStatus;
   createdAt: string;
   launchedAt?: string;
@@ -48,7 +49,7 @@ export interface Job {
   error?: string;
 }
 
-export interface NewJob { link?: unknown; start?: unknown; slug?: unknown; name?: unknown }
+export interface NewJob { link?: unknown; start?: unknown; slug?: unknown; name?: unknown; email?: unknown; clearEmail?: unknown }
 
 export interface SchedulerOpts {
   out: string;
@@ -160,6 +161,12 @@ export class Scheduler {
 
   private static given(v: unknown): v is string { return typeof v === "string" && v.trim() !== ""; }
 
+  private static checkEmail(v: string): string {
+    const e = v.trim();
+    if (e.length > 254 || !/^[^\s@<>"]+@[^\s@<>"]+\.[^\s@<>"]+$/.test(e)) throw new BadRequest("that email address doesn't look right");
+    return e;
+  }
+
   add(input: NewJob): Job {
     if (!Scheduler.given(input.link)) throw new BadRequest("link is required");
     const link = checkLink(input.link);
@@ -167,9 +174,11 @@ export class Scheduler {
     const start = this.parseStart(input.start);
     const slug = this.checkSlug(Scheduler.given(input.slug) ? input.slug.trim() : defaultSlug(start));
     const name = Scheduler.given(input.name) ? Scheduler.cleanName(input.name) || this.o.defaultName : this.o.defaultName;
+    const email = Scheduler.given(input.email) ? Scheduler.checkEmail(input.email) : undefined;
 
     const job: Job = {
       id: randomUUID(), link, start: start.toISOString(), slug, name,
+      ...(email ? { email } : {}),
       status: "scheduled", createdAt: new Date().toISOString(),
     };
     this.jobs.push(job);
@@ -192,9 +201,14 @@ export class Scheduler {
     const start = Scheduler.given(input.start) ? this.parseStart(input.start).toISOString() : j.start;
     const slug = Scheduler.given(input.slug) && input.slug.trim() !== j.slug ? this.checkSlug(input.slug.trim(), id) : j.slug;
     const name = Scheduler.given(input.name) ? Scheduler.cleanName(input.name) || j.name : j.name;
-    const changed = [link !== j.link && "link", start !== j.start && "start", slug !== j.slug && "slug", name !== j.name && "name"]
-      .filter(Boolean);
+    // Like the link, the email never reaches the page: blank keeps it,
+    // clearEmail removes it.
+    const email = Scheduler.given(input.email) ? Scheduler.checkEmail(input.email)
+      : input.clearEmail === true ? undefined : j.email;
+    const changed = [link !== j.link && "link", start !== j.start && "start", slug !== j.slug && "slug", name !== j.name && "name",
+      email !== j.email && "email"].filter(Boolean);
     Object.assign(j, { link, start, slug, name });
+    if (email) j.email = email; else delete j.email;
     // A queued job that moved later goes back to waiting for its time.
     if (j.status === "queued") j.status = "scheduled";
     this.save();
@@ -323,7 +337,9 @@ export class Scheduler {
       ...(this.o.auth ? ["--auth", this.o.auth] : []),
     ];
     const proc = spawn(process.execPath, args, {
-      env: { ...process.env, DISPLAY: display, CAPTURE_SINK: sink, PULSE_SINK: sink },
+      // The job's own email overrides the server-wide CAPTURE_EMAIL.
+      env: { ...process.env, DISPLAY: display, CAPTURE_SINK: sink, PULSE_SINK: sink,
+             ...(j.email ? { CAPTURE_EMAIL: j.email } : {}) },
       stdio: ["ignore", "pipe", "pipe"],
     });
     proc.stdout?.pipe(capLog, { end: false });

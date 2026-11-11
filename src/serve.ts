@@ -24,7 +24,7 @@ import { createReadStream, existsSync, openSync, readFileSync, readSync, closeSy
 import http from "node:http";
 import path from "node:path";
 import { timingSafeEqual } from "node:crypto";
-import { BadRequest, Scheduler, type SchedulerOpts } from "./jobs.js";
+import { BadRequest, Scheduler, type Job, type SchedulerOpts } from "./jobs.js";
 import { SessionKeeper, type KeeperOpts } from "./session.js";
 import { SLUG_RE, logger } from "./util.js";
 import { PAGE } from "./webui.js";
@@ -89,6 +89,13 @@ function authorized(req: http.IncomingMessage, token: string | null): boolean {
 /** Writes must come from this page: a cross-site form or fetch can't set a
  *  JSON content type without a preflight we never answer, and the Origin,
  *  when present, has to be us. */
+/** A job as the page sees it: never the link (it can hold the passcode) or
+ *  the email, only the meeting ID and whether an email is set. */
+function publicJob(j: Job) {
+  const { link, email, ...rest } = j;
+  return { ...rest, meetingId: meetingId(link), hasEmail: !!email };
+}
+
 function sameOrigin(req: http.IncomingMessage): boolean {
   const origin = req.headers.origin;
   if (!origin) return true;
@@ -247,7 +254,7 @@ export async function serve(o: ServeOpts, entry: string): Promise<number> {
         if (parts[1] === "jobs") {
           if (parts.length === 2 && read) {
             // The invite link includes the meeting password; show the ID only.
-            return send(res, 200, sched.list().map((j) => ({ ...j, link: undefined, meetingId: meetingId(j.link) })));
+            return send(res, 200, sched.list().map(publicJob));
           }
           const jsonBody = async (): Promise<Record<string, unknown> | null> => {
             if (!/^application\/json\b/i.test(req.headers["content-type"] ?? "")) { send(res, 415, "send JSON"); return null; }
@@ -264,7 +271,7 @@ export async function serve(o: ServeOpts, entry: string): Promise<number> {
             const body = await jsonBody();
             if (!body) return;
             const job = sched.add(body);
-            return send(res, 201, { ...job, link: undefined, meetingId: meetingId(job.link) });
+            return send(res, 201, publicJob(job));
           }
           const job = parts[2] ? sched.get(parts[2]) : undefined;
           if (!job) return send(res, 404, { error: "no such job" });
@@ -272,11 +279,11 @@ export async function serve(o: ServeOpts, entry: string): Promise<number> {
             const body = await jsonBody();
             if (!body) return;
             const j = sched.update(job.id, body);
-            return send(res, 200, { ...j, link: undefined, meetingId: meetingId(j.link) });
+            return send(res, 200, publicJob(j));
           }
           if (parts.length === 3 && method === "DELETE") {
             const j = sched.cancel(job.id);
-            return send(res, 200, { ...j, link: undefined, meetingId: meetingId(j.link) });
+            return send(res, 200, publicJob(j));
           }
           if (parts[3] === "log" && read) return send(res, 200, tail(path.join(o.out, job.slug, "capture.log")));
           if (parts[3] === "screen" && read) {
