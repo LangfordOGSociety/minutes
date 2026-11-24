@@ -281,8 +281,11 @@ Still untested live:
       --link "https://zoom.us/j/87093163922" --start 2026-11-16T19:00 \
       --slug council-2026-11-16 --name "Recorder (Eric)"
 
-Docker image tag and the `playwright` npm version are pinned together (1.48.0)
-so the bundled Chromium matches. Bump them together.
+The image is Ubuntu 22.04 + Node 20.18.0 (`NODE_VERSION`) with only Chromium,
+installed by the `playwright` npm package itself (`playwright install --with-deps
+chromium`), so its revision always matches the library: bump playwright alone.
+(Was the 1.95GB mcr playwright image, which also ships Firefox and WebKit.)
+The transcriber drops `triton` (~1GB, GPU-only, pulled in by whisperx on x86).
 
 ## Style
 

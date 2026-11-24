@@ -1,6 +1,25 @@
-# Image tag and the playwright npm version must match, so the bundled
-# browser is the one the library expects.
-FROM mcr.microsoft.com/playwright:v1.48.0-jammy AS build
+# Ubuntu 22.04 + Node 20, with only Chromium from Playwright. (The
+# mcr.microsoft.com/playwright image also ships Firefox and WebKit and their
+# libraries, ~700MB we never use.) The browser comes from the playwright npm
+# package in package-lock.json, so its revision always matches the library.
+FROM ubuntu:22.04 AS base
+ARG NODE_VERSION=20.18.0
+ARG TARGETARCH
+ENV DEBIAN_FRONTEND=noninteractive
+RUN set -e; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends ca-certificates curl xz-utils; \
+    case "$TARGETARCH" in amd64) a=x64 ;; arm64) a=arm64 ;; *) echo "unsupported arch $TARGETARCH"; exit 1 ;; esac; \
+    f="node-v${NODE_VERSION}-linux-${a}.tar.xz"; cd /tmp; \
+    curl -fsSLO "https://nodejs.org/dist/v${NODE_VERSION}/$f"; \
+    curl -fsSLO "https://nodejs.org/dist/v${NODE_VERSION}/SHASUMS256.txt"; \
+    grep " $f\$" SHASUMS256.txt | sha256sum -c -; \
+    tar -xJf "$f" -C /usr/local --strip-components=1 --no-same-owner \
+      --exclude='*/include' --exclude='*/share/doc' --exclude='*/share/man'; \
+    rm -f "$f" SHASUMS256.txt; \
+    rm -rf /var/lib/apt/lists/*
+
+FROM base AS build
 WORKDIR /app
 ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
 COPY package.json package-lock.json ./
@@ -9,17 +28,23 @@ COPY tsconfig.json ./
 COPY src ./src
 RUN npm run build && npm prune --omit=dev
 
-FROM mcr.microsoft.com/playwright:v1.48.0-jammy
+FROM base
+WORKDIR /app
+ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+COPY --from=build /app/node_modules ./node_modules
+# Chromium and the system libraries/fonts it needs, then the capture tools.
 # intel-media-va-driver (Intel iGPU VAAPI) only exists for amd64. On arm64
 # only mesa's VAAPI drivers are installed; x264 is the expected encoder there.
 RUN set -e; \
+    node node_modules/playwright/cli.js install --with-deps chromium; \
     intel=""; \
     if [ "$(dpkg --print-architecture)" = "amd64" ]; then intel="intel-media-va-driver"; fi; \
     apt-get update; \
     apt-get install -y --no-install-recommends \
       xvfb x11-utils pulseaudio pulseaudio-utils ffmpeg \
       mesa-va-drivers $intel; \
-    rm -rf /var/lib/apt/lists/*
+    rm -rf /var/lib/apt/lists/* /root/.cache /root/.npm /tmp/*; \
+    useradd -m -u 1000 -s /bin/bash pwuser
 
 # Newer timezone data for Node's ICU. The bundled Node ships tzdata 2024a,
 # which predates BC's move to permanent daylight time (2026-11-01, UTC-7), so
@@ -39,8 +64,6 @@ RUN set -e; \
       | sha256sum -c -
 ENV ICU_TIMEZONE_FILES_DIR=/usr/share/icu-tz
 
-WORKDIR /app
-COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist
 COPY package.json entrypoint.sh ./
 RUN mkdir -p /recordings && chown pwuser:pwuser /recordings

@@ -11,7 +11,10 @@ WORKDIR /app
 
 COPY requirements.txt ./
 # CPU wheels for torch (no CUDA download).
-RUN pip install --no-cache-dir --extra-index-url https://download.pytorch.org/whl/cpu -r requirements.txt
+# whisperx pulls in triton on x86_64 (~1GB): a GPU kernel compiler, never used
+# on CPU, so it's removed in the same layer.
+RUN pip install --no-cache-dir --extra-index-url https://download.pytorch.org/whl/cpu -r requirements.txt \
+ && pip uninstall -y triton
 
 COPY transcribe.py ./
 COPY vocab/ ./vocab/
