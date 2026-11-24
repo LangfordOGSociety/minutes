@@ -2,7 +2,7 @@
 
 One pod, two containers (capture + transcriber), one Ceph RBD volume
 (`data`: `recordings/`, `models/`, `auth/` as subPaths), on the 24-core
-worker `k3s-04` when it fits. Web UI at https://zoom.lab.emc2.build/,
+worker `k3s-04` when it fits. Web UI at https://minutes.lab.emc2.build/ (zoom.lab.emc2.build redirects),
 LAN only (Traefik `ipAllowList` 192.168.0.0/16), no password unless
 `CAPTURE_WEB_TOKEN` is in `.env`.
 
@@ -16,12 +16,12 @@ The nodes are amd64; build on the Mac with buildx and push to the homelab
 registry (`docker login registry.lab.emc2.build` once):
 
     TAG=$(git rev-parse --short HEAD)
-    docker buildx build --platform linux/amd64 -t registry.lab.emc2.build/zoom-capture:$TAG --push .
-    docker buildx build --platform linux/amd64 -t registry.lab.emc2.build/zoom-transcriber:$TAG --push transcriber
+    docker buildx build --platform linux/amd64 -t registry.lab.emc2.build/minutes:$TAG --push .
+    docker buildx build --platform linux/amd64 -t registry.lab.emc2.build/minutes-transcriber:$TAG --push transcriber
     deploy/k8s/setup.sh $TAG
 
 `setup.sh` creates the namespace, the registry pull secret (copied from
-`trailwave-dev`) and the `zoom-capture` secret from `.env`, applies the
+`trailwave-dev`) and the `minutes` secret from `.env`, applies the
 manifests with that tag, and copies `auth/zoom-auth.json` onto the volume.
 Later deploys: same build, then `setup.sh $TAG` again (it's idempotent and
 recopies the login, so skip that step if the cluster's copy is newer).
@@ -34,4 +34,9 @@ recopies the login, so skip that step if the cluster's copy is newer).
   that both join meetings. A deploy during a capture stops it (SIGTERM
   closes the part and stitches, 180s grace) and the capture does not
   resume, so don't deploy during a meeting.
-- Recordings: `kubectl -n zoom-capture cp -c capture <pod>:/recordings/<slug> recordings/<slug>`.
+- Recordings: `kubectl -n minutes cp -c capture <pod>:/recordings/<slug> recordings/<slug>`.
+- The volume's PV is `Retain` (since the move from the `zoom-capture`
+  namespace, 2026-11-24, see MIGRATION.md): deleting the PVC or namespace
+  keeps the data, and `minutes.yaml` binds the PVC to that PV by name.
+- Public host `minutes.emc2.build` is not routed yet: it waits for the
+  public/admin split (#5, #6). Make its Cloudflare record proxied first.

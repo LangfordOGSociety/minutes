@@ -1,19 +1,23 @@
-# zoom-capture on the homelab k3s cluster: web UI + scheduler and the
+# minutes on the homelab k3s cluster: web UI + scheduler and the
 # transcriber in one pod, sharing one volume (recordings, models, Zoom login).
 # See deploy/k8s/README.md.
 apiVersion: v1
 kind: Namespace
 metadata:
-  name: zoom-capture
+  name: minutes
 ---
+# Bound to the volume that zoom-capture used (moved, not copied; see
+# MIGRATION.md). The PV's reclaim policy is Retain: deleting this PVC or the
+# namespace keeps the data.
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
   name: data
-  namespace: zoom-capture
+  namespace: minutes
 spec:
   accessModes: [ReadWriteOnce]
   storageClassName: csi-rbd-sc
+  volumeName: pvc-42360e95-88b8-445c-a3ff-a6988f5ff9cf
   resources:
     requests:
       storage: 200Gi   # ~0.6 GB per meeting hour, plus ~5 GB of models
@@ -21,17 +25,17 @@ spec:
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: zoom-capture
-  namespace: zoom-capture
-  labels: { app: zoom-capture }
+  name: minutes
+  namespace: minutes
+  labels: { app: minutes }
 spec:
   replicas: 1   # one scheduler, one owner of jobs.json; never scale up
   strategy: { type: Recreate }   # RWO volume, and two would both join meetings
   selector:
-    matchLabels: { app: zoom-capture }
+    matchLabels: { app: minutes }
   template:
     metadata:
-      labels: { app: zoom-capture }
+      labels: { app: minutes }
     spec:
       imagePullSecrets: [{ name: dev-registry-pull }]
       # Let running captures close their part and stitch (SIGTERM path).
@@ -46,9 +50,9 @@ spec:
               preference:
                 matchExpressions: [{ key: kubernetes.io/hostname, operator: In, values: [k3s-04] }]
       initContainers:
-        # The volume starts empty and root-owned; give each tree to uid 1000.
-        # The saved Zoom login is seeded from the zoom-auth secret only when the
-        # volume has none: the server refreshes it in place after that.
+        # A new volume starts empty and root-owned; give each tree to uid 1000.
+        # The saved Zoom login is seeded from the minutes-zoom-auth secret only
+        # when the volume has none: the server refreshes it in place after that.
         - name: dirs
           image: busybox:1.36.1
           command:
@@ -64,17 +68,17 @@ spec:
             - { name: seed, mountPath: /seed, readOnly: true }
       containers:
         - name: capture
-          image: registry.lab.emc2.build/zoom-capture:latest
+          image: registry.lab.emc2.build/minutes:latest
           args: ["serve", "--auth", "/auth/zoom-auth.json"]
           ports: [{ name: http, containerPort: 8080 }]
           env:
             - { name: CAPTURE_DEBUG, value: "1" }
             - name: CAPTURE_WEB_TOKEN
-              valueFrom: { secretKeyRef: { name: zoom-capture, key: CAPTURE_WEB_TOKEN, optional: true } }
+              valueFrom: { secretKeyRef: { name: minutes, key: CAPTURE_WEB_TOKEN, optional: true } }
             - name: CAPTURE_NOTIFY_URL
-              valueFrom: { secretKeyRef: { name: zoom-capture, key: CAPTURE_NOTIFY_URL, optional: true } }
+              valueFrom: { secretKeyRef: { name: minutes, key: CAPTURE_NOTIFY_URL, optional: true } }
             - name: CAPTURE_EMAIL
-              valueFrom: { secretKeyRef: { name: zoom-capture, key: CAPTURE_EMAIL, optional: true } }
+              valueFrom: { secretKeyRef: { name: minutes, key: CAPTURE_EMAIL, optional: true } }
           resources:
             # x264 1080p30 + Chromium per meeting; two overlapping captures fit.
             # Requests are what's free to reserve on k3s-04; limits use its idle cores.
@@ -88,7 +92,7 @@ spec:
             - { name: data, mountPath: /auth, subPath: auth }
             - { name: shm, mountPath: /dev/shm }
         - name: transcriber
-          image: registry.lab.emc2.build/zoom-transcriber:latest
+          image: registry.lab.emc2.build/minutes-transcriber:latest
           env:
             - { name: WHISPER_MODEL, value: large-v3-turbo }
             # os.cpu_count() sees all 24 node cores, not the limit: set threads.
@@ -103,7 +107,7 @@ spec:
             - { name: DIARIZE_STEP, value: "0.25" }
             - { name: MALLOC_ARENA_MAX, value: "2" }
             - name: HF_TOKEN
-              valueFrom: { secretKeyRef: { name: zoom-capture, key: HF_TOKEN, optional: true } }
+              valueFrom: { secretKeyRef: { name: minutes, key: HF_TOKEN, optional: true } }
           resources:
             requests: { cpu: "5", memory: 6Gi }
             limits: { cpu: "12", memory: 12Gi }
@@ -114,47 +118,81 @@ spec:
         - name: data
           persistentVolumeClaim: { claimName: data }
         - name: seed
-          secret: { secretName: zoom-auth, optional: true, defaultMode: 0400 }
+          secret: { secretName: minutes-zoom-auth, optional: true, defaultMode: 0400 }
         - name: shm
           emptyDir: { medium: Memory, sizeLimit: 1Gi }
 ---
 apiVersion: v1
 kind: Service
 metadata:
-  name: zoom-capture
-  namespace: zoom-capture
+  name: minutes
+  namespace: minutes
 spec:
-  selector: { app: zoom-capture }
+  selector: { app: minutes }
   ports: [{ name: http, port: 8080, targetPort: http }]
 ---
 # LAN only: the web UI can schedule joins and serves recordings, and has no
-# password unless CAPTURE_WEB_TOKEN is set in the secret.
+# password unless CAPTURE_WEB_TOKEN is set in the secret. The public host
+# (minutes.emc2.build) waits for the public/admin split (#5, #6).
 apiVersion: traefik.io/v1alpha1
 kind: Middleware
 metadata:
   name: lan-only
-  namespace: zoom-capture
+  namespace: minutes
 spec:
   ipAllowList:
     sourceRange: ["192.168.0.0/16"]
 ---
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: redirect-from-zoom
+  namespace: minutes
+spec:
+  redirectRegex:
+    permanent: true
+    regex: ^https?://[^/]+/?(.*)
+    replacement: https://minutes.lab.emc2.build/${1}
+---
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
-  name: zoom-capture
-  namespace: zoom-capture
+  name: minutes
+  namespace: minutes
   annotations:
     cert-manager.io/cluster-issuer: letsencrypt-prod
     traefik.ingress.kubernetes.io/router.entrypoints: websecure
     traefik.ingress.kubernetes.io/router.tls: "true"
-    traefik.ingress.kubernetes.io/router.middlewares: zoom-capture-lan-only@kubernetescrd
+    traefik.ingress.kubernetes.io/router.middlewares: minutes-lan-only@kubernetescrd
 spec:
   ingressClassName: traefik
-  tls: [{ hosts: [zoom.lab.emc2.build], secretName: zoom-capture-tls }]
+  tls: [{ hosts: [minutes.lab.emc2.build], secretName: minutes-lab-tls }]
+  rules:
+    - host: minutes.lab.emc2.build
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend: { service: { name: minutes, port: { name: http } } }
+---
+# Old bookmarks: zoom.lab.emc2.build -> minutes.lab.emc2.build (LAN only too).
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: redirect-zoom-lab
+  namespace: minutes
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+    traefik.ingress.kubernetes.io/router.entrypoints: websecure
+    traefik.ingress.kubernetes.io/router.tls: "true"
+    traefik.ingress.kubernetes.io/router.middlewares: minutes-lan-only@kubernetescrd,minutes-redirect-from-zoom@kubernetescrd
+spec:
+  ingressClassName: traefik
+  tls: [{ hosts: [zoom.lab.emc2.build], secretName: zoom-lab-redirect-tls }]
   rules:
     - host: zoom.lab.emc2.build
       http:
         paths:
           - path: /
             pathType: Prefix
-            backend: { service: { name: zoom-capture, port: { name: http } } }
+            backend: { service: { name: minutes, port: { name: http } } }

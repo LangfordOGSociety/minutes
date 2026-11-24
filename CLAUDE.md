@@ -9,10 +9,11 @@ First target is City of Langford council meetings, which are public, run on
 Zoom, and publish the official video 24-48h later. The goal is having video
 (and later transcripts) the same night.
 
-Renamed from zoom-capture (2026-11-24). The homelab k8s deployment
-(`deploy/k8s`: namespace, secrets, image names, labels) still uses
-`zoom-capture` on purpose: a new namespace means a new volume, so recordings,
-jobs.json and the saved login would have to be moved first.
+Renamed from zoom-capture (2026-11-24). The homelab k8s deployment moved
+to namespace `minutes` the same day by rebinding the same Ceph volume (PV
+now `Retain`), see `deploy/k8s/MIGRATION.md`. Images are
+`registry.lab.emc2.build/minutes` and `minutes-transcriber`; the cluster
+still runs the pre-rename build `9d03617` under those names.
 
 ## Layout
 
