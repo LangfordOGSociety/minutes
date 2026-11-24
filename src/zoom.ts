@@ -359,7 +359,7 @@ export class ZoomSession {
 
     const ctx = await this.browser.newContext({
       viewport: null,
-      // Signed-in Zoom session from `zoom-capture login`.
+      // Signed-in Zoom session from `minutes login`.
       ...(this.authFile ? { storageState: this.authFile } : {}),
     });
     this.ctx = ctx;

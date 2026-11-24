@@ -7,12 +7,12 @@
  * headed Chromium the captures use (on the server's own Xvfb display, never a
  * capture's). Signed in: the refreshed cookies are written back. Sent to the
  * sign-in page: "expired", and the file is left alone. It never types a
- * password: re-signing in stays `zoom-capture login`, done by a human.
+ * password: re-signing in stays `minutes login`, done by a human.
  *
  * When: once a day, once in the PREFLIGHT window before each scheduled
  * capture launches, again soon after a failed check (network errors), and
  * right after the auth file changes following a failed check (a fresh
- * `zoom-capture login`). Never while a capture is running.
+ * `minutes login`). Never while a capture is running.
  */
 import { existsSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
@@ -36,9 +36,9 @@ export interface SessionStatus {
   checking: boolean;
 }
 
-/** One check. Exported for `zoom-capture check-login`. */
+/** One check. Exported for `minutes check-login`. */
 export async function checkLogin(authFile: string): Promise<CheckResult> {
-  if (!existsSync(authFile)) return { state: "missing", detail: `no saved login at ${authFile}: run zoom-capture login` };
+  if (!existsSync(authFile)) return { state: "missing", detail: `no saved login at ${authFile}: run minutes login` };
   let browser: Browser | undefined;
   try {
     browser = await chromium.launch({
@@ -54,7 +54,7 @@ export async function checkLogin(authFile: string): Promise<CheckResult> {
     await page.waitForLoadState("networkidle", { timeout: 15_000 }).catch(() => {});
     const u = new URL(page.url());
     if (!SIGNED_IN.test(page.url())) {
-      return { state: "expired", detail: `zoom.us sent the saved login to ${u.host}${u.pathname}: run zoom-capture login` };
+      return { state: "expired", detail: `zoom.us sent the saved login to ${u.host}${u.pathname}: run minutes login` };
     }
     const st = await withTimeout(ctx.storageState(), 10_000);
     if (st === TIMEOUT) return { state: "ok", detail: "signed in (couldn't read refreshed cookies to save them)" };
@@ -136,7 +136,7 @@ export class SessionKeeper {
       renameSync(tmp, this.file);
     } catch (e) { log.warn("couldn't save session.json", e); }
     if (r.state !== before) {
-      if (r.state === "expired" || r.state === "missing") void this.notify(`Zoom login ${r.state}. Run zoom-capture login before the next capture.`);
+      if (r.state === "expired" || r.state === "missing") void this.notify(`Zoom login ${r.state}. Run minutes login before the next capture.`);
       else if (r.state === "ok" && before !== "unchecked") void this.notify("Zoom login OK again.");
     }
     return this.get();
@@ -146,7 +146,7 @@ export class SessionKeeper {
     if (!this.o.notifyUrl) return;
     try {
       await fetch(this.o.notifyUrl, {
-        method: "POST", body: text, headers: { "Content-Type": "text/plain", Title: "zoom-capture" },
+        method: "POST", body: text, headers: { "Content-Type": "text/plain", Title: "minutes" },
         signal: AbortSignal.timeout(10_000),
       });
     } catch (e) { log.warn("notification failed", e); }

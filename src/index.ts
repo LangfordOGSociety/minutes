@@ -11,10 +11,10 @@ import { Capture, type Config } from "./runner.js";
 import type { Encoder } from "./recorder.js";
 import { SLUG_RE, defaultSlug } from "./util.js";
 
-const USAGE = `usage: zoom-capture --link <zoom link or id> --start <ISO datetime> [options]
-       zoom-capture login --auth <file>   sign in once in a browser window, save the session
-       zoom-capture check-login [--auth <file>]   is the saved session still signed in? (refreshes it)
-       zoom-capture serve [--port 8080] [--auth <file>] [--max-jobs 2]
+const USAGE = `usage: minutes --link <zoom link or id> --start <ISO datetime> [options]
+       minutes login --auth <file>   sign in once in a browser window, save the session
+       minutes check-login [--auth <file>]   is the saved session still signed in? (refreshes it)
+       minutes serve [--port 8080] [--auth <file>] [--max-jobs 2]
                                           web interface: schedule meetings, replay recordings
                                           (env CAPTURE_WEB_TOKEN sets a password)
 
@@ -156,7 +156,7 @@ if (process.argv[2] === "serve") {
     return r;
   };
   if (v.auth && !existsSync(v.auth)) fail(`--auth file not found: ${v.auth}`);
-  if (!v.auth) console.error("warning: no --auth session; Zoom blocks anonymous web-client joins (see `zoom-capture login`)");
+  if (!v.auth) console.error("warning: no --auth session; Zoom blocks anonymous web-client joins (see `minutes login`)");
   const entry = fileURLToPath(new URL("./index.js", import.meta.url));
   process.exit(await serve({
     host: v.host!, port: n("port", v.port, 1), token: env.CAPTURE_WEB_TOKEN || null, tz: env.TZ!,

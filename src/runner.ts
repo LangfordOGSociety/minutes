@@ -34,7 +34,7 @@ export interface Config {
   tz: string;
   out: string;
   displayName: string;
-  auth: string | null;      // Playwright storage state from `zoom-capture login`
+  auth: string | null;      // Playwright storage state from `minutes login`
   email: string | null;     // typed only when the host requires an email to join
   debug: boolean;           // dump screenshot + HTML to <dir>/debug on every state change
   display: string;
@@ -246,8 +246,8 @@ export class Capture {
         // Retrying won't help; it needs a (fresh) signed-in session.
         this.event("blocked", {
           hint: cfg.auth
-            ? `Zoom rejected the session in ${cfg.auth}; run "zoom-capture login" again`
-            : "Zoom requires sign-in; run \"zoom-capture login\" and pass --auth",
+            ? `Zoom rejected the session in ${cfg.auth}; run "minutes login" again`
+            : "Zoom requires sign-in; run \"minutes login\" and pass --auth",
         });
         return "blocked";
       }

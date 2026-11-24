@@ -1,5 +1,5 @@
 """
-zoom-capture transcriber (transcribe + align + speaker diarization, CPU-only).
+minutes transcriber (transcribe + align + speaker diarization, CPU-only).
 
 Watches the shared recordings/ volume. For each finished capture (manifest
 outcome is final and the stitched MP4 exists) it writes, next to the video:

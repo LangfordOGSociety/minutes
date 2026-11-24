@@ -1,9 +1,9 @@
 {
-  "name": "zoom-capture",
+  "name": "minutes",
   "version": "0.2.0",
   "private": true,
   "type": "module",
-  "description": "Record a Zoom meeting end to end: wait, join, record, recover, stitch.",
+  "description": "Records online meetings start to finish and turns them into one chaptered video with a transcript.",
   "scripts": {
     "build": "tsc",
     "start": "node dist/index.js"

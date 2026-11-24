@@ -223,7 +223,7 @@ export async function serve(o: ServeOpts, entry: string): Promise<number> {
   const server = http.createServer(async (req, res) => {
     try {
       if (!authorized(req, o.token)) {
-        return send(res, 401, "password required", { "WWW-Authenticate": 'Basic realm="zoom-capture"' });
+        return send(res, 401, "password required", { "WWW-Authenticate": 'Basic realm="minutes"' });
       }
       const url = new URL(req.url ?? "/", "http://x");
       const parts = url.pathname.split("/").filter(Boolean).map(decodeURIComponent);

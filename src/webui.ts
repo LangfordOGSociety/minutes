@@ -12,7 +12,7 @@ export const PAGE = String.raw`<!doctype html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>zoom-capture</title>
+<title>minutes</title>
 <link rel="icon" href="data:,">
 <style>
 :root {
@@ -106,7 +106,7 @@ label.check[hidden] { display: none; }
 </head>
 <body>
 <header>
-  <h1>zoom-capture</h1>
+  <h1>minutes</h1>
   <span class="meta" id="meta"></span>
 </header>
 <div id="login" role="status"></div>
@@ -408,7 +408,7 @@ function renderLogin(s) {
   fill(box,
     el("span", null, "Zoom login: ", el("b", { text: LOGIN_TEXT[s.state] || s.state }), when ? " · " + when : ""),
     bad ? el("span", { text: s.detail + (s.state === "expired" || s.state === "missing"
-      ? ". Scheduled captures will fail until you run: zoom-capture login --auth auth/zoom-auth.json" : "") }) : null,
+      ? ". Scheduled captures will fail until you run: minutes login --auth auth/zoom-auth.json" : "") }) : null,
     btn);
 }
 function refreshLogin() { return api("GET", "/api/session").then(renderLogin, function () {}); }

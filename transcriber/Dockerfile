@@ -1,4 +1,4 @@
-# CPU-only transcription service for zoom-capture. See docs/transcription-plan.md.
+# CPU-only transcription service for minutes. See docs/transcription-plan.md.
 FROM python:3.11-slim
 
 RUN apt-get update \

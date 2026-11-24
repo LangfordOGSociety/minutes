@@ -1,4 +1,10 @@
-# zoom-capture
+# minutes
+
+**The meeting's over. The minutes are ready.**
+
+Records online meetings start to finish without help from the host, and turns
+them into one chaptered video with a speaker-labelled transcript, the same
+night. Built for public council meetings; Zoom today, more platforms next.
 
 Joins a Zoom meeting in headed Chromium on a virtual display, records screen +
 audio with ffmpeg, survives drops, and stitches the parts into one MP4.
@@ -10,8 +16,8 @@ heartbeat and hung-renderer check.
 
 ## Run
 
-    docker build -t zoom-capture .
-    docker run --rm --shm-size=1g -v "$PWD/recordings:/recordings" zoom-capture \
+    docker build -t minutes .
+    docker run --rm --shm-size=1g -v "$PWD/recordings:/recordings" minutes \
       --link "https://zoom.us/j/87093163922" \
       --start 2026-11-16T19:00 \
       --slug council-2026-11-16 \
@@ -108,11 +114,11 @@ subtitle track in the player, kept as a reference).
 
 Schedule meetings, watch a capture live, and replay recordings in a browser:
 
-    docker run -d --name zoom-capture --shm-size=1g --stop-timeout 120 \
+    docker run -d --name minutes --shm-size=1g --stop-timeout 120 \
       -p 127.0.0.1:8080:8080 \
       -v "$PWD/recordings:/recordings" -v "$PWD/auth:/auth" \
       -e CAPTURE_WEB_TOKEN=change-me \
-      zoom-capture serve --auth /auth/zoom-auth.json
+      minutes serve --auth /auth/zoom-auth.json
 
 Open http://127.0.0.1:8080/ (any username, password = `CAPTURE_WEB_TOKEN`).
 
@@ -129,9 +135,9 @@ Open http://127.0.0.1:8080/ (any username, password = `CAPTURE_WEB_TOKEN`).
   still works. The server checks it daily and 2 hours before each scheduled
   capture, and saves the refreshed session each time, which keeps it from
   going stale. It can't sign in for you: when it says *expired*, run
-  `zoom-capture login` again (the bar clears on its own a minute later).
+  `minutes login` again (the bar clears on its own a minute later).
   Set `CAPTURE_NOTIFY_URL` (e.g. an ntfy.sh topic) to get a push alert too.
-  From the command line: `zoom-capture check-login --auth auth/zoom-auth.json`.
+  From the command line: `minutes check-login --auth auth/zoom-auth.json`.
 - **Meetings that ask for an email**: some hosts require an email address
   before Join works. Fill in the form's optional *Email* field for that
   capture, or set `CAPTURE_EMAIL` in `.env` as the default for all of them
@@ -156,11 +162,11 @@ can watch every recording: set `CAPTURE_WEB_TOKEN`, and publish the port on
     # Intel/AMD iGPU (VAAPI)
     docker run ... --device /dev/dri \
       --group-add "$(getent group render | cut -d: -f3)" \
-      -e CAPTURE_ENCODER=vaapi zoom-capture ...
+      -e CAPTURE_ENCODER=vaapi minutes ...
 
     # Nvidia (needs nvidia-container-toolkit)
     docker run ... --gpus all -e NVIDIA_DRIVER_CAPABILITIES=video,compute,utility \
-      -e CAPTURE_ENCODER=nvenc zoom-capture ...
+      -e CAPTURE_ENCODER=nvenc minutes ...
 
 Cheaper capture without new hardware: `-e CAPTURE_WIDTH=1280 -e CAPTURE_HEIGHT=720 --fps 15`.
 

@@ -1,4 +1,4 @@
-# zoom-capture
+# minutes
 
 Records a Zoom meeting end to end without host cooperation: waits for the
 scheduled start, joins via the Zoom web client in headed Chromium on Xvfb,
@@ -9,6 +9,11 @@ First target is City of Langford council meetings, which are public, run on
 Zoom, and publish the official video 24-48h later. The goal is having video
 (and later transcripts) the same night.
 
+Renamed from zoom-capture (2026-11-24). The homelab k8s deployment
+(`deploy/k8s`: namespace, secrets, image names, labels) still uses
+`zoom-capture` on purpose: a new namespace means a new volume, so recordings,
+jobs.json and the saved login would have to be moved first.
+
 ## Layout
 
 - `src/index.ts` CLI (node:util parseArgs, no deps). Sets TZ before use.
@@ -18,8 +23,8 @@ Zoom, and publish the official video 24-48h later. The goal is having video
   self-contained (it's serialized, so no references outside the function).
 - `src/recorder.ts` ffmpeg x11grab + pulse -> MKV parts. Encoders: x264, vaapi, nvenc.
 - `src/stitch.ts` remux-repair each part, concat with chapters, re-encode fallback.
-- `src/login.ts` `zoom-capture login`: human signs in once, saves storage state.
-- `src/serve.ts` `zoom-capture serve`: node:http web UI + JSON API, Range
+- `src/login.ts` `minutes login`: human signs in once, saves storage state.
+- `src/serve.ts` `minutes serve`: node:http web UI + JSON API, Range
   serving for video, optional Basic auth (CAPTURE_WEB_TOKEN), same-origin
   check on writes. Only serves .mp4/.mkv/.png/.json/.vtt/.srt/.txt directly inside
   a slug dir.
@@ -42,7 +47,7 @@ Zoom, and publish the official video 24-48h later. The goal is having video
   changes after a failed check. Skipped while a capture runs (the capture
   writes the file back itself). State in `<out>/session.json`, banner in the
   page, optional CAPTURE_NOTIFY_URL. Never types a password: re-login stays
-  manual (`zoom-capture login`). Also `zoom-capture check-login`.
+  manual (`minutes login`). Also `minutes check-login`.
 - `src/webui.ts` the page, as a String.raw template: its script must not use
   backticks or dollar-brace. All data goes in via textContent; build children
   with `fill()`, not `replaceChildren()` (which renders a null arg as "null").
@@ -99,7 +104,7 @@ Langford meeting, a webinar, or for longer than a few minutes.
 
 **Zoom blocks anonymous web-client bots.** Without a signed-in session the
 join API returns `errorCode 9516` ("Automated bots aren't allowed to join this
-meeting... sign in to join"). `zoom-capture login` saves a signed-in session
+meeting... sign in to join"). `minutes login` saves a signed-in session
 (Playwright storage state, no password) to `auth/zoom-auth.json`; pass it with
 `--auth`. A session saved from Chrome on macOS was accepted by Chromium 130 in
 the Linux container. The file holds live session tokens: keep it out of git
@@ -263,7 +268,7 @@ Still untested live:
 1. Dry run on a real Langford committee meeting (so far only the owner's own
    test meetings). Schedule it from the web UI a few minutes ahead to cover
    the scheduled-job path end to end, with `CAPTURE_DEBUG=1`. Re-run
-   `zoom-capture login` shortly before. (Debug dumps exist; the interruption
+   `minutes login` shortly before. (Debug dumps exist; the interruption
    tests passed on the test meeting.)
 2. Done offline: active-speaker and Zoom-caption timelines. Verify on the
    committee dry run (step 1): check `speakers.json` names against the video,
@@ -276,8 +281,8 @@ Still untested live:
 ## Run
 
     npm ci && npm run build
-    docker build -t zoom-capture .
-    docker run --rm --shm-size=1g -v "$PWD/recordings:/recordings" zoom-capture \
+    docker build -t minutes .
+    docker run --rm --shm-size=1g -v "$PWD/recordings:/recordings" minutes \
       --link "https://zoom.us/j/87093163922" --start 2026-11-16T19:00 \
       --slug council-2026-11-16 --name "Recorder (Eric)"
 
