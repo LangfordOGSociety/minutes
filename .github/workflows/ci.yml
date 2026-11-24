@@ -1,0 +1,94 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Superseded pull request runs are cancelled. Pushes to main queue instead:
+# they end in a release, and cancelling one mid-deploy is unsafe.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+# Self-hosted runners only for a push to main, which only people with write
+# access can produce. A pull request (including from a fork) is untrusted
+# input and runs on a GitHub-hosted runner, so it never executes on homelab
+# hardware. This repo is public: never give a pull_request-triggered job
+# `runs-on: minutes-arc-runners`. See the homelab repo's
+# infra/actions-runner-controller/README.md "Security note".
+jobs:
+  check:
+    runs-on: ${{ github.event_name == 'push' && 'minutes-arc-runners' || 'ubuntu-latest' }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 20
+          # setup-node's cache is very slow on the ARC runner image.
+          cache: ${{ runner.environment == 'github-hosted' && 'npm' || '' }}
+      - run: npm ci
+      - name: TypeScript build (strict)
+        run: npm run build
+      - name: Shell syntax
+        run: for f in entrypoint.sh deploy/k8s/setup.sh scripts/*.sh; do bash -n "$f"; done
+      - name: Transcriber syntax
+        run: python3 -m py_compile transcriber/transcribe.py
+      - uses: azure/setup-kubectl@v5
+        with:
+          version: 'v1.31.0'
+      - name: Render k8s manifests
+        run: kubectl kustomize deploy/k8s > /dev/null
+
+  # Builds and pushes both images while `check` runs, tagged only
+  # sha-<commit>: nothing deploys a sha tag until release.yml does, after
+  # every check has passed. Layer cache lives in the registry (buildcache
+  # tags), since runner pods and their dind start empty every run.
+  images:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: minutes-arc-runners
+    timeout-minutes: 90
+    permissions:
+      contents: read
+      packages: write
+    env:
+      REPO: ghcr.io/langfordogsociety   # GHCR paths must be lowercase
+    steps:
+      - uses: actions/checkout@v5
+      - uses: docker/setup-buildx-action@v4
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: capture image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          platforms: linux/amd64
+          push: true
+          tags: ${{ env.REPO }}/minutes:sha-${{ github.sha }}
+          cache-from: type=registry,ref=${{ env.REPO }}/minutes:buildcache
+          cache-to: type=registry,ref=${{ env.REPO }}/minutes:buildcache,mode=max
+      - name: transcriber image
+        uses: docker/build-push-action@v7
+        with:
+          context: transcriber
+          platforms: linux/amd64
+          push: true
+          tags: ${{ env.REPO }}/minutes-transcriber:sha-${{ github.sha }}
+          cache-from: type=registry,ref=${{ env.REPO }}/minutes-transcriber:buildcache
+          cache-to: type=registry,ref=${{ env.REPO }}/minutes-transcriber:buildcache,mode=max
+
+  release:
+    needs: [check, images]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    permissions:
+      contents: read
+      packages: write
+    uses: ./.github/workflows/release.yml
+    secrets: inherit

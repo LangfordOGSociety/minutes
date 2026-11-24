@@ -1,18 +1,20 @@
 #!/usr/bin/env bash
 # One-time setup of minutes on the homelab cluster, run from the repo root:
-#   deploy/k8s/setup.sh [tag]
+#   deploy/k8s/setup.sh [tag]     (default: main, the last release)
 # Creates the namespace and secrets (values never printed), applies the
 # manifests with the given image tag, and copies the saved Zoom login in.
+# Images come from ghcr.io/langfordogsociety, built by CI; routine deploys
+# are .github/workflows/release.yml, not this script.
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 K="kubectl --context ${KUBE_CONTEXT:-homelab}"
 NS=minutes
-TAG="${1:-$(git rev-parse --short HEAD)}"
+TAG="${1:-main}"
 
 $K get namespace $NS >/dev/null 2>&1 || $K create namespace $NS
 
-# Pull secret for registry.lab.emc2.build, copied from trailwave-dev.
-$K get secret dev-registry-pull -n trailwave-dev -o json | python3 -c '
+# Pull secret for ghcr.io, copied from belay.
+$K get secret ghcr-pull -n belay -o json | python3 -c '
 import json, sys
 s = json.load(sys.stdin)
 s["metadata"] = {"name": s["metadata"]["name"], "namespace": "minutes"}

@@ -1,0 +1,45 @@
+# What .github/workflows/release.yml may do in this namespace: change the
+# deployment's images and watch the rollout. Same shape as belay's
+# github-deploy. The token Secret's YAML is the repo secret KUBERNETES_SECRET:
+#   kubectl -n minutes get secret github-deploy-token -o yaml | gh secret set KUBERNETES_SECRET
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: github-deploy
+  namespace: minutes
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: github-deploy-token
+  namespace: minutes
+  annotations:
+    kubernetes.io/service-account.name: github-deploy
+type: kubernetes.io/service-account-token
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: github-deploy
+  namespace: minutes
+rules:
+  - apiGroups: [apps]
+    resources: [deployments, replicasets]
+    verbs: [get, list, watch, patch, update]
+  - apiGroups: [""]
+    resources: [pods]
+    verbs: [get, list, watch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: github-deploy
+  namespace: minutes
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: github-deploy
+subjects:
+  - kind: ServiceAccount
+    name: github-deploy
+    namespace: minutes

@@ -1,9 +1,10 @@
 # kubectl apply -k deploy/k8s   (set the tags with: kustomize edit set image ...)
+# Images are built by .github/workflows/ci.yml; `main` is the last release.
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
-resources: [minutes.yaml]
+resources: [minutes.yaml, github-deploy.yaml]
 images:
-  - name: registry.lab.emc2.build/minutes
-    newTag: latest
-  - name: registry.lab.emc2.build/minutes-transcriber
-    newTag: latest
+  - name: ghcr.io/langfordogsociety/minutes
+    newTag: main
+  - name: ghcr.io/langfordogsociety/minutes-transcriber
+    newTag: main

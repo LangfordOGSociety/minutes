@@ -37,7 +37,7 @@ spec:
     metadata:
       labels: { app: minutes }
     spec:
-      imagePullSecrets: [{ name: dev-registry-pull }]
+      imagePullSecrets: [{ name: ghcr-pull }]
       # Let running captures close their part and stitch (SIGTERM path).
       terminationGracePeriodSeconds: 180
       securityContext:
@@ -68,7 +68,7 @@ spec:
             - { name: seed, mountPath: /seed, readOnly: true }
       containers:
         - name: capture
-          image: registry.lab.emc2.build/minutes:latest
+          image: ghcr.io/langfordogsociety/minutes:main
           args: ["serve", "--auth", "/auth/zoom-auth.json"]
           ports: [{ name: http, containerPort: 8080 }]
           env:
@@ -92,7 +92,7 @@ spec:
             - { name: data, mountPath: /auth, subPath: auth }
             - { name: shm, mountPath: /dev/shm }
         - name: transcriber
-          image: registry.lab.emc2.build/minutes-transcriber:latest
+          image: ghcr.io/langfordogsociety/minutes-transcriber:main
           env:
             - { name: WHISPER_MODEL, value: large-v3-turbo }
             # os.cpu_count() sees all 24 node cores, not the limit: set threads.

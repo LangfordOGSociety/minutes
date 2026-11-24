@@ -1,0 +1,97 @@
+name: Release
+
+# Promotes the commit's images to `main`, waits until no capture is running
+# or about to start, then points the deployment at this commit's images.
+# Called by ci.yml once every check has passed on a push to main; a manual
+# run deploys the selected commit, whose sha-<commit> images must already
+# exist. Self-hosted runners only; never runs for pull requests.
+on:
+  workflow_call:
+    inputs:
+      force:
+        type: boolean
+        default: false
+  workflow_dispatch:
+    inputs:
+      force:
+        description: Deploy even if a capture is running or about to start (stops it)
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  REPO: ghcr.io/langfordogsociety
+
+jobs:
+  # Retags the tested images; no rebuild. `main` is what deploy/k8s/setup.sh
+  # deploys by default.
+  promote:
+    runs-on: minutes-arc-runners
+    timeout-minutes: 10
+    steps:
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: point main at this commit's images
+        run: |
+          for image in minutes minutes-transcriber; do
+            docker buildx imagetools create --tag "$REPO/$image:main" "$REPO/$image:sha-$GITHUB_SHA"
+          done
+
+  deploy:
+    needs: promote
+    if: github.ref == 'refs/heads/main'
+    runs-on: minutes-arc-runners
+    # The guard can wait up to 4h for a meeting to finish.
+    timeout-minutes: 270
+    # One deploy at a time, never cancelled: a cancel mid-rollout could leave
+    # the single Recreate pod down.
+    concurrency:
+      group: release-deploy
+      cancel-in-progress: false
+    env:
+      HAS_DEPLOY_SECRETS: ${{ secrets.KUBERNETES_SECRET != '' }}
+    steps:
+      - name: skip without deploy credentials
+        if: env.HAS_DEPLOY_SECRETS != 'true'
+        run: echo "KUBERNETES_SECRET isn't set; images are pushed but nothing is deployed."
+      - if: env.HAS_DEPLOY_SECRETS == 'true'
+        uses: actions/checkout@v5
+      # A restart stops a running capture and it doesn't resume (Recreate,
+      # one pod). Wait until nothing is running or due within 45 min.
+      - name: wait for captures to finish
+        if: env.HAS_DEPLOY_SECRETS == 'true' && !inputs.force
+        run: scripts/deploy-guard.sh http://minutes.minutes.svc.cluster.local:8080
+      # kubectl isn't preinstalled on the bare runner image.
+      - if: env.HAS_DEPLOY_SECRETS == 'true'
+        uses: azure/setup-kubectl@v5
+        with:
+          version: 'v1.31.0'
+      # The runners live in the same cluster, so the API server is reachable
+      # in-cluster with the github-deploy ServiceAccount's token
+      # (deploy/k8s/github-deploy.yaml).
+      - if: env.HAS_DEPLOY_SECRETS == 'true'
+        uses: azure/k8s-set-context@v5
+        with:
+          method: service-account
+          k8s-url: https://kubernetes.default.svc
+          k8s-secret: ${{ secrets.KUBERNETES_SECRET }}
+      # sha tags, not `main`: every deploy is a spec change (so it always
+      # rolls), and the deployment records exactly which commit runs.
+      # A failed rollout (bad image, pull error, crash) rolls back.
+      - name: deploy
+        if: env.HAS_DEPLOY_SECRETS == 'true'
+        run: |
+          kubectl -n minutes set image deployment/minutes \
+            capture="$REPO/minutes:sha-$GITHUB_SHA" \
+            transcriber="$REPO/minutes-transcriber:sha-$GITHUB_SHA"
+          if ! kubectl -n minutes rollout status deployment/minutes --timeout=15m; then
+            kubectl -n minutes get pods -l app=minutes -o wide || true
+            kubectl -n minutes rollout undo deployment/minutes
+            exit 1
+          fi
