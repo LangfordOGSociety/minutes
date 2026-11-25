@@ -6,5 +6,5 @@ resources: [minutes.yaml, public.yaml, github-deploy.yaml]
 images:
   - name: ghcr.io/langfordogsociety/minutes
     newTag: main
-  - name: ghcr.io/langfordogsociety/minutes-transcriber
+  - name: ghcr.io/langfordogsociety/minutes-transcriber-rocm
     newTag: main

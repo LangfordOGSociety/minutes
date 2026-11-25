@@ -1,0 +1,67 @@
+# The transcriber for AMD Strix Halo (Radeon 8060S, gfx1151) through ROCm:
+# k3s-07 in the homelab. Same code as Dockerfile (CPU); see the top of
+# transcribe.py for the measured speed-up.
+#
+# - PyTorch: AMD's TheRock nightlies for gfx1151 (upstream ROCm wheels don't
+#   include gfx1151). They bring the ROCm 7 runtime as pip packages
+#   (_rocm_sdk_core, _rocm_sdk_libraries_gfx1151), so no system ROCm.
+# - CTranslate2 (faster-whisper's engine): the official ROCm wheel, built
+#   for gfx1151 among others, linked against that ROCm 7 runtime.
+# - Everything else: requirements.txt's pins, without its CPU torch and
+#   CTranslate2. whisperx's own pins (torch 2.8, torchcodec < 0.8) are
+#   older than these builds; it runs fine with them (tested end to end).
+#
+# Bumping: keep torch, torchaudio and torchvision from the same nightly
+# date, and torchcodec at the release that matches that torch. Check with
+# transcriber/bench.py on k3s-07 before deploying.
+FROM python:3.11-slim
+
+ARG ROCM_INDEX=https://rocm.nightlies.amd.com/v2/gfx1151/
+ARG TORCH=2.11.0+rocm7.13.0a20260425
+ARG TORCHVISION=0.26.0+rocm7.13.0a20260425
+ARG TORCHCODEC=0.11.1
+ARG CT2_VERSION=4.9.1
+ARG CT2_WHEEL=ctranslate2-4.9.1-cp311-cp311-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl
+
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends ffmpeg curl unzip ca-certificates \
+ && rm -rf /var/lib/apt/lists/*
+
+RUN useradd -m -u 1000 app
+WORKDIR /app
+
+# CTranslate2 finds the ROCm runtime that came with torch (also needed for
+# the import check below).
+ENV LD_LIBRARY_PATH=/usr/local/lib/python3.11/site-packages/_rocm_sdk_core/lib:/usr/local/lib/python3.11/site-packages/_rocm_sdk_libraries_gfx1151/lib
+
+RUN pip install --no-cache-dir --index-url "$ROCM_INDEX" \
+      "torch==$TORCH" "torchaudio==$TORCH" "torchvision==$TORCHVISION"
+
+# The ROCm wheels ship in a zip on the release page, not on PyPI.
+RUN curl -fsSL -o /tmp/ct2.zip \
+      "https://github.com/OpenNMT/CTranslate2/releases/download/v$CT2_VERSION/rocm-python-wheels-Linux.zip" \
+ && unzip -q -j /tmp/ct2.zip "*/$CT2_WHEEL" -d /tmp \
+ && pip install --no-cache-dir --no-deps "/tmp/$CT2_WHEEL" \
+ && rm -f /tmp/ct2.zip /tmp/*.whl
+
+COPY requirements.txt ./
+RUN grep -vE '^(torch|torchaudio|torchvision|ctranslate2|torchcodec|triton|nvidia-[a-z0-9-]+)(==| ;)' requirements.txt > /tmp/req.txt \
+ && pip install --no-cache-dir --no-deps -r /tmp/req.txt \
+ && pip install --no-cache-dir --no-deps "torchcodec==$TORCHCODEC" \
+ && python -c "import ctranslate2, torch, whisperx, pyannote.audio; print('ok', torch.__version__, ctranslate2.__version__)"
+
+COPY transcribe.py bench.py ./
+COPY vocab/ ./vocab/
+RUN mkdir -p /models/hf /models/torch /models/cache && chown -R app:app /models
+USER app
+
+ENV WHISPER_DEVICE=cuda \
+    TORCH_MIOPEN=0 \
+    RECORDINGS=/recordings \
+    HF_HOME=/models/hf \
+    TORCH_HOME=/models/torch \
+    XDG_CACHE_HOME=/models/cache \
+    MPLCONFIGDIR=/tmp/matplotlib \
+    PYTHONUNBUFFERED=1
+VOLUME ["/models"]
+ENTRYPOINT ["python", "/app/transcribe.py"]
