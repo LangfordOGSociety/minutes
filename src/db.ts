@@ -65,6 +65,32 @@ const MIGRATIONS: string[] = [
      SELECT 'm-' || id, slug, 'zoom', link, start, 'scheduled', 'public', slug, created_at, created_at FROM jobs;
    UPDATE jobs SET meeting_id = 'm-' || id;
    CREATE INDEX jobs_meeting ON jobs (meeting_id);`,
+
+  // 3: accounts (#5). Sessions store only a hash of the cookie token.
+  `CREATE TABLE users (
+     id                   TEXT PRIMARY KEY,
+     email                TEXT NOT NULL UNIQUE COLLATE NOCASE,
+     name                 TEXT NOT NULL DEFAULT '',
+     role                 TEXT NOT NULL,          -- see ROLE_CAPS in accounts.ts
+     password_hash        TEXT,                   -- scrypt$N$r$p$salt$hash
+     must_change_password INTEGER NOT NULL DEFAULT 0,
+     email_verified_at    TEXT,
+     disabled_at          TEXT,
+     last_login_at        TEXT,
+     created_at           TEXT NOT NULL,
+     updated_at           TEXT NOT NULL
+   );
+   CREATE TABLE sessions (
+     token_hash   TEXT PRIMARY KEY,               -- sha256 of the cookie value
+     user_id      TEXT NOT NULL REFERENCES users (id) ON DELETE CASCADE,
+     created_at   TEXT NOT NULL,
+     last_seen_at TEXT NOT NULL,
+     expires_at   TEXT NOT NULL,
+     ip           TEXT,
+     user_agent   TEXT
+   );
+   CREATE INDEX sessions_user ON sessions (user_id);
+   CREATE INDEX sessions_expires ON sessions (expires_at);`,
 ];
 
 export function openDb(file: string): DB {

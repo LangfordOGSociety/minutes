@@ -18,8 +18,13 @@ const USAGE = `usage: minutes --link <zoom link or id> --start <ISO datetime> [o
        minutes check-login [--auth <file>]   is the saved session still signed in? (refreshes it)
        minutes serve [--port 8080] [--auth <file>] [--max-jobs 2]
                                           web interface: schedule meetings, replay recordings
-                                          (env CAPTURE_WEB_TOKEN sets a password; BACKUP_DIR
+                                          (sign in with an account, see "user"; BACKUP_DIR
                                           turns on nightly backups, see README)
+       minutes user add [--admin] [--name <name>] <email>   prints a one-time password
+       minutes user passwd <email>                          new one-time password, signs out
+       minutes user role <email> admin|user
+       minutes user disable|enable <email>                  disable also signs out
+       minutes user list
        minutes backup [--out <dir>] [--auth <file>] [--dir <backups>]   back up now
        minutes backup --list | --verify <backup folder>
        minutes restore <backup folder> [--out <dir>] [--auth <file>]   server must be stopped
@@ -189,6 +194,58 @@ if (process.argv[2] === "backup" || process.argv[2] === "restore") {
   }
 }
 
+if (process.argv[2] === "user") {
+  const { values: v, positionals } = parseArgs({
+    args: process.argv.slice(3),
+    options: {
+      out: { type: "string", default: process.env.CAPTURE_OUT ?? "/recordings" },
+      admin: { type: "boolean", default: false },
+      name: { type: "string" },
+    },
+    allowPositionals: true,
+    strict: true,
+  });
+  const { Accounts, generatePassword } = await import("./accounts.js");
+  const { openDb } = await import("./db.js");
+  const path = (await import("node:path")).default;
+  const [cmd, email, arg] = positionals;
+  const db = openDb(path.join(v.out!, "minutes.db"));
+  const accounts = new Accounts(db);
+  const say = (u: { email: string; role: string; disabledAt: string | null }) =>
+    console.log(`${u.email} (${u.role}${u.disabledAt ? ", disabled" : ""})`);
+  try {
+    if (cmd === "list" && !email) {
+      for (const u of accounts.list()) {
+        console.log([u.email, u.role, u.name, u.disabledAt ? "disabled" : "", u.mustChangePassword ? "one-time password" : "",
+          u.lastLoginAt ? `last sign-in ${u.lastLoginAt}` : "never signed in"].filter(Boolean).join("  "));
+      }
+    } else if (cmd === "add" && email && !arg) {
+      const pw = generatePassword();
+      const u = await accounts.create({ email, name: v.name, role: v.admin ? "admin" : "user", password: pw, mustChange: true, verified: true });
+      say(u);
+      console.log(`one-time password: ${pw}\n(they choose their own at first sign-in)`);
+    } else if (cmd === "passwd" && email && !arg) {
+      const u = accounts.byEmail(email);
+      if (!u) throw new Error(`no account for ${email}`);
+      const pw = generatePassword();
+      await accounts.setPassword(u.id, pw, { mustChange: true });
+      console.log(`one-time password for ${u.email}: ${pw}\n(signed out everywhere; they choose their own at next sign-in)`);
+    } else if (cmd === "role" && email && arg) {
+      say(accounts.setRole(email, arg));
+    } else if ((cmd === "disable" || cmd === "enable") && email && !arg) {
+      say(accounts.setDisabled(email, cmd === "disable"));
+    } else {
+      fail("usage: minutes user add|passwd|role|disable|enable|list ...");
+    }
+    db.close();
+    process.exit(0);
+  } catch (e) {
+    db.close();
+    console.error(`user ${cmd} failed: ${(e as Error).message}`);
+    process.exit(1);
+  }
+}
+
 if (process.argv[2] === "serve") {
   const env = process.env;
   const { values: v } = parseArgs({
@@ -212,9 +269,10 @@ if (process.argv[2] === "serve") {
   };
   if (v.auth && !existsSync(v.auth)) fail(`--auth file not found: ${v.auth}`);
   if (!v.auth) console.error("warning: no --auth session; Zoom blocks anonymous web-client joins (see `minutes login`)");
+  if (env.CAPTURE_WEB_TOKEN) console.error("warning: CAPTURE_WEB_TOKEN is no longer used; sign in with an account (`minutes user add`)");
   const entry = fileURLToPath(new URL("./index.js", import.meta.url));
   process.exit(await serve({
-    host: v.host!, port: n("port", v.port, 1), token: env.CAPTURE_WEB_TOKEN || null, tz: env.TZ!,
+    host: v.host!, port: n("port", v.port, 1), tz: env.TZ!, secureCookie: env.COOKIE_SECURE !== "0",
     out: v.out!, auth: v.auth ?? null, defaultName: v.name!,
     leadMs: n("lead-min", v["lead-min"]) * 60_000, noShowMs: n("no-show-min", v["no-show-min"]) * 60_000,
     maxConcurrent: n("max-jobs", v["max-jobs"], 1),

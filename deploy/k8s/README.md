@@ -3,8 +3,10 @@
 One pod, two containers (capture + transcriber), one Ceph RBD volume
 (`data`: `recordings/`, `models/`, `auth/` as subPaths), on the 24-core
 worker `k3s-04` when it fits. Web UI at https://minutes.lab.emc2.build/ (zoom.lab.emc2.build redirects),
-LAN only (Traefik `ipAllowList` 192.168.0.0/16), no password unless
-`CAPTURE_WEB_TOKEN` is in `.env`.
+LAN only (Traefik `ipAllowList` 192.168.0.0/16). Capture admin needs an
+admin account; create the first one in the pod:
+
+    kubectl -n minutes exec deploy/minutes -c capture -- node /app/dist/index.js user add --admin you@example.com
 
 Resources: capture 1.5-8 CPU / 3-8 GiB (two overlapping captures), transcriber
 5-12 CPU / 6-12 GiB with 10 threads, live chunks of 60s, and the final pass

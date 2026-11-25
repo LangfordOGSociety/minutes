@@ -15,16 +15,22 @@
  *   POST   /api/session/check      check (and refresh) the saved login now
  *   GET    /api/recordings         every <out>/<slug>/manifest.json, summarized
  *   GET    /media/:slug/:file      video and stills, with Range support
+ *   GET    /login, /account        sign in, change password (src/pages/login.ts)
+ *   GET    /api/me                 who is signed in, and what they may do
+ *   POST   /api/login              {email, password}; sets the session cookie
+ *   POST   /api/logout
+ *   POST   /api/account/password   {current, password}
  *
- * Anyone who can reach this can make the signed-in Zoom account join
- * meetings and can watch every recording. Set CAPTURE_WEB_TOKEN to require a
- * password (HTTP Basic, any username) and publish the port on 127.0.0.1.
+ * Every route needs a capability (accounts.ts ROLE_CAPS): the capture page
+ * and job/session APIs are admin only; recordings and media are "watch",
+ * which everyone has. Accounts are made with `minutes user add`.
  */
 import { execFile } from "node:child_process";
 import { createReadStream, existsSync, openSync, readFileSync, readSync, closeSync, readdirSync, statSync } from "node:fs";
 import http from "node:http";
 import path from "node:path";
-import { timingSafeEqual } from "node:crypto";
+import { Accounts, AccountError, FailureLimiter, ROLE_CAPS, SESSION_MAX_AGE_S, can, type Capability, type User } from "./accounts.js";
+import { LOGIN_PAGE } from "./pages/login.js";
 import { openDb } from "./db.js";
 import { platformFor } from "./platforms/registry.js";
 import { BadRequest, Scheduler, type Job, type SchedulerOpts } from "./jobs.js";
@@ -38,8 +44,10 @@ const log = logger("web");
 export interface ServeOpts extends Omit<SchedulerOpts, "entry"> {
   host: string;
   port: number;
-  token: string | null;
   tz: string;
+  /** Mark the session cookie Secure (and use the __Host- prefix). Off only
+   *  for plain-http development on a non-localhost address. */
+  secureCookie: boolean;
   session: Omit<KeeperOpts, "auth" | "out" | "leadMs">;
   /** Nightly backups; null = off. */
   backup: Omit<NightlyOpts, "auth" | "notifyUrl"> | null;
@@ -82,14 +90,18 @@ function readBody(req: http.IncomingMessage, limit = 16 * 1024): Promise<string>
   });
 }
 
-function authorized(req: http.IncomingMessage, token: string | null): boolean {
-  if (!token) return true;
-  const m = /^Basic\s+(.+)$/i.exec(req.headers.authorization ?? "");
-  if (!m) return false;
-  const decoded = Buffer.from(m[1], "base64").toString("utf8");
-  const given = Buffer.from(decoded.slice(decoded.indexOf(":") + 1));
-  const want = Buffer.from(token);
-  return given.length === want.length && timingSafeEqual(given, want);
+function cookies(req: http.IncomingMessage): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const part of (req.headers.cookie ?? "").split(";")) {
+    const i = part.indexOf("=");
+    if (i > 0) out[part.slice(0, i).trim()] = part.slice(i + 1).trim();
+  }
+  return out;
+}
+
+/** Where to go after signing in: a path on this site only. */
+export function safeNext(v: string | null): string {
+  return v && /^\/(?![/\\])[^\s]*$/.test(v) ? v : "/";
 }
 
 /** Writes must come from this page: a cross-site form or fetch can't set a
@@ -219,8 +231,27 @@ function screenshot(display: string, width: number, height: number): Promise<Buf
   });
 }
 
-export async function serve(o: ServeOpts, entry: string): Promise<number> {
+export interface App {
+  server: http.Server;
+  accounts: Accounts;
+  sched: Scheduler;
+  /** Stop timers and captures, close the database. */
+  close(): Promise<void>;
+}
+
+/** Everything but listening and signal handling (tests use this). */
+export function createApp(o: ServeOpts, entry: string): App {
   const db = openDb(path.join(o.out, "minutes.db"));
+  const accounts = new Accounts(db);
+  const cookieName = o.secureCookie ? "__Host-minutes_session" : "minutes_session";
+  const cookieAttrs = `Path=/; HttpOnly; SameSite=Lax${o.secureCookie ? "; Secure" : ""}`;
+  const failsByIp = new FailureLimiter(30, 15 * 60_000);
+  const failsByAccount = new FailureLimiter(10, 15 * 60_000);
+  const pruneTimer = setInterval(() => accounts.pruneSessions(), 3_600_000);
+  pruneTimer.unref();
+  if (!accounts.count("admin")) {
+    log.warn("no admin account yet: run `minutes user add --admin <email>` on the server to create one");
+  }
   const sched = new Scheduler({ ...o, entry }, db);
   sched.start();
   const keeper = new SessionKeeper({ ...o.session, auth: o.auth, out: o.out, leadMs: o.leadMs }, () => sched.list());
@@ -235,18 +266,47 @@ export async function serve(o: ServeOpts, entry: string): Promise<number> {
     log.warn("no BACKUP_DIR: nightly backups are off");
   }
   const page = PAGE.replace("__TZ__", JSON.stringify(o.tz));
+  const loginPage = LOGIN_PAGE;
 
   const server = http.createServer(async (req, res) => {
     try {
-      if (!authorized(req, o.token)) {
-        return send(res, 401, "password required", { "WWW-Authenticate": 'Basic realm="minutes"' });
-      }
       const url = new URL(req.url ?? "/", "http://x");
       const parts = url.pathname.split("/").filter(Boolean).map(decodeURIComponent);
       const method = req.method ?? "GET";
       const read = method === "GET" || method === "HEAD";
+      const ip = req.socket.remoteAddress ?? "?";
 
+      // Who's asking. A user who must change their password can do nothing
+      // else until they have.
+      const token = cookies(req)[cookieName];
+      const sess = accounts.session(token);
+      const user: User | null = sess?.user ?? null;
+      const role = user && !user.mustChangePassword ? user.role : null;
+      if (sess?.renewed) res.setHeader("Set-Cookie", `${cookieName}=${token}; ${cookieAttrs}; Max-Age=${SESSION_MAX_AGE_S}`);
+      const me = () => user ? {
+        email: user.email, name: user.name, role: user.role, mustChangePassword: user.mustChangePassword,
+        caps: ROLE_CAPS[role ?? "public"],
+      } : null;
+      /** False (and the response sent) if this request may not do `cap`. */
+      const allow = (cap: Capability, page = false): boolean => {
+        if (can(role, cap)) return true;
+        if (page) {
+          const to = user ? "/account?denied=1" : "/login?next=" + encodeURIComponent(url.pathname + url.search);
+          res.writeHead(302, { Location: to, "Cache-Control": "no-store" }).end();
+        } else {
+          send(res, user ? 403 : 401, { error: user ? (user.mustChangePassword ? "change your password first" : "your account can't do that") : "sign in first" });
+        }
+        return false;
+      };
+
+      if ((url.pathname === "/login" || url.pathname === "/account") && read) {
+        return send(res, 200, loginPage, {
+          "Content-Type": "text/html; charset=utf-8",
+          "Content-Security-Policy": "default-src 'self'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src 'self' data:",
+        });
+      }
       if (url.pathname === "/" && read) {
+        if (!allow("admin.view", true)) return;
         return send(res, 200, page, {
           "Content-Type": "text/html; charset=utf-8",
           "Content-Security-Policy": "default-src 'self'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src 'self' blob: data:; media-src 'self'",
@@ -254,10 +314,70 @@ export async function serve(o: ServeOpts, entry: string): Promise<number> {
       }
       if (parts[0] === "api") {
         if (!read && !sameOrigin(req)) return send(res, 403, "cross-origin request refused");
+        const jsonBody = async (): Promise<Record<string, unknown> | null> => {
+          if (!/^application\/json\b/i.test(req.headers["content-type"] ?? "")) { send(res, 415, "send JSON"); return null; }
+          try {
+            const b = JSON.parse(await readBody(req));
+            if (b && typeof b === "object" && !Array.isArray(b)) return b as Record<string, unknown>;
+          } catch (e) {
+            if (e instanceof BadRequest) throw e;
+          }
+          send(res, 400, { error: "body must be a JSON object" });
+          return null;
+        };
+
+        if (parts[1] === "me" && parts.length === 2 && read) {
+          return send(res, 200, { user: me(), setupNeeded: accounts.count("admin") === 0 });
+        }
+        if (parts[1] === "login" && parts.length === 2 && method === "POST") {
+          const body = await jsonBody();
+          if (!body) return;
+          const email = typeof body.email === "string" ? body.email.trim().toLowerCase().slice(0, 254) : "";
+          const wait = Math.max(failsByIp.blockedFor(ip), failsByAccount.blockedFor(email));
+          if (wait > 0) {
+            return send(res, 429, { error: `too many failed sign-ins; try again in ${Math.ceil(wait / 60_000)} min` },
+              { "Retry-After": String(Math.ceil(wait / 1000)) });
+          }
+          const u = await accounts.authenticate(email, typeof body.password === "string" ? body.password : "");
+          if (!u) {
+            failsByIp.fail(ip);
+            if (email) failsByAccount.fail(email);
+            log.warn(`failed sign-in from ${ip}`);
+            return send(res, 401, { error: "wrong email or password" });
+          }
+          failsByAccount.reset(email);
+          accounts.endSession(token);
+          const t = accounts.createSession(u.id, { ip, userAgent: req.headers["user-agent"] });
+          log.info(`${u.email} signed in from ${ip}`);
+          const r = u.mustChangePassword ? null : u.role;
+          return send(res, 200, { user: { email: u.email, name: u.name, role: u.role, mustChangePassword: u.mustChangePassword,
+            caps: ROLE_CAPS[r ?? "public"] } }, { "Set-Cookie": `${cookieName}=${t}; ${cookieAttrs}; Max-Age=${SESSION_MAX_AGE_S}` });
+        }
+        if (parts[1] === "logout" && parts.length === 2 && method === "POST") {
+          accounts.endSession(token);
+          return send(res, 200, { user: null }, { "Set-Cookie": `${cookieName}=; ${cookieAttrs}; Max-Age=0` });
+        }
+        if (parts[1] === "account" && parts[2] === "password" && parts.length === 3 && method === "POST") {
+          if (!user) return send(res, 401, { error: "sign in first" });
+          const body = await jsonBody();
+          if (!body) return;
+          if (failsByAccount.blockedFor(user.email.toLowerCase()) > 0) return send(res, 429, { error: "too many failed attempts; try again later" });
+          if (!(await accounts.authenticate(user.email, typeof body.current === "string" ? body.current : ""))) {
+            failsByAccount.fail(user.email.toLowerCase());
+            return send(res, 403, { error: "current password is wrong" });
+          }
+          if (body.password === body.current) return send(res, 400, { error: "choose a new password" });
+          await accounts.setPassword(user.id, String(body.password ?? ""), { mustChange: false, keepSession: token });
+          log.info(`${user.email} changed their password`);
+          return send(res, 200, { user: { ...me(), mustChangePassword: false, caps: ROLE_CAPS[user.role] } });
+        }
+
         if (parts[1] === "info" && read) {
+          if (!allow("watch")) return;
           return send(res, 200, { tz: o.tz, tzdata: process.versions.tz ?? null, leadMinutes: o.leadMs / 60_000, maxConcurrent: o.maxConcurrent });
         }
         if (parts[1] === "session") {
+          if (!allow(read ? "admin.view" : "admin.manage")) return;
           if (parts.length === 2 && read) return send(res, 200, keeper.get());
           if (parts[2] === "check" && parts.length === 3 && method === "POST") {
             if (sched.list().some((j) => j.status === "running" || j.status === "stopping")) {
@@ -266,23 +386,16 @@ export async function serve(o: ServeOpts, entry: string): Promise<number> {
             return send(res, 200, await keeper.check("checked from the web page"));
           }
         }
-        if (parts[1] === "recordings" && read) return send(res, 200, listRecordings(o.out, sched, o.tz));
+        if (parts[1] === "recordings" && read) {
+          if (!allow("watch")) return;
+          return send(res, 200, listRecordings(o.out, sched, o.tz));
+        }
         if (parts[1] === "jobs") {
+          if (!allow(read ? "admin.view" : "admin.manage")) return;
           if (parts.length === 2 && read) {
             // The invite link includes the meeting password; show the ID only.
             return send(res, 200, sched.list().map(publicJob));
           }
-          const jsonBody = async (): Promise<Record<string, unknown> | null> => {
-            if (!/^application\/json\b/i.test(req.headers["content-type"] ?? "")) { send(res, 415, "send JSON"); return null; }
-            try {
-              const b = JSON.parse(await readBody(req));
-              if (b && typeof b === "object" && !Array.isArray(b)) return b as Record<string, unknown>;
-            } catch (e) {
-              if (e instanceof BadRequest) throw e;
-            }
-            send(res, 400, { error: "body must be a JSON object" });
-            return null;
-          };
           if (parts.length === 2 && method === "POST") {
             const body = await jsonBody();
             if (!body) return;
@@ -314,19 +427,36 @@ export async function serve(o: ServeOpts, entry: string): Promise<number> {
         return send(res, 404, { error: "not found" });
       }
       if (parts[0] === "media" && parts.length === 3 && read && SLUG_RE.test(parts[1]) && FILE_RE.test(parts[2])) {
+        if (!allow("watch")) return;
         return serveFile(req, res, path.join(o.out, parts[1], parts[2]));
       }
       return send(res, 404, "not found");
     } catch (e) {
-      if (e instanceof BadRequest) return send(res, e.status, { error: e.message });
+      if (e instanceof BadRequest || e instanceof AccountError) return send(res, e.status, { error: e.message });
       log.error("request failed", e);
       if (!res.headersSent) send(res, 500, { error: "internal error" });
       else res.destroy();
     }
   });
 
-  await new Promise<void>((resolve) => server.listen(o.port, o.host, resolve));
-  log.info(`web interface on http://${o.host}:${o.port}/ (${o.token ? "password required" : "NO password: keep the port private"})`);
+  return {
+    server, accounts, sched,
+    async close() {
+      server.close();
+      server.closeAllConnections();
+      clearInterval(pruneTimer);
+      keeper.stop();
+      backups?.stop();
+      await sched.shutdown();
+      db.close();
+    },
+  };
+}
+
+export async function serve(o: ServeOpts, entry: string): Promise<number> {
+  const app = createApp(o, entry);
+  await new Promise<void>((resolve) => app.server.listen(o.port, o.host, resolve));
+  log.info(`web interface on http://${o.host}:${o.port}/ (sign in with an account; \`minutes user add\` makes one)`);
 
   return new Promise<number>((resolve) => {
     let stopping = false;
@@ -335,11 +465,7 @@ export async function serve(o: ServeOpts, entry: string): Promise<number> {
         if (stopping) process.exit(130);
         stopping = true;
         log.info("shutting down; stopping running captures so they stitch");
-        server.close();
-        keeper.stop();
-        backups?.stop();
-        await sched.shutdown();
-        db.close();
+        await app.close();
         resolve(0);
       });
     }

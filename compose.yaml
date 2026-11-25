@@ -3,8 +3,9 @@
 #   docker compose up -d --build
 #   open http://127.0.0.1:8080/
 #
-# Set CAPTURE_WEB_TOKEN (e.g. in a .env file next to this one) to require a
-# password. The port is published on 127.0.0.1 only.
+# Create an admin once: docker compose exec capture node /app/dist/index.js
+# user add --admin you@example.com (prints a one-time password). Recordings
+# are open to anyone who can reach the port; it's published on 127.0.0.1 only.
 services:
   capture:
     build: .
@@ -20,7 +21,8 @@ services:
     # their own higher score, and a dead renderer is just a rejoin.
     oom_score_adj: -500
     environment:
-      CAPTURE_WEB_TOKEN: ${CAPTURE_WEB_TOKEN:-}
+      # Plain http on 127.0.0.1: the session cookie can't be Secure-only.
+      COOKIE_SECURE: ${COOKIE_SECURE:-0}
       # Screenshot + every frame's HTML on each state change, in <slug>/debug/.
       # On for the first real meetings; set CAPTURE_DEBUG=0 in .env to turn off.
       CAPTURE_DEBUG: ${CAPTURE_DEBUG:-1}

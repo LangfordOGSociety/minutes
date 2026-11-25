@@ -117,10 +117,30 @@ Schedule meetings, watch a capture live, and replay recordings in a browser:
     docker run -d --name minutes --shm-size=1g --stop-timeout 120 \
       -p 127.0.0.1:8080:8080 \
       -v "$PWD/recordings:/recordings" -v "$PWD/auth:/auth" \
-      -e CAPTURE_WEB_TOKEN=change-me \
+      -e COOKIE_SECURE=0 \
       minutes serve --auth /auth/zoom-auth.json
+    docker exec minutes node /app/dist/index.js user add --admin you@example.com
 
-Open http://127.0.0.1:8080/ (any username, password = `CAPTURE_WEB_TOKEN`).
+The last command prints a one-time password. Open http://127.0.0.1:8080/,
+sign in, and choose your own password.
+
+**Accounts.** Two roles: `admin` runs captures (schedule, edit, stop,
+watch the bot's screen and log, Zoom login status); `user` can sign in but,
+for now, sees no more than anyone else (recordings and transcripts). Manage
+them on the server:
+
+    minutes user add [--admin] [--name "Name"] <email>   # prints a one-time password
+    minutes user passwd <email>        # new one-time password, signs them out everywhere
+    minutes user role <email> admin|user
+    minutes user disable|enable <email>
+    minutes user list
+
+Passwords are scrypt hashes; sessions are a random cookie stored only as a
+hash, valid 14 days from last use. Failed sign-ins are limited per account
+(10 per 15 min) and per address (30). The cookie is `__Host-` prefixed and
+`Secure`, which browsers only accept over https: set `COOKIE_SECURE=0` when
+serving plain http (compose does, on 127.0.0.1). `CAPTURE_WEB_TOKEN` (the old shared Basic
+password) is gone.
 
 - **Schedule**: paste a Zoom link or meeting ID and the start time (server
   timezone). It joins `--lead-min` (15) minutes early.
@@ -154,9 +174,9 @@ imported on first start and kept as `jobs.json.migrated`). If the server restart
 that job is marked *interrupted* and not relaunched (it would overwrite its
 parts). Give `docker stop` time to stitch: `--stop-timeout 120`.
 
-Anyone who can reach the page can make your Zoom account join meetings and
-can watch every recording: set `CAPTURE_WEB_TOKEN`, and publish the port on
-`127.0.0.1` (or behind a VPN / reverse proxy with TLS).
+Recordings and transcripts are open to anyone who can reach the server;
+everything else needs an admin account. Publish the port on `127.0.0.1`,
+or put TLS in front of it.
 
 ## Hardware encoding
 

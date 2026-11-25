@@ -93,8 +93,6 @@ spec:
           ports: [{ name: http, containerPort: 8080 }]
           env:
             - { name: CAPTURE_DEBUG, value: "1" }
-            - name: CAPTURE_WEB_TOKEN
-              valueFrom: { secretKeyRef: { name: minutes, key: CAPTURE_WEB_TOKEN, optional: true } }
             - name: CAPTURE_NOTIFY_URL
               valueFrom: { secretKeyRef: { name: minutes, key: CAPTURE_NOTIFY_URL, optional: true } }
             - name: CAPTURE_EMAIL
@@ -156,9 +154,9 @@ spec:
   selector: { app: minutes }
   ports: [{ name: http, port: 8080, targetPort: http }]
 ---
-# LAN only: the web UI can schedule joins and serves recordings, and has no
-# password unless CAPTURE_WEB_TOKEN is set in the secret. The public host
-# (minutes.emc2.build) waits for the public/admin split (#5, #6).
+# LAN only. Capture admin needs an admin account (`minutes user add
+# --admin`); recordings are open. The public host (minutes.emc2.build)
+# waits for the public/admin split (#6).
 apiVersion: traefik.io/v1alpha1
 kind: Middleware
 metadata:

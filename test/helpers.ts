@@ -2,10 +2,12 @@ import { execFileSync } from "node:child_process";
 import { mkdtempSync, rmSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import type { TestContext } from "node:test";
 
 /** A fresh temp dir, removed when the test ends. */
-export function tmpDir(t: TestContext, prefix = "minutes-test-"): string {
+/** Anything with an after() hook: a TestContext, or a suite's own list. */
+export interface HasAfter { after(fn: () => unknown): unknown }
+
+export function tmpDir(t: HasAfter, prefix = "minutes-test-"): string {
   const d = mkdtempSync(path.join(os.tmpdir(), prefix));
   t.after(() => rmSync(d, { recursive: true, force: true }));
   return d;

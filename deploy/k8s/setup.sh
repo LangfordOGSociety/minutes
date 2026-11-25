@@ -20,10 +20,9 @@ s = json.load(sys.stdin)
 s["metadata"] = {"name": s["metadata"]["name"], "namespace": "minutes"}
 print(json.dumps(s))' | $K apply -f -
 
-# App secret from .env: HF_TOKEN, and CAPTURE_WEB_TOKEN / CAPTURE_NOTIFY_URL if set.
+# App secret from .env: HF_TOKEN, and CAPTURE_NOTIFY_URL / CAPTURE_EMAIL if set.
 set -a; . ./.env; set +a
 args=(--from-literal=HF_TOKEN="${HF_TOKEN:-}")
-[ -n "${CAPTURE_WEB_TOKEN:-}" ] && args+=(--from-literal=CAPTURE_WEB_TOKEN="$CAPTURE_WEB_TOKEN")
 [ -n "${CAPTURE_NOTIFY_URL:-}" ] && args+=(--from-literal=CAPTURE_NOTIFY_URL="$CAPTURE_NOTIFY_URL")
 [ -n "${CAPTURE_EMAIL:-}" ] && args+=(--from-literal=CAPTURE_EMAIL="$CAPTURE_EMAIL")
 $K create secret generic minutes -n $NS "${args[@]}" --dry-run=client -o yaml | $K apply -f -
