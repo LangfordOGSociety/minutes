@@ -120,7 +120,13 @@ captures).
   stitched clock as `<slug>.speakers.json`, `<slug>.zoom-captions.{json,vtt}`.
   Offsets use each part's `videoStart` (first captured frame, from ffmpeg
   `-progress`), not spawn time: ffmpeg takes ~1.5-2.6s to open x11grab+pulse.
-- `transcriber/` separate Python container (WhisperX, CPU int8). Watches
+- `transcriber/` separate Python container (WhisperX). CPU int8 by default
+  (`Dockerfile`, compose); the homelab runs `Dockerfile.rocm` on k3s-07's
+  Radeon 8060S (gfx1151, ROCm 7 from AMD's TheRock pip nightlies +
+  CTranslate2's official ROCm wheel), `WHISPER_DEVICE=cuda` (ROCm says
+  "cuda" too), float16, `TORCH_MIOPEN=0` (MIOpen's batch-norm JIT fails on
+  gfx1151). `device()` falls back to the CPU if torch or CTranslate2 can't
+  see a GPU. ~23x faster than k3s-04's CPU (`bench.py`). Watches
   recordings/, writes `<slug>.{vtt,srt,txt,transcript.json}` and
   `transcript.status.json`; waits while a capture is running. Uses
   `<slug>.speakers.json` to label segments (`zoom_speaker`). Phase 2:

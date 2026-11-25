@@ -1,6 +1,13 @@
-# minutes on the homelab k3s cluster: web UI + scheduler and the
-# transcriber in one pod, sharing one volume (recordings, models, Zoom login).
-# See deploy/k8s/README.md.
+# minutes on the homelab k3s cluster. See deploy/k8s/README.md.
+#
+#   minutes              web site + scheduler + captures (prefers k3s-04);
+#                        serves the video. Zoom login on `data` (RBD).
+#   minutes-transcriber  WhisperX on k3s-07's Radeon 8060S through ROCm
+#                        (the -rocm image), sharing the GPU with ollama.
+#
+# Both mount `recordings` (CephFS, ReadWriteMany): captures write parts and
+# the stitched video, the transcriber reads them (live, too) and writes the
+# transcripts next to them.
 apiVersion: v1
 kind: Namespace
 metadata:
@@ -8,7 +15,9 @@ metadata:
 ---
 # Bound to the volume that zoom-capture used (moved, not copied; see
 # MIGRATION.md). The PV's reclaim policy is Retain: deleting this PVC or the
-# namespace keeps the data.
+# namespace keeps the data. Since the transcriber moved to k3s-07 it holds
+# only the saved Zoom login (auth/); recordings/ and models/ on it are the
+# pre-move copies, kept until the move is known good.
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
@@ -20,7 +29,35 @@ spec:
   volumeName: pvc-42360e95-88b8-445c-a3ff-a6988f5ff9cf
   resources:
     requests:
-      storage: 200Gi   # ~0.6 GB per meeting hour, plus ~5 GB of models
+      storage: 200Gi
+---
+# Recordings, transcripts, minutes.db: shared by the web pod and the
+# transcriber on another node, so CephFS (RWX). Set its PV to Retain after
+# the first apply (README).
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: recordings
+  namespace: minutes
+spec:
+  accessModes: [ReadWriteMany]
+  storageClassName: csi-cephfs-sc
+  resources:
+    requests:
+      storage: 200Gi   # ~0.6 GB per meeting hour
+---
+# The transcriber's model cache (~2 GB, re-downloadable).
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: transcriber-models
+  namespace: minutes
+spec:
+  accessModes: [ReadWriteOnce]
+  storageClassName: csi-rbd-sc
+  resources:
+    requests:
+      storage: 20Gi
 ---
 # Nightly backups of minutes.db and the saved Zoom login (#31), 14 days.
 # CephFS, not another RBD image: a different Ceph pool and filesystem from
@@ -77,13 +114,14 @@ spec:
             - sh
             - -c
             - >-
-              mkdir -p /data/recordings /data/models/hf /data/models/torch /data/models/cache /data/auth &&
-              chown 1000:1000 /backups && chmod 700 /backups &&
+              mkdir -p /data/auth &&
+              chown 1000:1000 /backups /recordings && chmod 700 /backups &&
               { [ -s /data/auth/zoom-auth.json ] || [ ! -f /seed/zoom-auth.json ] || cp /seed/zoom-auth.json /data/auth/; } &&
-              chown -R 1000:1000 /data/recordings /data/auth && chown 1000:1000 /data/models /data/models/* &&
+              chown -R 1000:1000 /data/auth &&
               chmod 700 /data/auth && chmod -f 600 /data/auth/* || true
           volumeMounts:
             - { name: data, mountPath: /data }
+            - { name: recordings, mountPath: /recordings }
             - { name: seed, mountPath: /seed, readOnly: true }
             - { name: backups, mountPath: /backups }
       containers:
@@ -118,42 +156,88 @@ spec:
             tcpSocket: { port: http }
             periodSeconds: 10
           volumeMounts:
-            - { name: data, mountPath: /recordings, subPath: recordings }
+            - { name: recordings, mountPath: /recordings }
             - { name: data, mountPath: /auth, subPath: auth }
             - { name: backups, mountPath: /backups }
             - { name: shm, mountPath: /dev/shm }
-        - name: transcriber
-          image: ghcr.io/langfordogsociety/minutes-transcriber:main
-          env:
-            - { name: WHISPER_MODEL, value: large-v3-turbo }
-            # os.cpu_count() sees all 24 node cores, not the limit: set threads.
-            - { name: WHISPER_THREADS, value: "10" }
-            - { name: OMP_NUM_THREADS, value: "10" }
-            - { name: MKL_NUM_THREADS, value: "10" }
-            - { name: LIVE, value: "1" }
-            - { name: LIVE_CHUNK_S, value: "60" }
-            - { name: LIVE_CHUNK_MAX_S, value: "300" }
-            # Own CPU here, so the final pass needn't wait for other captures.
-            - { name: WAIT_FOR_CAPTURES, value: "0" }
-            - { name: DIARIZE_STEP, value: "0.25" }
-            - { name: MALLOC_ARENA_MAX, value: "2" }
-            - name: HF_TOKEN
-              valueFrom: { secretKeyRef: { name: minutes, key: HF_TOKEN, optional: true } }
-          resources:
-            requests: { cpu: "5", memory: 6Gi }
-            limits: { cpu: "12", memory: 12Gi }
-          volumeMounts:
-            - { name: data, mountPath: /recordings, subPath: recordings }
-            - { name: data, mountPath: /models, subPath: models }
       volumes:
         - name: data
           persistentVolumeClaim: { claimName: data }
+        - name: recordings
+          persistentVolumeClaim: { claimName: recordings }
         - name: backups
           persistentVolumeClaim: { claimName: backups }
         - name: seed
           secret: { secretName: minutes-zoom-auth, optional: true, defaultMode: 0400 }
         - name: shm
           emptyDir: { medium: Memory, sizeLimit: 1Gi }
+---
+# WhisperX on k3s-07's Radeon 8060S (gfx1151) through ROCm: ~15x faster
+# than real time vs ~0.65x on k3s-04's CPU (transcriber/bench.py). The GPU
+# is shared with ollama through the generic device plugin's devic.es/amd-gpu
+# (/dev/kfd + the render node; homelab infra/generic-device-plugin), so no
+# privileged mode. Restarting it never touches a capture: an interrupted
+# transcript is redone on start. Without a usable GPU it falls back to
+# k3s-07's CPU (still ~4x k3s-04) and logs why.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: minutes-transcriber
+  namespace: minutes
+  labels: { app: minutes-transcriber }
+spec:
+  replicas: 1
+  strategy: { type: Recreate }   # RWO model cache
+  selector:
+    matchLabels: { app: minutes-transcriber }
+  template:
+    metadata:
+      labels: { app: minutes-transcriber }
+    spec:
+      imagePullSecrets: [{ name: ghcr-pull }]
+      nodeSelector: { kubernetes.io/hostname: k3s-07 }
+      tolerations: [{ key: gpu, operator: Exists }]
+      securityContext:
+        runAsUser: 1000
+        runAsGroup: 1000
+        # 110 = render on k3s-07: owns /dev/kfd and /dev/dri/renderD128.
+        supplementalGroups: [110]
+        fsGroup: 1000
+        fsGroupChangePolicy: OnRootMismatch
+      containers:
+        - name: transcriber
+          image: ghcr.io/langfordogsociety/minutes-transcriber-rocm:main
+          env:
+            - { name: WHISPER_MODEL, value: large-v3-turbo }
+            - { name: WHISPER_DEVICE, value: cuda }   # ROCm says "cuda" too
+            - { name: TORCH_MIOPEN, value: "0" }      # MIOpen's batch-norm JIT fails on gfx1151
+            # CPU work (decoding, VAD glue, and the fallback): k3s-07's
+            # os.cpu_count() sees 28 cores, not the limit.
+            - { name: WHISPER_THREADS, value: "10" }
+            - { name: OMP_NUM_THREADS, value: "10" }
+            - { name: MKL_NUM_THREADS, value: "10" }
+            - { name: LIVE, value: "1" }
+            - { name: LIVE_CHUNK_S, value: "60" }
+            - { name: LIVE_CHUNK_MAX_S, value: "300" }
+            # Its own node, so the final pass needn't wait for captures.
+            - { name: WAIT_FOR_CAPTURES, value: "0" }
+            - { name: DIARIZE_STEP, value: "0.25" }
+            - { name: MALLOC_ARENA_MAX, value: "2" }
+            - name: HF_TOKEN
+              valueFrom: { secretKeyRef: { name: minutes, key: HF_TOKEN, optional: true } }
+          resources:
+            # Memory includes room for the models in GPU memory, which on
+            # this APU is system RAM the cgroup may not see (like ollama's).
+            requests: { cpu: "2", memory: 8Gi, devic.es/amd-gpu: "1" }
+            limits: { cpu: "12", memory: 16Gi, devic.es/amd-gpu: "1" }
+          volumeMounts:
+            - { name: recordings, mountPath: /recordings }
+            - { name: models, mountPath: /models }
+      volumes:
+        - name: recordings
+          persistentVolumeClaim: { claimName: recordings }
+        - name: models
+          persistentVolumeClaim: { claimName: transcriber-models }
 ---
 apiVersion: v1
 kind: Service

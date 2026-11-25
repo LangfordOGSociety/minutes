@@ -1,5 +1,14 @@
 """
-minutes transcriber (transcribe + align + speaker diarization, CPU-only).
+minutes transcriber (transcribe + align + speaker diarization).
+
+Runs on the CPU, or on a GPU with WHISPER_DEVICE=cuda: NVIDIA, or AMD
+through ROCm (torch and CTranslate2's HIP build both call it "cuda"). The
+homelab runs the ROCm image (Dockerfile.rocm) on k3s-07's Radeon 8060S
+(gfx1151), with TORCH_MIOPEN=0: MIOpen's runtime-compiled batch-norm
+kernel fails there, and PyTorch's own GPU kernels do the job. Measured on
+a 45.8 min meeting: 3.0 min on that GPU, 15.7 min on k3s-07's CPU, 70 min
+on k3s-04's CPU (transcriber/bench.py). Without a usable GPU it falls back
+to the CPU and says so in the log.
 
 Watches the shared recordings/ volume. For each finished capture (manifest
 outcome is final and the stitched MP4 exists) it writes, next to the video:
@@ -54,7 +63,12 @@ ROOT = Path(os.environ.get("RECORDINGS", "/recordings"))
 # Langford 2026-10-05 test clip vs 4 of 5 for turbo).
 MODEL = os.environ.get("WHISPER_MODEL", "large-v3-turbo")
 LANGUAGE = os.environ.get("WHISPER_LANGUAGE", "en")
-COMPUTE = os.environ.get("WHISPER_COMPUTE", "int8")
+# cpu, or cuda (NVIDIA, or AMD/ROCm). See device().
+WANT_DEVICE = os.environ.get("WHISPER_DEVICE", "cpu")
+# int8 on the CPU, float16 on a GPU, unless set.
+COMPUTE_ENV = os.environ.get("WHISPER_COMPUTE") or None
+# TORCH_MIOPEN=0: don't use AMD's MIOpen (the cuDNN stand-in) in PyTorch.
+MIOPEN = os.environ.get("TORCH_MIOPEN", "1") not in ("0", "false", "no")
 BATCH = int(os.environ.get("WHISPER_BATCH", "8"))
 THREADS = int(os.environ.get("WHISPER_THREADS", str(max(1, (os.cpu_count() or 2) - 1))))
 POLL_S = int(os.environ.get("POLL_SECONDS", "60"))
@@ -383,7 +397,7 @@ def recognise(d: Path, audio) -> tuple[list[dict], list[dict], dict]:
     result = model.transcribe(audio, batch_size=BATCH, language=LANGUAGE)
     tt = time.monotonic() - t
     t = time.monotonic()
-    segs = whisperx.align(result["segments"], align_model, align_meta, audio, "cpu",
+    segs = whisperx.align(result["segments"], align_model, align_meta, audio, device(),
                           return_char_alignments=False)["segments"] if result["segments"] else []
     keep, dropped = drop_quiet(segs, audio)
     return keep, dropped, {"transcribe": tt, "align": time.monotonic() - t}
@@ -501,6 +515,37 @@ def live_result(d: Path, m: dict) -> tuple[list[dict], list[dict], dict] | None:
     return segs, dropped, st["timings"]
 
 
+_device: str | None = None
+
+
+def device() -> str:
+    """The device to run on: WHISPER_DEVICE if both torch and CTranslate2
+    can see a GPU, else the CPU. Decided once."""
+    global _device
+    if _device is None:
+        _device = "cpu"
+        if WANT_DEVICE != "cpu":
+            try:
+                import ctranslate2
+                import torch
+                if torch.cuda.is_available() and ctranslate2.get_cuda_device_count() > 0:
+                    _device = WANT_DEVICE
+                    if not MIOPEN:
+                        torch.backends.cudnn.enabled = False
+                    log(f"device: {torch.cuda.get_device_name(0)} ({WANT_DEVICE}, torch {torch.__version__}, "
+                        f"ctranslate2 {ctranslate2.__version__}{', MIOpen off' if not MIOPEN else ''})")
+                else:
+                    log(f"WHISPER_DEVICE={WANT_DEVICE} but no GPU is visible (torch: {torch.cuda.is_available()}, "
+                        f"ctranslate2: {ctranslate2.get_cuda_device_count()} device(s)); using the CPU")
+            except Exception as e:  # noqa: BLE001 - a broken GPU stack must not stop transcription
+                log(f"GPU setup failed ({type(e).__name__}: {e}); using the CPU")
+    return _device
+
+
+def compute_type() -> str:
+    return COMPUTE_ENV or ("int8" if device() == "cpu" else "float16")
+
+
 def unload() -> None:
     global _model, _align, _diarize
     if _model is None and _align is None and not (_diarize and not isinstance(_diarize, str)):
@@ -510,6 +555,9 @@ def unload() -> None:
     if _diarize is not None and not isinstance(_diarize, str):
         _diarize = None
     gc.collect()
+    if device() != "cpu":
+        import torch
+        torch.cuda.empty_cache()
     log("idle: models unloaded")
 
 
@@ -517,10 +565,10 @@ def models():
     global _model, _align
     import whisperx  # slow import; only when there's work
     if _model is None:
-        log(f"loading {MODEL} ({COMPUTE}, {THREADS} threads)")
-        _model = whisperx.load_model(MODEL, "cpu", compute_type=COMPUTE, language=LANGUAGE, threads=THREADS)
+        log(f"loading {MODEL} ({compute_type()} on {device()}, {THREADS} threads)")
+        _model = whisperx.load_model(MODEL, device(), compute_type=compute_type(), language=LANGUAGE, threads=THREADS)
     if _align is None:
-        _align = whisperx.load_align_model(language_code=LANGUAGE, device="cpu")
+        _align = whisperx.load_align_model(language_code=LANGUAGE, device=device())
     return whisperx, _model, _align
 
 
@@ -534,7 +582,7 @@ def diarizer():
             try:
                 from whisperx.diarize import DiarizationPipeline
                 log(f"loading {DIARIZE_MODEL}")
-                _diarize = DiarizationPipeline(model_name=DIARIZE_MODEL, token=HF_TOKEN, device="cpu")
+                _diarize = DiarizationPipeline(model_name=DIARIZE_MODEL, token=HF_TOKEN, device=device())
                 seg = _diarize.model._segmentation
                 seg.step = DIARIZE_STEP * seg.duration
             except Exception as e:  # noqa: BLE001 - no token / terms not accepted / offline
@@ -610,7 +658,7 @@ def transcribe(d: Path) -> None:
 
                 set_status(d, stage="aligning words")
                 t = time.monotonic()
-                result = whisperx.align(result["segments"], align_model, align_meta, audio, "cpu",
+                result = whisperx.align(result["segments"], align_model, align_meta, audio, device(),
                                         return_char_alignments=False,
                                         progress_callback=progress(d, "aligning words", 70, 78))
                 timings["align"] = round(time.monotonic() - t, 1)
@@ -642,7 +690,7 @@ def transcribe(d: Path) -> None:
         labels = name_speakers(result["segments"])
         if diar_meta is not None:
             diar_meta["labels"] = labels
-        meta = {"model": MODEL, "compute_type": COMPUTE, "language": LANGUAGE, "created": now(),
+        meta = {"model": MODEL, "compute_type": compute_type(), "device": device(), "language": LANGUAGE, "created": now(),
                 "audio_seconds": round(audio_s, 1), "source": video.name, "silence_db": SILENCE_DB,
                 "vocab": vocab_files,
                 "diarization": diar_meta, "diarization_note": None if diar_meta else diarizer(),

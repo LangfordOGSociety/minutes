@@ -1,16 +1,67 @@
 # Homelab deployment (k3s)
 
-One pod, two containers (capture + transcriber), one Ceph RBD volume
-(`data`: `recordings/`, `models/`, `auth/` as subPaths), on the 24-core
-worker `k3s-04` when it fits. Web UI at https://minutes.lab.emc2.build/ (zoom.lab.emc2.build redirects),
+Two Deployments:
+
+- `minutes`: web site, scheduler, captures; streams the video to viewers.
+  On the 24-core worker `k3s-04` when it fits. Zoom login on the `data`
+  RBD volume (`auth/`).
+- `minutes-transcriber`: WhisperX on `k3s-07`'s Radeon 8060S (gfx1151)
+  through ROCm, image `minutes-transcriber-rocm` (`transcriber/Dockerfile.rocm`).
+  Shares the GPU with Ollama via `devic.es/amd-gpu` (homelab
+  `infra/generic-device-plugin`: `/dev/kfd` + the render node, 2 slots; the
+  pod adds the render group, gid 110, no privileged mode). MIOpen is off
+  (`TORCH_MIOPEN=0`): its runtime-compiled batch-norm kernel fails on
+  gfx1151. Model cache on its own RBD volume, `transcriber-models`.
+
+Both mount `recordings` (CephFS, ReadWriteMany): video parts, stitched
+videos, transcripts, `minutes.db`. Measured on the 2026-11-24 meeting (45.8
+min): the three transcription steps took 3.0 min on the GPU vs 70 min on
+k3s-04's CPU (`transcriber/bench.py`, see "Benchmark" below).
+
+Web UI at https://minutes.lab.emc2.build/ (zoom.lab.emc2.build redirects),
 LAN only (Traefik `ipAllowList` 192.168.0.0/16). Capture admin needs an
 admin account; create the first one in the pod:
 
     kubectl -n minutes exec deploy/minutes -c capture -- node /app/dist/index.js user add --admin you@example.com
 
-Resources: capture 1.5-8 CPU / 3-8 GiB (two overlapping captures), transcriber
-5-12 CPU / 6-12 GiB with 10 threads, live chunks of 60s, and the final pass
-doesn't wait for other captures (`WAIT_FOR_CAPTURES=0`).
+Resources: capture 1.5-8 CPU / 3-8 GiB (two overlapping captures);
+transcriber 2-12 CPU / 8-16 GiB plus one GPU slot, live chunks of 60s, and
+the final pass doesn't wait for captures (`WAIT_FOR_CAPTURES=0`). The 8 GiB
+request also covers the models' GPU memory, which on this APU is system RAM
+the cgroup doesn't see; Ollama's request was lowered from 88 to 80 GiB to
+make room (homelab `apps/ollama`).
+
+### Moving to this layout (once)
+
+Before 2026-11-25 the transcriber was a second container in `minutes` and
+recordings lived on `data`. After the commit that introduced the split is
+merged and CI has built its images, with nothing recording:
+
+    deploy/k8s/move-recordings.sh sha-<commit>
+
+It creates `recordings` and `transcriber-models`, stops the web pod,
+copies `recordings/` to CephFS and checks every file's checksum, applies
+the manifests (`setup.sh`), waits for the transcriber, and sets both new
+PVs to `Retain`. The old copy stays on `data` under `recordings/` until
+you delete it. Until the move, releases keep deploying the old layout
+(release.yml handles both).
+
+### Benchmark
+
+`transcriber/bench.py` times speech-to-text, alignment and speaker
+separation on one audio file with the service's settings (in both images:
+`python /app/bench.py audio.wav <slug> out.json`, `BENCH_DEVICE=cuda` for
+the GPU, `BENCH_MIOPEN=0` on gfx1151). 2026-11-25, 45.8 min meeting:
+
+| | k3s-04 CPU | k3s-07 CPU | k3s-07 GPU |
+|---|---|---|---|
+| transcribe | 2012 s | 323 s | 58 s |
+| align | 417 s | 103 s | 26 s |
+| diarize | 1780 s | 519 s | 93 s |
+| total | 70 min | 15.7 min | 3.0 min |
+
+Same segments and speakers; 98.8% of words identical GPU vs CPU (two CPU
+runs agree on 98.9%).
 
 ## Build and deploy (GitHub Actions)
 

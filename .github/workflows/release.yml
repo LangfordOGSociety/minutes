@@ -39,7 +39,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
       - name: point main at this commit's images
         run: |
-          for image in minutes minutes-transcriber; do
+          for image in minutes minutes-transcriber minutes-transcriber-rocm; do
             docker buildx imagetools create --tag "$REPO/$image:main" "$REPO/$image:sha-$GITHUB_SHA"
           done
 
@@ -84,14 +84,30 @@ jobs:
       # sha tags, not `main`: every deploy is a spec change (so it always
       # rolls), and the deployment records exactly which commit runs.
       # A failed rollout (bad image, pull error, crash) rolls back.
+      # The web pod (`minutes`, capture container) and the GPU transcriber
+      # (`minutes-transcriber` on k3s-07, the -rocm image). A cluster still
+      # on the old layout (transcriber as a second container in `minutes`)
+      # gets the CPU transcriber image there instead.
       - name: deploy
         if: env.HAS_DEPLOY_SECRETS == 'true'
         run: |
-          kubectl -n minutes set image deployment/minutes \
-            capture="$REPO/minutes:sha-$GITHUB_SHA" \
-            transcriber="$REPO/minutes-transcriber:sha-$GITHUB_SHA"
-          if ! kubectl -n minutes rollout status deployment/minutes --timeout=15m; then
-            kubectl -n minutes get pods -l app=minutes -o wide || true
-            kubectl -n minutes rollout undo deployment/minutes
-            exit 1
+          k="kubectl -n minutes"
+          sets="capture=$REPO/minutes:sha-$GITHUB_SHA"
+          if $k get deployment minutes -o jsonpath='{.spec.template.spec.containers[*].name}' | grep -qw transcriber; then
+            sets="$sets transcriber=$REPO/minutes-transcriber:sha-$GITHUB_SHA"
           fi
+          deploys="minutes"
+          $k set image deployment/minutes $sets
+          if $k get deployment minutes-transcriber >/dev/null 2>&1; then
+            $k set image deployment/minutes-transcriber transcriber="$REPO/minutes-transcriber-rocm:sha-$GITHUB_SHA"
+            deploys="$deploys minutes-transcriber"
+          fi
+          failed=0
+          for d in $deploys; do
+            if ! $k rollout status deployment/$d --timeout=15m; then
+              $k get pods -l app=$d -o wide || true
+              $k rollout undo deployment/$d
+              failed=1
+            fi
+          done
+          exit $failed

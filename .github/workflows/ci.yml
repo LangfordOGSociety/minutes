@@ -35,9 +35,9 @@ jobs:
       - name: TypeScript build (strict)
         run: npm run build
       - name: Shell syntax
-        run: for f in entrypoint.sh deploy/k8s/setup.sh scripts/*.sh; do bash -n "$f"; done
+        run: for f in entrypoint.sh deploy/k8s/*.sh scripts/*.sh; do bash -n "$f"; done
       - name: Transcriber syntax
-        run: python3 -m py_compile transcriber/transcribe.py
+        run: python3 -m py_compile transcriber/transcribe.py transcriber/bench.py
       - uses: azure/setup-kubectl@v5
         with:
           version: 'v1.31.0'
@@ -105,6 +105,18 @@ jobs:
           tags: ${{ env.REPO }}/minutes-transcriber:sha-${{ github.sha }}
           cache-from: type=registry,ref=${{ env.REPO }}/minutes-transcriber:buildcache
           cache-to: type=registry,ref=${{ env.REPO }}/minutes-transcriber:buildcache,mode=max
+      # The one the homelab runs: ROCm for k3s-07's Radeon 8060S (gfx1151).
+      # The CPU image above stays for compose and other machines.
+      - name: transcriber image (ROCm, gfx1151)
+        uses: docker/build-push-action@v7
+        with:
+          context: transcriber
+          file: transcriber/Dockerfile.rocm
+          platforms: linux/amd64
+          push: true
+          tags: ${{ env.REPO }}/minutes-transcriber-rocm:sha-${{ github.sha }}
+          cache-from: type=registry,ref=${{ env.REPO }}/minutes-transcriber-rocm:buildcache
+          cache-to: type=registry,ref=${{ env.REPO }}/minutes-transcriber-rocm:buildcache,mode=max
 
   release:
     needs: [check, test, images]

@@ -51,12 +51,13 @@ $K run "$pod" --image="$image" --restart=Never --quiet --overrides="$(cat <<EOF
     "command": ["node", "/app/dist/index.js", "restore", "/backups/$NAME",
                 "--out", "/recordings", "--auth", "/auth/zoom-auth.json"],
     "volumeMounts": [
-      {"name": "data", "mountPath": "/recordings", "subPath": "recordings"},
+      {"name": "recordings", "mountPath": "/recordings"},
       {"name": "data", "mountPath": "/auth", "subPath": "auth"},
       {"name": "backups", "mountPath": "/backups", "readOnly": true}]
   }],
   "volumes": [
     {"name": "data", "persistentVolumeClaim": {"claimName": "data"}},
+    {"name": "recordings", "persistentVolumeClaim": {"claimName": "recordings"}},
     {"name": "backups", "persistentVolumeClaim": {"claimName": "backups"}}]
 }}
 EOF
