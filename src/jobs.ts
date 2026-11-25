@@ -22,6 +22,7 @@ import { createWriteStream, existsSync, mkdirSync, readFileSync, renameSync, wri
 import { tx, type DB } from "./db.js";
 import { Meetings, type Meeting } from "./meetings.js";
 import { checkLink as checkPlatformLink, platformFor } from "./platforms/registry.js";
+import type { CaptureMethod } from "./platforms/types.js";
 import path from "node:path";
 import { promisify } from "node:util";
 import { SLUG_RE, TIMEOUT, defaultSlug, logger, withTimeout } from "./util.js";
@@ -73,8 +74,8 @@ export interface SchedulerOpts {
 
 interface Running {
   proc: ChildProcess;
-  display: number;
-  xvfb: ChildProcess;
+  display: number | null;      // null for stream jobs: no Xvfb, no sink
+  xvfb: ChildProcess | null;
   sinkModule: string | null;
   exited: Promise<void>;
   stopRequested: boolean;
@@ -157,7 +158,7 @@ export class Scheduler {
   get(id: string): Job | undefined { return this.jobs.find((j) => j.id === id); }
   displayOf(id: string): string | null {
     const r = this.running.get(id);
-    return r ? `:${r.display}` : null;
+    return r && r.display !== null ? `:${r.display}` : null;
   }
   isActive(slug: string): boolean {
     return this.jobs.some((j) => j.slug === slug && ["scheduled", "queued", "running", "stopping"].includes(j.status));
@@ -375,7 +376,7 @@ export class Scheduler {
   }
 
   private freeDisplay(): number {
-    const used = new Set([...this.running.values()].map((r) => r.display));
+    const used = new Set([...this.running.values()].map((r) => r.display).filter((d) => d !== null));
     let n = 100;
     while (used.has(n) || existsSync(`/tmp/.X${n}-lock`)) n++;
     return n;
@@ -388,17 +389,28 @@ export class Scheduler {
     try { await this.launchInner(j); } finally { this.launching.delete(j.id); }
   }
 
+  /** The meeting's capture method, else its platform's default. */
+  private methodOf(j: Job): CaptureMethod {
+    const m = this.meetings.get(j.meetingRef);
+    const p = platformFor(j.link);
+    const want = m?.method as CaptureMethod | undefined;
+    return want && p?.methods.includes(want) ? want : p?.methods[0] ?? "screen";
+  }
+
   private async launchInner(j: Job): Promise<void> {
-    const n = this.freeDisplay();
-    const display = `:${n}`;
-    const sink = `zoom_${n}`;
+    const method = this.methodOf(j);
+    const screen = method === "screen";
+    // Stream jobs get no display or sink (nothing to show or hear).
+    const n = screen ? this.freeDisplay() : null;
+    const display = n === null ? "" : `:${n}`;
+    const sink = n === null ? "" : `zoom_${n}`;
     const dir = path.join(this.o.out, j.slug);
     mkdirSync(dir, { recursive: true });
     const capLog = createWriteStream(path.join(dir, "capture.log"), { flags: "a" });
 
     let xvfb: ChildProcess | undefined;
     let sinkModule: string | null = null;
-    try {
+    if (screen) try {
       xvfb = spawn("Xvfb", [display, "-screen", "0", `${this.o.width}x${this.o.height}x24`, "-nolisten", "tcp"],
         { stdio: "ignore" });
       // A spawn failure (no Xvfb binary) is an 'error' event: unhandled, it
@@ -428,19 +440,19 @@ export class Scheduler {
     const args = [
       this.o.entry,
       "--link", j.link, "--start", j.start, "--slug", j.slug, "--name", j.name,
-      "--out", this.o.out, "--lead-min", String(this.o.leadMs / 60_000),
+      "--out", this.o.out, "--lead-min", String(this.o.leadMs / 60_000), "--method", method,
       ...(this.o.auth ? ["--auth", this.o.auth] : []),
     ];
     const proc = spawn(process.execPath, args, {
       // The job's own email overrides the server-wide CAPTURE_EMAIL.
-      env: { ...process.env, DISPLAY: display, CAPTURE_SINK: sink, PULSE_SINK: sink,
+      env: { ...process.env, ...(screen ? { DISPLAY: display, CAPTURE_SINK: sink, PULSE_SINK: sink } : {}),
              ...(j.email ? { CAPTURE_EMAIL: j.email } : {}) },
       stdio: ["ignore", "pipe", "pipe"],
     });
     proc.stdout?.pipe(capLog, { end: false });
     proc.stderr?.pipe(capLog, { end: false });
 
-    const run: Running = { proc, display: n, xvfb, sinkModule, stopRequested: false, exited: Promise.resolve() };
+    const run: Running = { proc, display: n, xvfb: xvfb ?? null, sinkModule, stopRequested: false, exited: Promise.resolve() };
     // Seen 2026-11-09 (twice): the VM ran out of memory and the kernel
     // killed the job's Xvfb mid-meeting, taking Chromium with it; the
     // runner's rejoin then failed with "Missing X server" until the display
@@ -460,11 +472,11 @@ export class Scheduler {
         }, 500);
       });
     };
-    keepDisplay(xvfb);
+    if (xvfb) keepDisplay(xvfb);
     run.exited = new Promise<void>((resolve) => {
       proc.once("exit", async (code, signal) => {
         this.running.delete(j.id);
-        run.xvfb.kill();
+        run.xvfb?.kill();
         if (sinkModule) await execFileP("pactl", ["unload-module", sinkModule]).catch(() => {});
         capLog.end();
         j.exitCode = code ?? null;
@@ -484,7 +496,7 @@ export class Scheduler {
     j.launchedAt = new Date().toISOString();
     delete j.error;
     this.save(j);
-    log.info(`launched ${j.slug} on display ${display}, sink ${sink}`);
+    log.info(screen ? `launched ${j.slug} on display ${display}, sink ${sink}` : `launched ${j.slug} (${method}, no display)`);
   }
 }
 

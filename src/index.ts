@@ -10,6 +10,8 @@ import { serve } from "./serve.js";
 import { Capture, type Config } from "./runner.js";
 import type { Encoder } from "./recorder.js";
 import { SLUG_RE, defaultSlug } from "./util.js";
+import { platformFor } from "./platforms/registry.js";
+import type { CaptureMethod } from "./platforms/types.js";
 
 const USAGE = `usage: minutes --link <zoom link or id> --start <ISO datetime> [options]
        minutes login --auth <file>   sign in once in a browser window, save the session
@@ -25,6 +27,7 @@ const USAGE = `usage: minutes --link <zoom link or id> --start <ISO datetime> [o
                            (env CAPTURE_EMAIL: typed only if the host
                            requires an email to join; the host sees it)
   --out <dir>              default /recordings
+  --method <screen|stream> how to capture, default: the platform's first
   --lead-min <n>           join this early, default 15
   --no-show-min <n>        give up if not started by start+n, default 120
   --rejoin-wait-min <n>    after a drop, waiting room this long = ended, default 10
@@ -48,6 +51,7 @@ function parse(): Config {
       slug: { type: "string" },
       name: { type: "string", default: env.CAPTURE_NAME ?? "Recorder" },
       out: { type: "string", default: env.CAPTURE_OUT ?? "/recordings" },
+      method: { type: "string" },
       "lead-min": { type: "string", default: "15" },
       "no-show-min": { type: "string", default: "120" },
       "rejoin-wait-min": { type: "string", default: "10" },
@@ -84,8 +88,14 @@ function parse(): Config {
   const slug = v.slug ?? defaultSlug(start);
   if (!SLUG_RE.test(slug)) fail(`--slug must be letters, digits, '.', '_' or '-': ${slug}`);
 
+  const platform = platformFor(v.link);
+  if (!platform) fail(`no platform handles that link: ${v.link.replace(/([?&]pwd=)[^&]+/, "$1<hidden>")}`);
+  const method = (v.method ?? platform.methods[0]) as CaptureMethod;
+  if (!platform.methods.includes(method)) fail(`--method must be one of ${platform.methods.join(", ")} for ${platform.label}`);
+
   return {
     link: v.link,
+    method,
     start,
     slug,
     tz: env.TZ!,
