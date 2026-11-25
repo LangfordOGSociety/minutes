@@ -125,9 +125,17 @@ def set_status(d: Path, **fields) -> dict:
     return st
 
 
+def active_captures() -> list[dict]:
+    """Running and stopping captures. The server writes active.json (its
+    jobs live in minutes.db); jobs.json is the pre-database format."""
+    jobs = read_json(ROOT / "active.json")
+    if jobs is None:
+        jobs = read_json(ROOT / "jobs.json") or []
+    return [j for j in jobs if isinstance(j, dict) and j.get("status") in ("running", "stopping")]
+
+
 def captures_running() -> bool:
-    jobs = read_json(ROOT / "jobs.json") or []
-    return any(j.get("status") in ("running", "stopping") for j in jobs if isinstance(j, dict))
+    return bool(active_captures())
 
 
 def pending() -> list[Path]:
@@ -384,8 +392,7 @@ def recognise(d: Path, audio) -> tuple[list[dict], list[dict], dict]:
 def live_candidates() -> list[Path]:
     if not LIVE:
         return []
-    jobs = read_json(ROOT / "jobs.json") or []
-    live_slugs = {j.get("slug") for j in jobs if isinstance(j, dict) and j.get("status") in ("running", "stopping")}
+    live_slugs = {j.get("slug") for j in active_captures()}
     out = []
     for d in sorted(p for p in ROOT.iterdir() if p.is_dir() and p.name in live_slugs):
         m = read_json(d / "manifest.json")

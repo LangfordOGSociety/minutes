@@ -24,6 +24,7 @@ import { createReadStream, existsSync, openSync, readFileSync, readSync, closeSy
 import http from "node:http";
 import path from "node:path";
 import { timingSafeEqual } from "node:crypto";
+import { openDb } from "./db.js";
 import { BadRequest, Scheduler, type Job, type SchedulerOpts } from "./jobs.js";
 import { SessionKeeper, type KeeperOpts } from "./session.js";
 import { SLUG_RE, logger } from "./util.js";
@@ -214,7 +215,8 @@ function screenshot(display: string, width: number, height: number): Promise<Buf
 }
 
 export async function serve(o: ServeOpts, entry: string): Promise<number> {
-  const sched = new Scheduler({ ...o, entry });
+  const db = openDb(path.join(o.out, "minutes.db"));
+  const sched = new Scheduler({ ...o, entry }, db);
   sched.start();
   const keeper = new SessionKeeper({ ...o.session, auth: o.auth, out: o.out, leadMs: o.leadMs }, () => sched.list());
   keeper.start();
@@ -319,6 +321,7 @@ export async function serve(o: ServeOpts, entry: string): Promise<number> {
         server.close();
         keeper.stop();
         await sched.shutdown();
+        db.close();
         resolve(0);
       });
     }
