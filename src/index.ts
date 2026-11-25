@@ -206,11 +206,14 @@ if (process.argv[2] === "user") {
     strict: true,
   });
   const { Accounts, generatePassword } = await import("./accounts.js");
+  const { Audit, CLI } = await import("./audit.js");
   const { openDb } = await import("./db.js");
   const path = (await import("node:path")).default;
   const [cmd, email, arg] = positionals;
   const db = openDb(path.join(v.out!, "minutes.db"));
   const accounts = new Accounts(db);
+  const audit = new Audit(db);
+  const target = (u: { id: string; email: string }) => ({ type: "user", id: u.id, label: u.email });
   const say = (u: { email: string; role: string; disabledAt: string | null }) =>
     console.log(`${u.email} (${u.role}${u.disabledAt ? ", disabled" : ""})`);
   try {
@@ -222,6 +225,7 @@ if (process.argv[2] === "user") {
     } else if (cmd === "add" && email && !arg) {
       const pw = generatePassword();
       const u = await accounts.create({ email, name: v.name, role: v.admin ? "admin" : "user", password: pw, mustChange: true, verified: true });
+      audit.record(CLI, "user.create", target(u), null, { role: u.role, name: u.name, credentials: "one-time password" });
       say(u);
       console.log(`one-time password: ${pw}\n(they choose their own at first sign-in)`);
     } else if (cmd === "passwd" && email && !arg) {
@@ -229,11 +233,18 @@ if (process.argv[2] === "user") {
       if (!u) throw new Error(`no account for ${email}`);
       const pw = generatePassword();
       await accounts.setPassword(u.id, pw, { mustChange: true });
+      audit.record(CLI, "user.passwd", target(u), null, { credentials: "one-time password", sessions: "signed out" });
       console.log(`one-time password for ${u.email}: ${pw}\n(signed out everywhere; they choose their own at next sign-in)`);
     } else if (cmd === "role" && email && arg) {
-      say(accounts.setRole(email, arg));
+      const before = accounts.byEmail(email);
+      const u = accounts.setRole(email, arg);
+      audit.record(CLI, "user.role", target(u), { role: before?.role }, { role: u.role });
+      say(u);
     } else if ((cmd === "disable" || cmd === "enable") && email && !arg) {
-      say(accounts.setDisabled(email, cmd === "disable"));
+      const before = accounts.byEmail(email);
+      const u = accounts.setDisabled(email, cmd === "disable");
+      audit.record(CLI, `user.${cmd}`, target(u), { disabled: !!before?.disabledAt }, { disabled: !!u.disabledAt });
+      say(u);
     } else {
       fail("usage: minutes user add|passwd|role|disable|enable|list ...");
     }

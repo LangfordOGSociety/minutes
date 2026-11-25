@@ -31,6 +31,10 @@
  *   GET    /api/admin/jobs/:id/log   tail of that capture's log
  *   GET    /api/admin/session        saved Zoom login state
  *   POST   /api/admin/session/check  check (and refresh) the saved login now
+ *   GET    /api/admin/audit          audit log, newest first (?action, actor, target, before, limit)
+ *
+ * Every admin write, and every password change, is recorded in the audit
+ * log (audit.ts) with the fields it changed, redacted.
  *
  * Hardening: security headers on everything, a CSP with the pages' script
  * hashes, writes only from this origin with a JSON body, X-Forwarded-* only
@@ -42,6 +46,7 @@ import { closeSync, createReadStream, existsSync, openSync, readSync, statSync }
 import http from "node:http";
 import path from "node:path";
 import { Accounts, AccountError, FailureLimiter, ROLE_CAPS, SESSION_MAX_AGE_S, can, type Capability, type User } from "./accounts.js";
+import { Audit, type Actor } from "./audit.js";
 import { NightlyBackup, type NightlyOpts } from "./backup.js";
 import { openDb } from "./db.js";
 import { BadRequest, Scheduler, type Job, type SchedulerOpts } from "./jobs.js";
@@ -128,6 +133,11 @@ function adminJob(j: Job) {
   return { ...rest, meetingId: platformFor(link)?.publicId(link) ?? "?", hasEmail: !!email };
 }
 
+/** What the audit log keeps of a job (redacted on the way in). */
+function jobSnap(j: Job): Record<string, unknown> {
+  return { slug: j.slug, link: j.link, start: j.start, name: j.name, email: j.email ?? null, status: j.status };
+}
+
 /** Writes must come from our own pages: a cross-site form or fetch can't
  *  set a JSON content type without a preflight we never answer, and the
  *  Origin, when present, has to be us. */
@@ -191,6 +201,7 @@ export interface App {
   server: http.Server;
   accounts: Accounts;
   sched: Scheduler;
+  audit: Audit;
   /** Stop timers and captures, close the database. */
   close(): Promise<void>;
 }
@@ -199,6 +210,7 @@ export interface App {
 export function createApp(o: ServeOpts, entry: string): App {
   const db = openDb(path.join(o.out, "minutes.db"));
   const accounts = new Accounts(db);
+  const audit = new Audit(db);
   const proxies = new Proxies(o.trustedProxies);
   const cookieName = o.secureCookie ? "__Host-minutes_session" : "minutes_session";
   const cookieAttrs = `Path=/; HttpOnly; SameSite=Lax${o.secureCookie ? "; Secure" : ""}`;
@@ -251,6 +263,7 @@ export function createApp(o: ServeOpts, entry: string): App {
       const sess = accounts.session(token);
       const user: User | null = sess?.user ?? null;
       const role = user && !user.mustChangePassword ? user.role : null;
+      const actor: Actor = { id: user?.id ?? null, label: user?.email ?? "anonymous", ip };
       if (sess?.renewed) res.setHeader("Set-Cookie", `${cookieName}=${token}; ${cookieAttrs}; Max-Age=${SESSION_MAX_AGE_S}`);
       const me = () => user ? {
         email: user.email, name: user.name, role: user.role, mustChangePassword: user.mustChangePassword,
@@ -356,6 +369,8 @@ export function createApp(o: ServeOpts, entry: string): App {
         }
         if (body.password === body.current) return send(res, 400, { error: "choose a new password" });
         await accounts.setPassword(user.id, String(body.password ?? ""), { mustChange: false, keepSession: token });
+        audit.record(actor, "account.password", { type: "user", id: user.id, label: user.email },
+          { mustChangePassword: user.mustChangePassword }, { mustChangePassword: false, otherSessions: "signed out" });
         log.info(`${user.email} changed their password`);
         return send(res, 200, { user: { ...me(), mustChangePassword: false, caps: ROLE_CAPS[user.role] } });
       }
@@ -372,13 +387,24 @@ export function createApp(o: ServeOpts, entry: string): App {
           return send(res, 200, { tz: o.tz, tzdata: process.versions.tz ?? null, leadMinutes: o.leadMs / 60_000, maxConcurrent: o.maxConcurrent });
         }
         if (what === "recordings" && parts.length === 3 && read) return send(res, 200, listRecordings(o.out, sched, o.tz));
+        if (what === "audit" && parts.length === 3 && read) {
+          const q = url.searchParams;
+          const num = (k: string) => { const n = Number(q.get(k)); return Number.isInteger(n) && n > 0 ? n : undefined; };
+          return send(res, 200, {
+            entries: audit.list({ action: q.get("action") || undefined, actor: q.get("actor") || undefined,
+              target: q.get("target") || undefined, beforeId: num("before"), limit: num("limit") }),
+            actions: audit.actions(),
+          });
+        }
         if (what === "session") {
           if (parts.length === 3 && read) return send(res, 200, keeper.get());
           if (id === "check" && parts.length === 4 && method === "POST") {
             if (sched.list().some((j) => j.status === "running" || j.status === "stopping")) {
               return send(res, 409, { error: "a capture is running; the login is checked after it ends" });
             }
-            return send(res, 200, await keeper.check("checked from the web page"));
+            const s = await keeper.check("checked from the web page");
+            audit.record(actor, "login.check", { type: "zoom-login" }, null, { state: s.state, detail: s.detail });
+            return send(res, 200, s);
           }
         }
         if (what === "jobs") {
@@ -386,17 +412,31 @@ export function createApp(o: ServeOpts, entry: string): App {
           if (parts.length === 3 && method === "POST") {
             const body = await jsonBody();
             if (!body) return;
-            return send(res, 201, adminJob(sched.add(body)));
+            const j = sched.add(body);
+            audit.record(actor, "job.create", { type: "job", id: j.id, label: j.slug }, null, jobSnap(j));
+            return send(res, 201, adminJob(j));
           }
           const job = id ? sched.get(id) : undefined;
           if (!job) return send(res, 404, { error: "no such job" });
           if (parts.length === 4 && method === "PATCH") {
             const body = await jsonBody();
             if (!body) return;
-            return send(res, 200, adminJob(sched.update(job.id, body)));
+            const before = jobSnap(job);
+            const j = sched.update(job.id, body);
+            audit.record(actor, "job.update", { type: "job", id: j.id, label: j.slug }, before, jobSnap(j));
+            return send(res, 200, adminJob(j));
           }
-          if (parts.length === 4 && method === "DELETE") return send(res, 200, adminJob(sched.cancel(job.id)));
-          if (parts.length === 5 && sub === "retry" && method === "POST") return send(res, 201, adminJob(sched.retry(job.id)));
+          if (parts.length === 4 && method === "DELETE") {
+            const before = jobSnap(job);
+            const j = sched.cancel(job.id);
+            audit.record(actor, before.status === "running" ? "job.stop" : "job.cancel", { type: "job", id: j.id, label: j.slug }, before, jobSnap(j));
+            return send(res, 200, adminJob(j));
+          }
+          if (parts.length === 5 && sub === "retry" && method === "POST") {
+            const j = sched.retry(job.id);
+            audit.record(actor, "job.retry", { type: "job", id: j.id, label: j.slug }, null, { ...jobSnap(j), previousAttempt: job.slug });
+            return send(res, 201, adminJob(j));
+          }
           if (parts.length === 5 && sub === "log" && read) return send(res, 200, tail(path.join(o.out, job.slug, "capture.log")));
           if (parts.length === 5 && sub === "screen" && read) {
             const d = sched.displayOf(job.id);
@@ -415,7 +455,7 @@ export function createApp(o: ServeOpts, entry: string): App {
   });
 
   return {
-    server, accounts, sched,
+    server, accounts, sched, audit,
     async close() {
       server.close();
       server.closeAllConnections();

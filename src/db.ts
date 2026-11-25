@@ -91,6 +91,25 @@ const MIGRATIONS: string[] = [
    );
    CREATE INDEX sessions_user ON sessions (user_id);
    CREATE INDEX sessions_expires ON sessions (expires_at);`,
+
+  // 4: audit log of admin actions (#7). Values are redacted before they
+  // get here (audit.ts): no passcodes, emails, passwords or tokens.
+  `CREATE TABLE audit_log (
+     id           INTEGER PRIMARY KEY AUTOINCREMENT,
+     at           TEXT NOT NULL,
+     actor_id     TEXT,                   -- users.id; NULL for the CLI
+     actor        TEXT NOT NULL,          -- email at the time, or "cli"
+     ip           TEXT,
+     action       TEXT NOT NULL,          -- "job.create", "user.role", ...
+     target_type  TEXT NOT NULL,
+     target_id    TEXT,
+     target_label TEXT,                   -- e.g. the slug or email, for reading
+     before       TEXT,                   -- JSON, changed fields only
+     after        TEXT
+   );
+   CREATE INDEX audit_at ON audit_log (at);
+   CREATE INDEX audit_action ON audit_log (action);
+   CREATE INDEX audit_target ON audit_log (target_type, target_id);`,
 ];
 
 export function openDb(file: string): DB {

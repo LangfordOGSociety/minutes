@@ -70,6 +70,23 @@ describe("pages in Chromium", { skip: skipReason() }, () => {
     assert.equal(c.httpOnly, true);
     assert.equal(await page.evaluate(() => document.cookie), "");
 
+    // Schedule through the form; the audit log shows it.
+    const d = new Date(Date.now() + 2 * 86_400_000);
+    const local = (n: number) => String(n).padStart(2, "0");
+    await page.fill("#link", "https://zoom.us/j/87093163922?pwd=429539");
+    await page.fill("#start", `${d.getFullYear()}-${local(d.getMonth() + 1)}-${local(d.getDate())}T19:00`);
+    await page.fill("#slug", "council-ui");
+    await page.click("#submitbtn");
+    await page.waitForSelector("#formmsg.ok");
+    await page.waitForSelector("#audit .row:has-text('job.create')");
+    const row = await page.textContent("#audit .row:has-text('job.create')") ?? "";
+    assert.match(row, /council-ui/);
+    assert.match(row, /admin@example\.com/);
+    assert.match(row, /zoom meeting 87093163922/);
+    assert.doesNotMatch(row, /429539/);
+    await page.selectOption("#aaction", "job.create");
+    await page.waitForSelector("#audit .row");
+
     await page.click("#me a:has-text('sign out')");
     await page.waitForURL(/\/login$/);
     await page.goto(base + "/admin");
