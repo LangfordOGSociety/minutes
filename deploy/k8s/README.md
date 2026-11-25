@@ -53,6 +53,19 @@ it. After a fresh namespace, re-set the repo secret:
   closes the part and stitches, 180s grace) and the capture does not
   resume. The release workflow waits for captures; a manual `setup.sh`
   doesn't, so check the page first.
+- Backups (#31): the server backs up `minutes.db` and the saved login
+  nightly after 03:00 to the `backups` PVC (CephFS, separate from the
+  RBD `data` volume, mounted only in the capture container), 14 days.
+  `deploy/k8s/restore.sh` lists them; `deploy/k8s/restore.sh <name>`
+  verifies it in the running pod, refuses during or just before a capture
+  (`FORCE=1` overrides), scales to 0, restores in a one-off pod, scales
+  back. After the PVC is first created, make its PV `Retain` like `data`:
+
+      kubectl -n minutes get pvc backups -o jsonpath='{.spec.volumeName}' |
+        xargs -I{} kubectl patch pv {} -p '{"spec":{"persistentVolumeReclaimPolicy":"Retain"}}'
+
+  It's the same Ceph cluster as `data`: this covers a bad migration, a
+  deleted or corrupted database and a lost RBD image, not losing Ceph.
 - Recordings: `kubectl -n minutes cp -c capture <pod>:/recordings/<slug> recordings/<slug>`.
 - The volume's PV is `Retain` (since the move from the `zoom-capture`
   namespace, 2026-11-24, see MIGRATION.md): deleting the PVC or namespace

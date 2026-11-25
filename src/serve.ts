@@ -29,7 +29,8 @@ import { openDb } from "./db.js";
 import { platformFor } from "./platforms/registry.js";
 import { BadRequest, Scheduler, type Job, type SchedulerOpts } from "./jobs.js";
 import { SessionKeeper, type KeeperOpts } from "./session.js";
-import { SLUG_RE, logger } from "./util.js";
+import { SLUG_RE, logger, notify } from "./util.js";
+import { NightlyBackup, type NightlyOpts } from "./backup.js";
 import { PAGE } from "./webui.js";
 
 const log = logger("web");
@@ -40,6 +41,8 @@ export interface ServeOpts extends Omit<SchedulerOpts, "entry"> {
   token: string | null;
   tz: string;
   session: Omit<KeeperOpts, "auth" | "out" | "leadMs">;
+  /** Nightly backups; null = off. */
+  backup: Omit<NightlyOpts, "auth" | "notifyUrl"> | null;
 }
 
 const MEDIA_TYPES: Record<string, string> = {
@@ -222,6 +225,15 @@ export async function serve(o: ServeOpts, entry: string): Promise<number> {
   sched.start();
   const keeper = new SessionKeeper({ ...o.session, auth: o.auth, out: o.out, leadMs: o.leadMs }, () => sched.list());
   keeper.start();
+  const backups = o.backup
+    ? new NightlyBackup({ ...o.backup, auth: o.auth, notifyUrl: o.session.notifyUrl }, db, (t) => notify(o.session.notifyUrl, t))
+    : null;
+  if (backups) {
+    backups.start();
+    log.info(`nightly backups to ${o.backup!.dir} after ${o.backup!.atHour}:00, kept ${o.backup!.keepDays} days`);
+  } else {
+    log.warn("no BACKUP_DIR: nightly backups are off");
+  }
   const page = PAGE.replace("__TZ__", JSON.stringify(o.tz));
 
   const server = http.createServer(async (req, res) => {
@@ -325,6 +337,7 @@ export async function serve(o: ServeOpts, entry: string): Promise<number> {
         log.info("shutting down; stopping running captures so they stitch");
         server.close();
         keeper.stop();
+        backups?.stop();
         await sched.shutdown();
         db.close();
         resolve(0);

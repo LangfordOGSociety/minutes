@@ -6,3 +6,4 @@ auth
 .env.*
 .test-build
 test
+backups

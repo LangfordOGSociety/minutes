@@ -149,7 +149,10 @@ export class Recorder {
       buf = lines.pop()!.slice(-512);
       const m = lines.map((l) => /^out_time_(?:us|ms)=(\d+)/.exec(l)).filter(Boolean).pop();
       if (m && Number(m[1]) > 0) {
-        part.videoStart = new Date(Date.now() - Number(m[1]) / 1000);
+        // Clamped to spawn: a stream copy can report a little more than
+        // the time since spawn (ffmpeg's -re initial burst), and no frame
+        // is captured before ffmpeg starts.
+        part.videoStart = new Date(Math.max(part.started.getTime(), Date.now() - Number(m[1]) / 1000));
         log.info(`part ${index} first frame ${part.videoStart.getTime() - part.started.getTime()}ms after spawn`);
       }
     });

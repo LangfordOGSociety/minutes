@@ -73,6 +73,14 @@ captures).
   writes the file back itself). State in `<out>/session.json`, banner in the
   page, optional CAPTURE_NOTIFY_URL. Never types a password: re-login stays
   manual (`minutes login`). Also `minutes check-login`.
+- `src/backup.ts` nightly backup (in `serve`, when BACKUP_DIR is set):
+  `VACUUM INTO` copy of minutes.db + the saved login into
+  `<dir>/minutes-YYYY-MM-DD_HHMM/` with `backup.json` (schema, counts,
+  sha256), checked before the temp folder is renamed into place; 14 days,
+  never deletes the newest; failure notifies once, retries hourly, and must
+  never throw out of the timer. `minutes backup` / `minutes restore`
+  (restore copies first, then renames, old files kept as
+  `*.before-restore-<time>`). k8s: `backups` CephFS PVC, `restore.sh`.
 - `src/webui.ts` the page, as a String.raw template: its script must not use
   backticks or dollar-brace. All data goes in via textContent; build children
   with `fill()`, not `replaceChildren()` (which renders a null arg as "null").
