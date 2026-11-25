@@ -10,7 +10,7 @@
  * - Roles map to capabilities (ROLE_CAPS). Routes check capabilities, never
  *   role names, so a new role is one more row in that table.
  */
-import { createHash, randomBytes, randomUUID, scrypt as scryptCb, timingSafeEqual, type ScryptOptions } from "node:crypto";
+import { createHash, randomBytes, randomInt, randomUUID, scrypt as scryptCb, timingSafeEqual, type ScryptOptions } from "node:crypto";
 import { tx, type DB } from "./db.js";
 
 const scrypt = (pw: string, salt: Buffer, len: number, o: ScryptOptions) =>
@@ -35,6 +35,17 @@ export const ROLES = Object.keys(ROLE_CAPS).filter((r) => r !== "public");
 
 export function can(role: string | null, cap: Capability): boolean {
   return (ROLE_CAPS[role ?? "public"] ?? ROLE_CAPS.public).includes(cap);
+}
+
+/** Need a verified email on top of the role (#32). */
+const NEEDS_VERIFIED: readonly Capability[] = ["tokens.own", "api.download"];
+
+/** What this signed-in user may do right now: nothing beyond public until
+ *  a one-time password is changed; no tokens until the email is verified. */
+export function capsFor(u: { role: string; mustChangePassword: boolean; emailVerifiedAt: string | null } | null): readonly Capability[] {
+  if (!u || u.mustChangePassword) return ROLE_CAPS.public;
+  const caps = ROLE_CAPS[u.role] ?? ROLE_CAPS.public;
+  return u.emailVerifiedAt ? caps : caps.filter((c) => !NEEDS_VERIFIED.includes(c));
 }
 
 // --- passwords -----------------------------------------------------------
@@ -254,7 +265,56 @@ export class Accounts {
   pruneSessions(now = new Date()): number {
     return Number(this.db.prepare("DELETE FROM sessions WHERE expires_at <= ?").run(now.toISOString()).changes);
   }
+
+  // --- emailed codes (#32) ---
+
+  /** A new 6-digit code for this user and purpose (replaces any earlier
+   *  one). Returned once, to be emailed; only its hash is kept. */
+  issueCode(userId: string, purpose: CodePurpose, now = new Date()): string {
+    const code = String(randomInt(0, 1_000_000)).padStart(6, "0");
+    this.db.prepare(`INSERT OR REPLACE INTO email_codes (user_id, purpose, code_hash, expires_at, attempts, created_at)
+      VALUES (?, ?, ?, ?, 0, ?)`).run(userId, purpose, codeHash(userId, purpose, code),
+      new Date(now.getTime() + CODE_TTL_MS[purpose]).toISOString(), now.toISOString());
+    return code;
+  }
+
+  /** Check a code. Single use: gone after a match, after CODE_ATTEMPTS
+   *  wrong tries, or once expired. */
+  useCode(userId: string, purpose: CodePurpose, code: unknown, now = new Date()): boolean {
+    const r = this.db.prepare("SELECT code_hash, expires_at, attempts FROM email_codes WHERE user_id = ? AND purpose = ?")
+      .get(userId, purpose) as { code_hash: string; expires_at: string; attempts: number } | undefined;
+    if (!r) return false;
+    const del = () => this.db.prepare("DELETE FROM email_codes WHERE user_id = ? AND purpose = ?").run(userId, purpose);
+    if (r.expires_at <= now.toISOString()) { del(); return false; }
+    const given = typeof code === "string" ? code.replace(/\s/g, "") : "";
+    const want = Buffer.from(r.code_hash, "hex"), got = Buffer.from(codeHash(userId, purpose, given), "hex");
+    if (/^\d{6}$/.test(given) && timingSafeEqual(want, got)) { del(); return true; }
+    if (r.attempts + 1 >= CODE_ATTEMPTS) del();
+    else this.db.prepare("UPDATE email_codes SET attempts = attempts + 1 WHERE user_id = ? AND purpose = ?").run(userId, purpose);
+    return false;
+  }
+
+  markVerified(userId: string, now = new Date()): void {
+    this.db.prepare("UPDATE users SET email_verified_at = coalesce(email_verified_at, ?), updated_at = ? WHERE id = ?")
+      .run(now.toISOString(), now.toISOString(), userId);
+  }
+
+  /** Self-registered accounts never verified within `days` are deleted.
+   *  Returns their emails (for the audit log). Admin-made accounts are
+   *  created verified, and admins are never touched. */
+  deleteUnverified(days: number, now = new Date()): string[] {
+    const cutoff = new Date(now.getTime() - days * 86_400_000).toISOString();
+    const rows = this.db.prepare(`SELECT id, email FROM users WHERE email_verified_at IS NULL AND role = 'user' AND created_at < ?`)
+      .all(cutoff) as { id: string; email: string }[];
+    for (const r of rows) this.db.prepare("DELETE FROM users WHERE id = ?").run(r.id);
+    return rows.map((r) => r.email);
+  }
 }
+
+export type CodePurpose = "verify" | "reset";
+export const CODE_TTL_MS: Record<CodePurpose, number> = { verify: 24 * 3_600_000, reset: 15 * 60_000 };
+export const CODE_ATTEMPTS = 5;
+const codeHash = (userId: string, purpose: string, code: string) => sha256(`${userId}:${purpose}:${code}`);
 
 // --- login rate limits ---------------------------------------------------
 

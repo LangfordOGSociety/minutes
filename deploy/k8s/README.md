@@ -72,6 +72,15 @@ it. After a fresh namespace, re-set the repo secret:
 - The volume's PV is `Retain` (since the move from the `zoom-capture`
   namespace, 2026-11-24, see MIGRATION.md): deleting the PVC or namespace
   keeps the data, and `minutes.yaml` binds the PVC to that PV by name.
+- Mail (#32): sign-up and reset codes go out through Cloudflare Email
+  Service as `minutes@emc2.build` (`smtp.mx.cloudflare.net:465`, user
+  `api_token`), like Alertmanager's alerts. Put a Cloudflare API token with
+  Email Sending in `.env` as `SMTP_PASSWORD` and run `setup.sh`; the pod
+  reads `SMTP_URL` and `SMTP_PASSWORD` from the `minutes` secret, and mail
+  stays off without them. Check it:
+
+      kubectl -n minutes exec deploy/minutes -c capture -- node /app/dist/index.js mail-test you@example.com
+
 - Public host `minutes.emc2.build` (`public.yaml`, #6): the public site
   (published recordings, transcripts, live drafts, sign-in). `/admin` and
   `/api/admin` aren't routed there; admin is on the LAN host only. Rate

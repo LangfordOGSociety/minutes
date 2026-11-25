@@ -25,6 +25,7 @@ const USAGE = `usage: minutes --link <zoom link or id> --start <ISO datetime> [o
        minutes user role <email> admin|user
        minutes user disable|enable <email>                  disable also signs out
        minutes user list
+       minutes mail-test <to>                               send a test email (SMTP_URL, MAIL_FROM)
        minutes backup [--out <dir>] [--auth <file>] [--dir <backups>]   back up now
        minutes backup --list | --verify <backup folder>
        minutes restore <backup folder> [--out <dir>] [--auth <file>]   server must be stopped
@@ -257,6 +258,22 @@ if (process.argv[2] === "user") {
   }
 }
 
+if (process.argv[2] === "mail-test") {
+  const { mailerFromEnv } = await import("./mail.js");
+  const to = process.argv[3];
+  if (!to || process.argv[4]) fail("usage: minutes mail-test <to>");
+  try {
+    const m = mailerFromEnv(process.env);
+    if (!m) throw new Error("SMTP_URL isn't set");
+    await m.send({ to, subject: "minutes test message", text: `This is a test from minutes (${process.env.PUBLIC_URL ?? "no PUBLIC_URL"}), sent ${new Date().toISOString()}.` });
+    console.log(`sent to ${to} from ${m.from}`);
+    process.exit(0);
+  } catch (e) {
+    console.error(`mail-test failed: ${(e as Error).message}`);
+    process.exit(1);
+  }
+}
+
 if (process.argv[2] === "serve") {
   const env = process.env;
   const { values: v } = parseArgs({
@@ -280,11 +297,14 @@ if (process.argv[2] === "serve") {
   };
   if (v.auth && !existsSync(v.auth)) fail(`--auth file not found: ${v.auth}`);
   if (!v.auth) console.error("warning: no --auth session; Zoom blocks anonymous web-client joins (see `minutes login`)");
+  let mailer: import("./mail.js").Mailer | null = null;
+  try { mailer = (await import("./mail.js")).mailerFromEnv(env); } catch (e) { fail(`mail: ${(e as Error).message}`); }
   if (env.CAPTURE_WEB_TOKEN) console.error("warning: CAPTURE_WEB_TOKEN is no longer used; sign in with an account (`minutes user add`)");
   const entry = fileURLToPath(new URL("./index.js", import.meta.url));
   process.exit(await serve({
     host: v.host!, port: n("port", v.port, 1), tz: env.TZ!, secureCookie: env.COOKIE_SECURE !== "0",
     trustedProxies: env.TRUSTED_PROXIES,
+    mailer, publicUrl: env.PUBLIC_URL,
     out: v.out!, auth: v.auth ?? null, defaultName: v.name!,
     leadMs: n("lead-min", v["lead-min"]) * 60_000, noShowMs: n("no-show-min", v["no-show-min"]) * 60_000,
     maxConcurrent: n("max-jobs", v["max-jobs"], 1),

@@ -464,7 +464,9 @@ Order matters: nothing becomes public before accounts exist.
 5. YouTube supports both a stream-pull and a screen-capture method.
 6. Surrounding features other than backups are left to openlangford.ca.
 
+7. Sign-up mail goes through Cloudflare Email Service as
+   `minutes@emc2.build` (2026-11-25), the same sender Alertmanager uses.
+
 Still open:
-- Which SMTP provider or relay sends sign-up mail?
 - The public never sees join links (proposed: link to the city's own
   meeting page instead).

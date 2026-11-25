@@ -110,6 +110,18 @@ const MIGRATIONS: string[] = [
    CREATE INDEX audit_at ON audit_log (at);
    CREATE INDEX audit_action ON audit_log (action);
    CREATE INDEX audit_target ON audit_log (target_type, target_id);`,
+
+  // 5: emailed codes for sign-up verification and password reset (#32).
+  // One live code per user and purpose; only a hash is stored.
+  `CREATE TABLE email_codes (
+     user_id    TEXT NOT NULL REFERENCES users (id) ON DELETE CASCADE,
+     purpose    TEXT NOT NULL,              -- verify | reset
+     code_hash  TEXT NOT NULL,
+     expires_at TEXT NOT NULL,
+     attempts   INTEGER NOT NULL DEFAULT 0,
+     created_at TEXT NOT NULL,
+     PRIMARY KEY (user_id, purpose)
+   );`,
 ];
 
 export function openDb(file: string): DB {

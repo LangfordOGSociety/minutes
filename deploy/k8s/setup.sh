@@ -21,10 +21,16 @@ s["metadata"] = {"name": s["metadata"]["name"], "namespace": "minutes"}
 print(json.dumps(s))' | $K apply -f -
 
 # App secret from .env: HF_TOKEN, and CAPTURE_NOTIFY_URL / CAPTURE_EMAIL if set.
+# SMTP_PASSWORD (a Cloudflare API token with Email Sending) turns on
+# sign-up mail through Cloudflare Email Service; the user is "api_token".
 set -a; . ./.env; set +a
 args=(--from-literal=HF_TOKEN="${HF_TOKEN:-}")
 [ -n "${CAPTURE_NOTIFY_URL:-}" ] && args+=(--from-literal=CAPTURE_NOTIFY_URL="$CAPTURE_NOTIFY_URL")
 [ -n "${CAPTURE_EMAIL:-}" ] && args+=(--from-literal=CAPTURE_EMAIL="$CAPTURE_EMAIL")
+if [ -n "${SMTP_PASSWORD:-}" ]; then
+  args+=(--from-literal=SMTP_URL="${SMTP_URL:-smtps://api_token@smtp.mx.cloudflare.net:465}")
+  args+=(--from-literal=SMTP_PASSWORD="$SMTP_PASSWORD")
+fi
 $K create secret generic minutes -n $NS "${args[@]}" --dry-run=client -o yaml | $K apply -f -
 
 # Saved Zoom login (live session tokens). The pod copies it onto its volume

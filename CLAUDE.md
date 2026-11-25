@@ -105,6 +105,14 @@ captures).
   hash / token keys dropped, any `pwd=` in any string). serve.ts records
   admin writes and password changes, `minutes user` records as "cli". New
   admin writes (feeds, meetings, tokens, publish) must record too.
+- `src/mail.ts` SMTP submission on node:tls (implicit TLS, AUTH PLAIN, one
+  message per connection, base64 UTF-8 body, refuses CR/LF in headers).
+  SMTP_URL + SMTP_PASSWORD + MAIL_FROM; homelab is Cloudflare Email
+  Service (`smtps://api_token@smtp.mx.cloudflare.net:465`, emc2.build is
+  onboarded for sending, DMARC p=reject). `minutes mail-test <to>`.
+  Sign-up/verify/reset (serve.ts) never reveal whether an email has an
+  account; codes are 6 digits, hashed, single use, 5 tries (accounts.ts
+  `issueCode`/`useCode`). `capsFor()` withholds tokens until verified.
 - `src/net.ts` TRUSTED_PROXIES (X-Forwarded-For/-Proto believed only from
   those), security headers, page CSP.
 - `src/timeline.ts` active speaker + Zoom captions: appended per change to
