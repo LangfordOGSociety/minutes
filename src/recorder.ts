@@ -1,5 +1,8 @@
 /**
- * ffmpeg capture of the Xvfb display + PulseAudio sink.
+ * ffmpeg capture into MKV parts, from one of two inputs (RecorderInput):
+ *   screen  the job's Xvfb display (x11grab) + PulseAudio sink, encoded
+ *   stream  a media URL ffmpeg reads itself (HLS/DASH/progressive), copied
+ *           where possible, else encoded like screen
  *
  * Each continuous stretch of recording is a Part, written as MKV because
  * Matroska stays recoverable if ffmpeg is killed mid-write. MP4 doesn't.
@@ -20,15 +23,22 @@ export interface Part {
   ended: Date | null;
   exitCode: number | null;
   /** When the first frame was actually captured. ffmpeg takes a couple of
-   *  seconds to open x11grab + pulse after spawn (measured ~2.2s), so this,
-   *  not `started`, is t=0 of the part's video. From `-progress`. */
+   *  seconds to open x11grab + pulse after spawn (measured ~2.2s), longer
+   *  for a stream, so this, not `started`, is t=0 of the part's video.
+   *  From `-progress`. */
   videoStart: Date | null;
 }
 
+/** What a part records. The platform's session decides (CaptureSession.input). */
+export type RecorderInput =
+  | { kind: "screen"; display: string; sink: string }
+  /** `args` are ffmpeg input options ending in `-i <url>` (headers,
+   *  reconnect flags, ...). `copy`: remux the first video and audio stream
+   *  as they are (no encode); else encode them with the configured encoder. */
+  | { kind: "stream"; args: string[]; copy: boolean };
+
 export interface RecorderOpts {
   outdir: string;
-  display: string;
-  sink: string;
   width: number;
   height: number;
   fps: number;
@@ -49,7 +59,7 @@ export class Recorder {
     return this.proc !== null && this.proc.exitCode === null && this.proc.signalCode === null;
   }
 
-  private args(file: string): string[] {
+  private args(file: string, input: RecorderInput): string[] {
     const { o } = this;
     const q = String(o.quality);
     const pre: string[] = [];
@@ -65,22 +75,37 @@ export class Recorder {
       default:
         video = ["-c:v", "libx264", "-preset", "veryfast", "-crf", q, "-pix_fmt", "yuv420p"];
     }
+    const encodeAudio = ["-af", "aresample=async=1", "-c:a", "aac", "-b:a", "128k"];
+    let io: string[];
+    if (input.kind === "screen") {
+      io = [
+        ...pre,
+        "-thread_queue_size", "1024",
+        "-f", "x11grab", "-draw_mouse", "0",
+        "-framerate", String(o.fps),
+        "-video_size", `${o.width}x${o.height}`,
+        "-i", `${input.display}.0`,
+        "-thread_queue_size", "1024",
+        "-f", "pulse", "-i", `${input.sink}.monitor`,
+        ...video,
+        "-g", String(o.fps * 2),
+        ...encodeAudio,
+      ];
+    } else {
+      // First video and first audio stream, each optional (audio-only
+      // streams exist). Copy keeps the source's own encoding untouched.
+      io = [
+        ...(input.copy ? [] : pre),
+        ...input.args,
+        "-map", "0:v:0?", "-map", "0:a:0?",
+        ...(input.copy ? ["-c", "copy"] : [...video, "-g", String(o.fps * 2), ...encodeAudio]),
+      ];
+    }
     return [
       "-hide_banner", "-nostats", "-loglevel", "warning", "-y",
       // key=value progress blocks on stdout; out_time_us gives videoStart.
       "-progress", "pipe:1",
-      ...pre,
-      "-thread_queue_size", "1024",
-      "-f", "x11grab", "-draw_mouse", "0",
-      "-framerate", String(o.fps),
-      "-video_size", `${o.width}x${o.height}`,
-      "-i", `${o.display}.0`,
-      "-thread_queue_size", "1024",
-      "-f", "pulse", "-i", `${o.sink}.monitor`,
-      ...video,
-      "-g", String(o.fps * 2),
-      "-af", "aresample=async=1",
-      "-c:a", "aac", "-b:a", "128k",
+      ...io,
       // Matroska buffers a whole cluster (up to ~5s) in memory before
       // writing it. 1s clusters + flushing every packet means a hard crash
       // loses about a second instead of everything since the last cluster.
@@ -90,13 +115,13 @@ export class Recorder {
     ];
   }
 
-  start(index: number): Part {
+  start(index: number, input: RecorderInput): Part {
     if (this.alive) throw new Error("recorder already running");
     this.finalize(); // covers ffmpeg having died on its own
 
     const file = path.join(this.o.outdir, `part_${String(index).padStart(3, "0")}.mkv`);
     const ffLog = createWriteStream(file.replace(/\.mkv$/, ".ffmpeg.log"), { flags: "a" });
-    const proc = spawn("ffmpeg", this.args(file), { stdio: ["pipe", "pipe", "pipe"] });
+    const proc = spawn("ffmpeg", this.args(file, input), { stdio: ["pipe", "pipe", "pipe"] });
     proc.stderr?.pipe(ffLog);
     this.exitedAt = null;
     this.exited = new Promise((resolve) => {
@@ -114,17 +139,21 @@ export class Recorder {
     const part: Part = { index, file, started: new Date(), ended: null, exitCode: null, videoStart: null };
     this.current = part;
     // First progress block with encoded time > 0: video t=0 was that long ago.
+    // Read whole lines as they come: a stream copy reports 0 first, so the
+    // first value in a growing buffer would stay 0.
     let buf = "";
     proc.stdout?.on("data", (chunk: Buffer) => {
       if (part.videoStart) return;
-      buf = (buf + chunk.toString("utf8")).slice(-4096);
-      const m = /out_time_(?:us|ms)=(\d+)/.exec(buf);
+      buf += chunk.toString("utf8");
+      const lines = buf.split("\n");
+      buf = lines.pop()!.slice(-512);
+      const m = lines.map((l) => /^out_time_(?:us|ms)=(\d+)/.exec(l)).filter(Boolean).pop();
       if (m && Number(m[1]) > 0) {
         part.videoStart = new Date(Date.now() - Number(m[1]) / 1000);
         log.info(`part ${index} first frame ${part.videoStart.getTime() - part.started.getTime()}ms after spawn`);
       }
     });
-    log.info(`recording part ${index} -> ${path.basename(file)} (${this.o.encoder})`);
+    log.info(`recording part ${index} -> ${path.basename(file)} (${input.kind}, ${input.kind === "stream" && input.copy ? "copy" : this.o.encoder})`);
     return this.current;
   }
 

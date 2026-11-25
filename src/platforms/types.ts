@@ -12,6 +12,8 @@
  * mediaGuard() (guard.ts) as its first init script.
  */
 
+import type { RecorderInput } from "../recorder.js";
+
 /** What the runner sees. Every platform maps its own screens onto these. */
 export enum State {
   LOADING = "loading",           // page coming up / unrecognised screen
@@ -27,10 +29,12 @@ export enum State {
 
 /** How a platform's meetings are recorded. "screen" is a browser on an Xvfb
  *  display recorded with x11grab + the job's PulseAudio sink (Zoom).
- *  "stream" pulls a media URL directly (#4, YouTube). */
+ *  "stream" pulls a media URL with ffmpeg (YouTube); the scheduler gives
+ *  such jobs no display or sink. */
 export type CaptureMethod = "screen" | "stream";
 
 export interface SessionOpts {
+  method: CaptureMethod;    // one of the platform's methods
   displayName: string;      // the name the bot joins as
   width: number;
   height: number;
@@ -56,6 +60,10 @@ export interface CaptureSession {
   onSpeaker: (name: string) => void;
   /** Caption text changed ("" = cleared). */
   onCaption: (text: string) => void;
+  /** What to record once IN_MEETING. Leave it out for a screen session
+   *  (the runner records its display and sink); a stream session returns
+   *  the URL it resolved in open(). Called at the start of every part. */
+  input?(): RecorderInput;
 }
 
 export interface Platform {

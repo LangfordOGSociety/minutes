@@ -28,7 +28,11 @@ still runs the pre-rename build `9d03617` under those names.
 - `src/platforms/zoom.ts` Playwright session + the `zoom` Platform. **All Zoom-specific markers live in `MARKERS`.**
   `pageAgent()` is injected into every frame with `addInitScript`; it must stay
   self-contained (it's serialized, so no references outside the function).
-- `src/recorder.ts` ffmpeg x11grab + pulse -> MKV parts. Encoders: x264, vaapi, nvenc.
+- `src/recorder.ts` ffmpeg -> MKV parts from a `RecorderInput`: `screen`
+  (x11grab + pulse, encoders x264 / vaapi / nvenc) or `stream` (ffmpeg input
+  args for a URL, `-c copy` or encoded). The session picks it
+  (`CaptureSession.input()`, screen when absent). Stream jobs get no Xvfb or
+  sink from the scheduler. `videoStart` comes from the latest `out_time` line.
 - `src/stitch.ts` remux-repair each part, concat with chapters, re-encode fallback.
 - `src/login.ts` `minutes login`: human signs in once, saves storage state.
 - `src/serve.ts` `minutes serve`: node:http web UI + JSON API, Range
