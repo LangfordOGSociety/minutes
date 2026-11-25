@@ -1,0 +1,48 @@
+# The public site, https://minutes.emc2.build/ (#6). Everything but the
+# admin: /admin and /api/admin match no route here, so from the internet
+# they're a Traefik 404 (the app also requires an admin session for them).
+# Admin stays on the LAN host, minutes.lab.emc2.build (minutes.yaml).
+#
+# DNS: the DNS-only *.emc2.build wildcard points at the home IP, so viewers
+# stream from the homelab. Traefik's service is externalTrafficPolicy
+# Local, so it sees real client addresses and passes them in
+# X-Forwarded-For; the app believes that header only from TRUSTED_PROXIES
+# (the pod network, minutes.yaml).
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: public-ratelimit
+  namespace: minutes
+spec:
+  rateLimit:
+    average: 20
+    burst: 100
+    period: 1s
+---
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: minutes-public
+  namespace: minutes
+spec:
+  entryPoints: [websecure]
+  routes:
+    - kind: Rule
+      match: >-
+        Host(`minutes.emc2.build`)
+        && !PathPrefix(`/admin`) && !PathPrefix(`/api/admin`)
+      middlewares: [{ name: public-ratelimit }]
+      services: [{ name: minutes, port: http }]
+  tls:
+    secretName: minutes-public-tls
+---
+# Issued directly (no Ingress needed). Reuses the existing secret.
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: minutes-public
+  namespace: minutes
+spec:
+  secretName: minutes-public-tls
+  dnsNames: [minutes.emc2.build]
+  issuerRef: { name: letsencrypt-prod, kind: ClusterIssuer }

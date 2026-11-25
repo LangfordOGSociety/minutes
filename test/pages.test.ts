@@ -10,6 +10,7 @@ import { chromium, type Browser } from "playwright";
 import type { App } from "../src/serve.js";
 import { tmpDir, type HasAfter } from "./helpers.js";
 import { startApp } from "./server.js";
+import { fixtures } from "./fixtures.js";
 
 function skipReason(): string | false {
   if (existsSync(chromium.executablePath())) return false;
@@ -39,7 +40,7 @@ describe("pages in Chromium", { skip: skipReason() }, () => {
     const errors: string[] = [];
     page.on("pageerror", (e) => errors.push(e.message));
 
-    await page.goto(base + "/");
+    await page.goto(base + "/admin");
     assert.equal(new URL(page.url()).pathname, "/login");
     await page.fill("#email", "admin@example.com");
     await page.fill("#password", "wrong password");
@@ -56,8 +57,8 @@ describe("pages in Chromium", { skip: skipReason() }, () => {
     await page.fill("#confirm", "my own long password");
     await page.click("#changeform button");
     // (No waitForFunction: the page's CSP rightly refuses eval.)
-    await Promise.race([page.waitForURL(base + "/"), page.waitForSelector("#changemsg.err")]);
-    if (new URL(page.url()).pathname !== "/") assert.fail("password change: " + await page.textContent("#changemsg"));
+    await Promise.race([page.waitForURL(base + "/admin"), page.waitForSelector("#changemsg.err")]);
+    if (new URL(page.url()).pathname !== "/admin") assert.fail("password change: " + await page.textContent("#changemsg"));
     await page.waitForLoadState();
     await page.waitForSelector("#me a[href='/account']");
     assert.match(await page.textContent("#me") ?? "", /admin@example.com/);
@@ -71,8 +72,61 @@ describe("pages in Chromium", { skip: skipReason() }, () => {
 
     await page.click("#me a:has-text('sign out')");
     await page.waitForURL(/\/login$/);
-    await page.goto(base + "/");
+    await page.goto(base + "/admin");
     assert.equal(new URL(page.url()).pathname, "/login");
     assert.deepEqual(errors, []);
+  });
+});
+
+describe("public page in Chromium", { skip: skipReason() }, () => {
+  let browser: Browser, base: string;
+  const cleanups: (() => unknown)[] = [];
+  before(async () => {
+    const hooks: HasAfter = { after: (fn) => cleanups.push(fn) };
+    const out = path.join(tmpDir(hooks), "rec");
+    let app: App;
+    ({ app, base } = await startApp(hooks, out));
+    fixtures(app, out);
+    browser = await chromium.launch();
+  });
+  after(async () => {
+    await browser?.close();
+    for (const f of cleanups.reverse()) await f();
+  });
+
+  it("lists published recordings, plays one with its transcript, follows a live one", async () => {
+    const page = await (await browser.newContext()).newPage();
+    const errors: string[] = [];
+    page.on("pageerror", (e) => errors.push(e.message));
+    page.on("console", (m) => { if (m.type() === "error") errors.push(m.text()); });
+    const requests: string[] = [];
+    page.on("request", (r) => requests.push(new URL(r.url()).pathname));
+
+    await page.goto(base + "/");
+    await page.waitForSelector("#recs .row");
+    const titles = await page.$$eval("#recs .row .title", (els) => els.map((e) => e.textContent));
+    assert.deepEqual(titles.sort(), ["council-a", "livelive-e"]);
+    assert.equal(await page.textContent("#me"), "Sign in");
+
+    await page.click("#recs .row:has-text('council-a') button:has-text('Play')");
+    await page.waitForSelector("#player video");
+    assert.equal(await page.getAttribute("#player video", "src"), "/media/council-a/council-a.mp4");
+    await page.waitForSelector("#player .tline");
+    assert.match(await page.textContent("#player .tline") ?? "", /Call to order\./);
+    assert.equal(new URL(page.url()).hash, "#council-a");
+
+    await page.click("#recs .row:has-text('live-e') button:has-text('Live transcript')");
+    await page.waitForSelector("#livebox .tline");
+    assert.match(await page.textContent("#livebox") ?? "", /Good evening\./);
+    assert.equal(await page.isHidden("#player"), true);
+
+    // A shared link (fresh page load) opens the recording.
+    const shared = await page.context().newPage();
+    await shared.goto(base + "/#council-a");
+    await shared.waitForSelector("#player video");
+
+    assert.ok(!requests.some((p) => p.startsWith("/api/admin") || p.startsWith("/admin")), requests.join(" "));
+    // Media 206s for the fake 100-byte video show up as errors; ignore those.
+    assert.deepEqual(errors.filter((e) => !/media|video|MEDIA_ERR|Failed to load resource/i.test(e)), []);
   });
 });

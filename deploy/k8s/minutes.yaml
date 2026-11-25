@@ -97,6 +97,8 @@ spec:
               valueFrom: { secretKeyRef: { name: minutes, key: CAPTURE_NOTIFY_URL, optional: true } }
             - name: CAPTURE_EMAIL
               valueFrom: { secretKeyRef: { name: minutes, key: CAPTURE_EMAIL, optional: true } }
+            # Traefik runs in the pod network; only its X-Forwarded-For counts.
+            - { name: TRUSTED_PROXIES, value: 10.42.0.0/16 }
             # Nightly after 03:00 local, kept 14 days (BACKUP_KEEP_DAYS).
             - { name: BACKUP_DIR, value: /backups }
           resources:
@@ -154,9 +156,8 @@ spec:
   selector: { app: minutes }
   ports: [{ name: http, port: 8080, targetPort: http }]
 ---
-# LAN only. Capture admin needs an admin account (`minutes user add
-# --admin`); recordings are open. The public host (minutes.emc2.build)
-# waits for the public/admin split (#6).
+# LAN host: the public site plus the admin (/admin, admin account needed).
+# The public host, minutes.emc2.build, is public.yaml.
 apiVersion: traefik.io/v1alpha1
 kind: Middleware
 metadata:

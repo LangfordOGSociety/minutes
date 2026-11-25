@@ -2,7 +2,7 @@
 # Images are built by .github/workflows/ci.yml; `main` is the last release.
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
-resources: [minutes.yaml, github-deploy.yaml]
+resources: [minutes.yaml, public.yaml, github-deploy.yaml]
 images:
   - name: ghcr.io/langfordogsociety/minutes
     newTag: main
