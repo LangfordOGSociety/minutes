@@ -19,7 +19,13 @@ still runs the pre-rename build `9d03617` under those names.
 
 - `src/index.ts` CLI (node:util parseArgs, no deps). Sets TZ before use.
 - `src/runner.ts` lifecycle state machine. Event-driven via `Waker`.
-- `src/zoom.ts` Playwright session. **All Zoom-specific markers live in `MARKERS`.**
+- `src/platforms/` the platform seam. `types.ts`: `Platform` (id, match,
+  normalize, publicId, methods, savedLogin, create) and `CaptureSession`
+  (open/close/state/advance/dump, needsEmail, three callbacks) plus the
+  runner's `State`. `registry.ts`: link -> platform; unclaimed links are
+  refused (replaces the old `*.zoom.us` check in jobs.ts). `guard.ts`:
+  `mediaGuard()`, first init script of every browser platform.
+- `src/platforms/zoom.ts` Playwright session + the `zoom` Platform. **All Zoom-specific markers live in `MARKERS`.**
   `pageAgent()` is injected into every frame with `addInitScript`; it must stay
   self-contained (it's serialized, so no references outside the function).
 - `src/recorder.ts` ffmpeg x11grab + pulse -> MKV parts. Encoders: x264, vaapi, nvenc.
@@ -57,7 +63,8 @@ still runs the pre-rename build `9d03617` under those names.
   it in headed Chromium on the server's :99 display, writes refreshed cookies
   back when signed in, never touches the file when not. Daily, once 2h before
   each scheduled launch, 30 min after an error, and as soon as the auth file
-  changes after a failed check. Skipped while a capture runs (the capture
+  changes after a failed check. Only runs once a job uses a platform with
+  `savedLogin` (Zoom). Skipped while a capture runs (the capture
   writes the file back itself). State in `<out>/session.json`, banner in the
   page, optional CAPTURE_NOTIFY_URL. Never types a password: re-login stays
   manual (`minutes login`). Also `minutes check-login`.
@@ -96,7 +103,7 @@ still runs the pre-rename build `9d03617` under those names.
   the selector also matches "Unmute". If you touch audio routing, make sure the
   default source can never become `zoom.monitor` (that loops council audio back
   into the meeting).
-- Client-side mute: `mediaGuard()` (zoom.ts) is injected into every frame
+- Client-side mute: `mediaGuard()` (platforms/guard.ts) is injected into every frame
   before Zoom's code. Every mic track the page gets is disabled and can't be
   re-enabled (clones too), camera and screen share requests are refused.
   Tested in the image: track stays disabled after `enabled = true`, peak

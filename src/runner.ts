@@ -19,7 +19,8 @@ import { Recorder, type Encoder, type Part } from "./recorder.js";
 import { stitch, type Gap, type PartOffset } from "./stitch.js";
 import { appendTimeline, finalizeTimelines, type TimelineKind } from "./timeline.js";
 import { Waker, logger } from "./util.js";
-import { State, ZoomSession } from "./zoom.js";
+import { platformFor } from "./platforms/registry.js";
+import { State, type CaptureSession, type Platform } from "./platforms/types.js";
 
 const log = logger("runner");
 
@@ -70,9 +71,13 @@ export class Capture {
   private ffFastFails = 0;
   private ffRetryAt = 0;
   private dumpSeq = 0;
+  private platform: Platform;
   private lastSpeaker = "";
 
   constructor(private cfg: Config) {
+    const platform = platformFor(cfg.link);
+    if (!platform) throw new Error("no platform handles that link (Zoom links or meeting IDs only for now)");
+    this.platform = platform;
     this.dir = path.join(cfg.out, cfg.slug);
     mkdirSync(this.dir, { recursive: true });
     this.rec = new Recorder({
@@ -142,7 +147,8 @@ export class Capture {
     while (!this.stopped) {
       attempt++;
       this.event("session_open", { attempt });
-      const session = new ZoomSession(cfg.link, cfg.displayName, cfg.width, cfg.height, cfg.auth, cfg.email);
+      const session = this.platform.create(cfg.link,
+        { displayName: cfg.displayName, width: cfg.width, height: cfg.height, auth: cfg.auth, email: cfg.email });
       session.onChange = () => this.waker.kick();
       session.onSpeaker = (name) => { this.lastSpeaker = name; this.track("speakers", name); };
       session.onCaption = (text) => this.track("captions", text);
@@ -224,7 +230,7 @@ export class Capture {
     }
   }
 
-  private async runSession(session: ZoomSession): Promise<SessionResult> {
+  private async runSession(session: CaptureSession): Promise<SessionResult> {
     const { cfg } = this;
     let waitingSince: number | null = null;
     let troubleSince: number | null = null;

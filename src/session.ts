@@ -18,6 +18,7 @@ import { existsSync, readFileSync, renameSync, statSync, writeFileSync } from "n
 import path from "node:path";
 import { chromium, type Browser } from "playwright";
 import type { Job } from "./jobs.js";
+import { platformFor } from "./platforms/registry.js";
 import { SIGNED_IN, saveStorageState } from "./login.js";
 import { TIMEOUT, logger, withTimeout } from "./util.js";
 
@@ -152,8 +153,15 @@ export class SessionKeeper {
     } catch (e) { log.warn("notification failed", e); }
   }
 
+  /** Only platforms that use the saved login (Zoom) need it kept alive. */
+  private loginJobs(): Job[] {
+    return this.jobs().filter((j) => platformFor(j.link)?.savedLogin);
+  }
+
   private async tick(): Promise<void> {
     if (this.ticking || this.running || this.captureRunning()) return;
+    // No capture has ever used the login: nothing to keep alive.
+    if (!this.loginJobs().length) return;
     this.ticking = true;
     try {
       const now = Date.now();
@@ -161,7 +169,7 @@ export class SessionKeeper {
       const ok = this.status.state === "ok";
 
       // Before each scheduled capture: one check when it enters the window.
-      for (const j of this.jobs()) {
+      for (const j of this.loginJobs()) {
         if (j.status !== "scheduled") continue;
         const launchAt = Date.parse(j.start) - this.o.leadMs;
         const key = `${j.id}@${j.start}`;

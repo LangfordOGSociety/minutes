@@ -26,6 +26,7 @@ import http from "node:http";
 import path from "node:path";
 import { timingSafeEqual } from "node:crypto";
 import { openDb } from "./db.js";
+import { platformFor } from "./platforms/registry.js";
 import { BadRequest, Scheduler, type Job, type SchedulerOpts } from "./jobs.js";
 import { SessionKeeper, type KeeperOpts } from "./session.js";
 import { SLUG_RE, logger } from "./util.js";
@@ -95,7 +96,7 @@ function authorized(req: http.IncomingMessage, token: string | null): boolean {
  *  the email, only the meeting ID and whether an email is set. */
 function publicJob(j: Job) {
   const { link, email, ...rest } = j;
-  return { ...rest, meetingId: meetingId(link), hasEmail: !!email };
+  return { ...rest, meetingId: platformFor(link)?.publicId(link) ?? "?", hasEmail: !!email };
 }
 
 function sameOrigin(req: http.IncomingMessage): boolean {
@@ -332,7 +333,3 @@ export async function serve(o: ServeOpts, entry: string): Promise<number> {
   });
 }
 
-function meetingId(link: string): string {
-  const m = /(\d{9,12})/.exec(link.replace(/[\s-]/g, ""));
-  return m ? m[1] : "?";
-}

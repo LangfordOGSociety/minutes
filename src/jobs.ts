@@ -21,6 +21,7 @@ import { randomUUID } from "node:crypto";
 import { createWriteStream, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { tx, type DB } from "./db.js";
 import { Meetings, type Meeting } from "./meetings.js";
+import { checkLink as checkPlatformLink, platformFor } from "./platforms/registry.js";
 import path from "node:path";
 import { promisify } from "node:util";
 import { SLUG_RE, TIMEOUT, defaultSlug, logger, withTimeout } from "./util.js";
@@ -83,19 +84,16 @@ export class BadRequest extends Error {
   constructor(msg: string, readonly status = 400) { super(msg); }
 }
 
-/** Zoom invite link or bare meeting ID. Anything else is refused, so the
- *  web form can't be used to point the signed-in browser at arbitrary sites. */
-function checkLink(link: string): string {
-  const s = link.trim();
-  if (/^[\d\s-]{9,15}$/.test(s) && s.replace(/\D/g, "").length >= 9) return s.replace(/[\s-]/g, "");
-  let u: URL;
-  try { u = new URL(s); } catch { throw new BadRequest("link must be a Zoom invite URL or a meeting ID"); }
-  const host = u.hostname.toLowerCase();
-  if (u.protocol !== "https:" || !(host === "zoom.us" || host.endsWith(".zoom.us"))) {
-    throw new BadRequest("link must be an https://...zoom.us/ URL");
+/** A link some platform handles, in its canonical form. Anything else is
+ *  refused, so the web form can't point the signed-in browser at arbitrary
+ *  sites. */
+function checkLink(link: string): { platform: string; link: string } {
+  try {
+    const r = checkPlatformLink(link);
+    return { platform: r.platform.id, link: r.link };
+  } catch (e) {
+    throw new BadRequest((e as Error).message);
   }
-  if (!/\/(j|w|wc\/join|wc)\/\d{9,12}/.test(u.pathname)) throw new BadRequest("couldn't find a meeting ID in that link");
-  return u.toString();
 }
 
 export class Scheduler {
@@ -119,7 +117,7 @@ export class Scheduler {
     if (orphans.length) {
       tx(db, () => {
         for (const j of orphans) {
-          j.meetingRef = this.meetings.create({ title: j.slug, platform: "zoom", link: j.link, start: j.start, slug: j.slug },
+          j.meetingRef = this.meetings.create({ title: j.slug, platform: platformFor(j.link)?.id ?? "zoom", link: j.link, start: j.start, slug: j.slug },
             j.createdAt).id;
         }
         this.save(...orphans);
@@ -196,7 +194,7 @@ export class Scheduler {
 
   add(input: NewJob): Job {
     if (!Scheduler.given(input.link)) throw new BadRequest("link is required");
-    const link = checkLink(input.link);
+    const { platform, link } = checkLink(input.link);
     if (!Scheduler.given(input.start)) throw new BadRequest("start is required");
     const start = this.parseStart(input.start);
     const slug = this.checkSlug(Scheduler.given(input.slug) ? input.slug.trim() : defaultSlug(start));
@@ -205,7 +203,7 @@ export class Scheduler {
 
     const createdAt = new Date().toISOString();
     const job = tx(this.db, () => {
-      const m = this.meetings.create({ title: slug, platform: "zoom", link, start: start.toISOString(), slug }, createdAt);
+      const m = this.meetings.create({ title: slug, platform, link, start: start.toISOString(), slug }, createdAt);
       const job: Job = {
         id: randomUUID(), meetingRef: m.id, link, start: m.start, slug, name,
         ...(email ? { email } : {}),
@@ -230,7 +228,10 @@ export class Scheduler {
     if ((j.status !== "scheduled" && j.status !== "queued") || this.launching.has(id)) {
       throw new BadRequest(`only scheduled captures can be edited (this one is ${this.launching.has(id) ? "starting" : j.status})`, 409);
     }
-    const link = Scheduler.given(input.link) ? checkLink(input.link) : j.link;
+    const m0 = this.meetings.get(j.meetingRef);
+    const newLink = Scheduler.given(input.link) ? checkLink(input.link) : null;
+    if (newLink && m0 && newLink.platform !== m0.platform) throw new BadRequest(`that's a ${newLink.platform} link; this meeting is on ${m0.platform}`);
+    const link = newLink ? newLink.link : j.link;
     const start = Scheduler.given(input.start) ? this.parseStart(input.start).toISOString() : j.start;
     const slug = Scheduler.given(input.slug) && input.slug.trim() !== j.slug ? this.checkSlug(input.slug.trim(), id) : j.slug;
     const name = Scheduler.given(input.name) ? Scheduler.cleanName(input.name) || j.name : j.name;
