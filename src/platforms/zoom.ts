@@ -119,7 +119,7 @@ type Markers = typeof MARKERS;
  * Runs inside every frame. Serialized by Playwright, so it must be fully
  * self-contained: no references to anything outside this function.
  */
-function pageAgent(m: Markers): void {
+export function pageAgent(m: Markers): void {
   const w = window as any;
   if (w.__ccClassify) return;
 

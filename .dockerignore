@@ -4,3 +4,5 @@ recordings
 auth
 .env
 .env.*
+.test-build
+test

@@ -44,6 +44,28 @@ jobs:
       - name: Render k8s manifests
         run: kubectl kustomize deploy/k8s > /dev/null
 
+  # Unit tests, plus the recorder/stitch tests against real ffmpeg and the
+  # media guard and page classifier in Playwright's Chromium. Always on a
+  # GitHub-hosted runner, also for pushes to main: it installs packages,
+  # which the homelab runners shouldn't need. A missing ffmpeg or Chromium
+  # fails here (CI=true) instead of skipping.
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - name: Install ffmpeg
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq --no-install-recommends ffmpeg
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+      - name: Tests
+        run: npm test
+
   # Builds and pushes both images while `check` runs, tagged only
   # sha-<commit>: nothing deploys a sha tag until release.yml does, after
   # every check has passed. Layer cache lives in the registry (buildcache
@@ -85,7 +107,7 @@ jobs:
           cache-to: type=registry,ref=${{ env.REPO }}/minutes-transcriber:buildcache,mode=max
 
   release:
-    needs: [check, images]
+    needs: [check, test, images]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     permissions:
       contents: read

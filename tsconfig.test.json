@@ -1,0 +1,11 @@
+{
+  // Compiles src and test together into .test-build/ for `npm test`.
+  // The shipped build (tsconfig.json) never includes test/.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "rootDir": ".",
+    "outDir": ".test-build",
+    "sourceMap": false
+  },
+  "include": ["src", "test"]
+}
