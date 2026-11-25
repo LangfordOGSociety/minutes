@@ -2,46 +2,13 @@
  * The real server (createApp) on a random port: who may do what.
  */
 import assert from "node:assert/strict";
-import type { AddressInfo } from "node:net";
 import path from "node:path";
 import { after, before, describe, it } from "node:test";
-import { createApp, safeNext, type App } from "../src/serve.js";
+import { safeNext, type App } from "../src/serve.js";
+import { Client, startApp } from "./server.js";
 import { inDays, tmpDir, type HasAfter } from "./helpers.js";
 
 const LINK = "https://zoom.us/j/87093163922?pwd=429539";
-
-export async function startApp(t: HasAfter, out: string, extra: Record<string, unknown> = {}) {
-  const app = createApp({
-    host: "127.0.0.1", port: 0, tz: "America/Vancouver", secureCookie: true,
-    out, auth: null, defaultName: "Recorder", leadMs: 0, noShowMs: 30 * 60_000, maxConcurrent: 1, width: 1280, height: 720,
-    session: { refreshMs: 86_400_000, preflightMs: 0, notifyUrl: null }, backup: null, ...extra,
-  }, "/nonexistent/index.js");
-  await new Promise<void>((r) => app.server.listen(0, "127.0.0.1", r));
-  const base = `http://127.0.0.1:${(app.server.address() as AddressInfo).port}`;
-  t.after(() => app.close());
-  return { app, base };
-}
-
-/** A tiny client that keeps one session cookie. */
-export class Client {
-  cookie = "";
-  constructor(readonly base: string) {}
-  async req(method: string, p: string, body?: unknown, headers: Record<string, string> = {}) {
-    const h: Record<string, string> = { ...headers };
-    if (this.cookie) h.cookie = this.cookie;
-    if (body !== undefined) h["content-type"] = "application/json";
-    const r = await fetch(this.base + p, { method, headers: h, body: body === undefined ? undefined : JSON.stringify(body), redirect: "manual" });
-    const set = r.headers.get("set-cookie");
-    if (set) this.cookie = /Max-Age=0/.test(set) ? "" : set.split(";")[0];
-    const text = await r.text();
-    let json: any = null;
-    try { json = JSON.parse(text); } catch { /* not JSON */ }
-    return { status: r.status, json, text, headers: r.headers, setCookie: set };
-  }
-  get(p: string) { return this.req("GET", p); }
-  post(p: string, body: unknown = {}) { return this.req("POST", p, body); }
-  login(email: string, password: string) { return this.post("/api/login", { email, password }); }
-}
 
 describe("http: accounts and permissions", () => {
   let app: App, base: string;

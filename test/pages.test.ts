@@ -9,7 +9,7 @@ import { after, before, describe, it } from "node:test";
 import { chromium, type Browser } from "playwright";
 import type { App } from "../src/serve.js";
 import { tmpDir, type HasAfter } from "./helpers.js";
-import { startApp } from "./http.test.js";
+import { startApp } from "./server.js";
 
 function skipReason(): string | false {
   if (existsSync(chromium.executablePath())) return false;

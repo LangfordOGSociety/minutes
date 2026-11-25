@@ -16,13 +16,14 @@ export function tmpDir(t: HasAfter, prefix = "minutes-test-"): string {
 /** Is this command on PATH? Tests that need it skip without it, except in
  *  CI (CI=true), where a missing tool is a failure, not a skip. */
 export function need(cmd: string): string | false {
-  try {
-    execFileSync(cmd, ["-version"], { stdio: "ignore" });
-    return false;
-  } catch {
-    if (process.env.CI) throw new Error(`${cmd} is required in CI`);
-    return `${cmd} not installed`;
+  for (const flag of ["-version", "--version"]) {   // ffmpeg / most others
+    try {
+      execFileSync(cmd, [flag], { stdio: "ignore" });
+      return false;
+    } catch { /* try the next */ }
   }
+  if (process.env.CI) throw new Error(`${cmd} is required in CI`);
+  return `${cmd} not installed`;
 }
 
 export const inDays = (d: number) => new Date(Date.now() + d * 86_400_000).toISOString();

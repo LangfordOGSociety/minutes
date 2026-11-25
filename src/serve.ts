@@ -16,6 +16,7 @@
  *   GET    /api/recordings         every <out>/<slug>/manifest.json, summarized
  *   GET    /media/:slug/:file      video and stills, with Range support
  *   GET    /login, /account        sign in, change password (src/pages/login.ts)
+ *   GET    /api/status?within=45   busy: a capture running or due (the deploy guard)
  *   GET    /api/me                 who is signed in, and what they may do
  *   POST   /api/login              {email, password}; sets the session cookie
  *   POST   /api/logout
@@ -372,6 +373,17 @@ export function createApp(o: ServeOpts, entry: string): App {
           return send(res, 200, { user: { ...me(), mustChangePassword: false, caps: ROLE_CAPS[user.role] } });
         }
 
+        if (parts[1] === "status" && parts.length === 2 && read) {
+          // For the deploy guard (scripts/deploy-guard.sh): is a capture
+          // running, queued, or starting within ?within= minutes? Counts
+          // and a start time only: no names, links or IDs.
+          const within = Math.min(Math.max(Number(url.searchParams.get("within") ?? 45) || 0, 0), 1440) * 60_000;
+          const now = Date.now();
+          const jobs = sched.list();
+          const running = jobs.filter((j) => j.status === "running" || j.status === "stopping" || j.status === "queued").length;
+          const due = jobs.filter((j) => j.status === "scheduled" && Date.parse(j.start) - now < within).map((j) => j.start).sort();
+          return send(res, 200, { busy: running > 0 || due.length > 0, running, nextStart: due[0] ?? null });
+        }
         if (parts[1] === "info" && read) {
           if (!allow("watch")) return;
           return send(res, 200, { tz: o.tz, tzdata: process.versions.tz ?? null, leadMinutes: o.leadMs / 60_000, maxConcurrent: o.maxConcurrent });
