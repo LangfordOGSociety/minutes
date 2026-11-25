@@ -35,10 +35,13 @@ metadata:
 spec:
   entryPoints: [websecure]
   routes:
+    # No capture logs, live screen, login state, or manifest.json (it holds
+    # the meeting link, which can carry the passcode).
     - kind: Rule
       match: >-
         Host(`minutes.emc2.build`) && (Method(`GET`) || Method(`HEAD`))
         && !PathRegexp(`^/api/jobs/[^/]+/(log|screen)$`)
+        && !PathRegexp(`/manifest\.json$`)
         && !PathPrefix(`/api/session`)
       middlewares: [{ name: public-ratelimit }]
       services: [{ name: minutes, port: http }]
@@ -62,6 +65,10 @@ spec:
     - host: minutes.emc2.build
       http:
         paths:
-          - path: /media/meeting-20261124-1730/
-            pathType: Prefix
+          # Kept only so cert-manager keeps issuing minutes-public-tls; the
+          # IngressRoute above does the routing. Exact, so it can't bypass
+          # the IngressRoute's exclusions (it was a Prefix and served
+          # manifest.json).
+          - path: /media/meeting-20261124-1730/meeting-20261124-1730.mp4
+            pathType: Exact
             backend: { service: { name: minutes, port: { name: http } } }

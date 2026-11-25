@@ -108,6 +108,7 @@ label.check[hidden] { display: none; }
 <header>
   <h1>minutes</h1>
   <span class="meta" id="meta"></span>
+  <span class="meta" id="me"></span>
 </header>
 <div id="login" role="status"></div>
 <main>
@@ -186,6 +187,8 @@ function api(method, url, body) {
   var opts = { method: method, headers: {} };
   if (body !== undefined) { opts.headers["Content-Type"] = "application/json"; opts.body = JSON.stringify(body); }
   return fetch(url, opts).then(function (r) {
+    // Session expired or signed out elsewhere.
+    if (r.status === 401) { location.href = "/login?next=" + encodeURIComponent(location.pathname); throw new Error("sign in first"); }
     var ct = r.headers.get("content-type") || "";
     var p = ct.indexOf("json") >= 0 ? r.json() : r.text();
     return p.then(function (d) {
@@ -495,6 +498,13 @@ document.getElementById("form").addEventListener("submit", function (ev) {
   }, function (e) { msg.className = "msg err"; msg.textContent = e.message; });
 });
 
+api("GET", "/api/me").then(function (d) {
+  if (!d.user) return;
+  fill(document.getElementById("me"), d.user.email + " · ", el("a", { href: "/account", text: "account" }), " · ",
+    el("a", { href: "#", text: "sign out", on: { click: function (ev) {
+      ev.preventDefault(); api("POST", "/api/logout").then(function () { location.href = "/login"; });
+    } } }));
+});
 api("GET", "/api/info").then(function (i) {
   document.getElementById("tzlabel").textContent = "(" + i.tz + ")";
   document.getElementById("meta").textContent = "Times in " + i.tz + " · tzdata " + (i.tzdata || "?") +

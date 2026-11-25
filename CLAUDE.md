@@ -37,9 +37,17 @@ captures).
 - `src/stitch.ts` remux-repair each part, concat with chapters, re-encode fallback.
 - `src/login.ts` `minutes login`: human signs in once, saves storage state.
 - `src/serve.ts` `minutes serve`: node:http web UI + JSON API, Range
-  serving for video, optional Basic auth (CAPTURE_WEB_TOKEN), same-origin
-  check on writes. Only serves .mp4/.mkv/.png/.json/.vtt/.srt/.txt directly inside
+  serving for video, accounts and sessions (cookie), same-origin
+  check on writes. Every route checks a capability, never a role name.
+  `createApp()` is everything but listen/signals (tests drive it over HTTP). Only serves .mp4/.mkv/.png/.json/.vtt/.srt/.txt directly inside
   a slug dir.
+- `src/accounts.ts` users (roles `admin` / `user`, ROLE_CAPS -> capabilities,
+  "public" = no session), async scrypt hashes with their params, sessions
+  (32-byte cookie, sha256 stored, 14-day sliding, written at most every
+  10 min), in-memory failure limits. A one-time password (`minutes user
+  add|passwd`) sets must_change_password: until changed, the session has
+  public capabilities only. The last active admin can't be demoted/disabled.
+- `src/pages/login.ts` /login and /account (same String.raw rules as webui).
 - `src/db.ts` `<out>/minutes.db` via `node:sqlite` (Node 24, no deps): WAL,
   numbered append-only migrations in `PRAGMA user_version`, `tx()` helper.
   Only the server opens it; capture children write their own manifest.json.
