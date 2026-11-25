@@ -19,7 +19,8 @@ import { Recorder, type Encoder, type Part } from "./recorder.js";
 import { stitch, type Gap, type PartOffset } from "./stitch.js";
 import { appendTimeline, finalizeTimelines, type TimelineKind } from "./timeline.js";
 import { Waker, logger } from "./util.js";
-import { State, ZoomSession } from "./zoom.js";
+import { platformFor } from "./platforms/registry.js";
+import { State, type CaptureMethod, type CaptureSession, type Platform } from "./platforms/types.js";
 
 const log = logger("runner");
 
@@ -37,6 +38,7 @@ export interface Config {
   auth: string | null;      // Playwright storage state from `minutes login`
   email: string | null;     // typed only when the host requires an email to join
   debug: boolean;           // dump screenshot + HTML to <dir>/debug on every state change
+  method: CaptureMethod;    // screen: record display + sink; stream: the session's URL
   display: string;
   sink: string;
   width: number;
@@ -70,13 +72,20 @@ export class Capture {
   private ffFastFails = 0;
   private ffRetryAt = 0;
   private dumpSeq = 0;
+  private platform: Platform;
   private lastSpeaker = "";
 
   constructor(private cfg: Config) {
+    const platform = platformFor(cfg.link);
+    if (!platform) throw new Error("no platform handles that link (Zoom links or meeting IDs only for now)");
+    this.platform = platform;
+    if (!platform.methods.includes(cfg.method)) {
+      throw new Error(`${platform.label} can't be captured with method "${cfg.method}" (has: ${platform.methods.join(", ")})`);
+    }
     this.dir = path.join(cfg.out, cfg.slug);
     mkdirSync(this.dir, { recursive: true });
     this.rec = new Recorder({
-      outdir: this.dir, display: cfg.display, sink: cfg.sink,
+      outdir: this.dir,
       width: cfg.width, height: cfg.height, fps: cfg.fps,
       quality: cfg.quality, encoder: cfg.encoder, vaapiDevice: cfg.vaapiDevice,
     });
@@ -142,7 +151,8 @@ export class Capture {
     while (!this.stopped) {
       attempt++;
       this.event("session_open", { attempt });
-      const session = new ZoomSession(cfg.link, cfg.displayName, cfg.width, cfg.height, cfg.auth, cfg.email);
+      const session = this.platform.create(cfg.link,
+        { method: cfg.method, displayName: cfg.displayName, width: cfg.width, height: cfg.height, auth: cfg.auth, email: cfg.email });
       session.onChange = () => this.waker.kick();
       session.onSpeaker = (name) => { this.lastSpeaker = name; this.track("speakers", name); };
       session.onCaption = (text) => this.track("captions", text);
@@ -224,7 +234,7 @@ export class Capture {
     }
   }
 
-  private async runSession(session: ZoomSession): Promise<SessionResult> {
+  private async runSession(session: CaptureSession): Promise<SessionResult> {
     const { cfg } = this;
     let waitingSince: number | null = null;
     let troubleSince: number | null = null;
@@ -280,7 +290,8 @@ export class Capture {
             });
           }
           if (Date.now() >= this.ffRetryAt) {
-            this.parts.push(this.rec.start(this.parts.length + 1));
+            const input = session.input?.() ?? { kind: "screen", display: cfg.display, sink: cfg.sink };
+            this.parts.push(this.rec.start(this.parts.length + 1, input));
             this.writeManifest();
             // Each part starts with whoever was already speaking.
             if (this.lastSpeaker) this.track("speakers", this.lastSpeaker);

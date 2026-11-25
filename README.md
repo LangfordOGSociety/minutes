@@ -173,7 +173,7 @@ Cheaper capture without new hardware: `-e CAPTURE_WIDTH=1280 -e CAPTURE_HEIGHT=7
 
 ## Before trusting it on council night
 
-Everything Zoom-specific is in `MARKERS` at the top of `src/zoom.ts`. Do a dry
+Everything Zoom-specific is in `MARKERS` at the top of `src/platforms/zoom.ts`. Do a dry
 run on a committee meeting with `-e LOG_LEVEL=DEBUG` to see every agent signal,
 and watch the `state` events in the manifest. To see what the bot sees:
 `docker exec <id> ffmpeg -f x11grab -video_size 1920x1080 -i :99 -frames:v 1 /recordings/shot.png`.

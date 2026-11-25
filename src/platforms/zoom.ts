@@ -14,22 +14,12 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { chromium, type Browser, type BrowserContext, type Locator, type Page } from "playwright";
-import { saveStorageState } from "./login.js";
-import { TIMEOUT, logger, withTimeout } from "./util.js";
+import { saveStorageState } from "../login.js";
+import { TIMEOUT, logger, withTimeout } from "../util.js";
+import { mediaGuard } from "./guard.js";
+import { State, type CaptureSession, type Platform, type SessionOpts } from "./types.js";
 
 const log = logger("zoom");
-
-export enum State {
-  LOADING = "loading",           // page coming up / unrecognised screen
-  PREJOIN = "prejoin",           // name entry or preview
-  WAITING = "waiting",           // waiting for host, webinar not started
-  IN_MEETING = "in_meeting",
-  RECONNECTING = "reconnecting", // in meeting, Zoom says the link is bad
-  ENDED = "ended",
-  BLOCKED = "blocked",           // Zoom refused us (bot check, sign-in required)
-  INVALID = "invalid",           // the link/ID doesn't point at a meeting
-  DEAD = "dead",                 // browser or page gone
-}
 
 // When frames disagree, the most significant answer wins.
 const PRIORITY: Record<string, number> = {
@@ -243,42 +233,6 @@ function pageAgent(m: Markers): void {
   else document.addEventListener("DOMContentLoaded", observe, { once: true });
 }
 
-/**
- * Client-side mute, injected into every frame before Zoom's code runs.
- * Whatever Zoom or its UI does, the page never gets a live microphone,
- * camera or screen: every audio track it asks for is disabled and can't be
- * re-enabled (own `enabled` property shadows the prototype setter; clones
- * stay guarded), video requests are refused, screen share is refused.
- * Incoming meeting audio is untouched: only tracks we hand out are guarded.
- * Self-contained: serialized by addInitScript.
- */
-export function mediaGuard(): void {
-  const md = navigator.mediaDevices;
-  const w = window as unknown as Record<string, unknown>;
-  if (!md || w.__ccMediaGuard) return;
-  w.__ccMediaGuard = true;
-  const guarded = new WeakSet<MediaStreamTrack>();
-  const guard = (t: MediaStreamTrack): MediaStreamTrack => {
-    t.enabled = false;
-    Object.defineProperty(t, "enabled", { get: () => false, set: () => {}, configurable: false });
-    guarded.add(t);
-    return t;
-  };
-  const clone = MediaStreamTrack.prototype.clone;
-  MediaStreamTrack.prototype.clone = function (this: MediaStreamTrack) {
-    const c = clone.call(this);
-    return guarded.has(this) ? guard(c) : c;
-  };
-  const refuse = (what: string) => Promise.reject(new DOMException(what + " disabled by recorder", "NotAllowedError"));
-  const gum = md.getUserMedia.bind(md);
-  md.getUserMedia = async (c?: MediaStreamConstraints) => {
-    if (!c?.audio) return refuse("camera");
-    const s = await gum({ audio: c.audio });   // never pass video through
-    s.getAudioTracks().forEach(guard);
-    return s;
-  };
-  md.getDisplayMedia = () => refuse("screen share");
-}
 
 /** The plain passcode from a link's pwd= (agendas print "Passcode: 429539",
  *  so links get written as /j/<id>?pwd=429539). Zoom's encoded pwd= is
@@ -302,7 +256,7 @@ export function webClientUrl(link: string): string {
   return `https://app.zoom.us/wc/join/${m[1]}` + (pwd ? `?pwd=${pwd}` : "");
 }
 
-export class ZoomSession {
+export class ZoomSession implements CaptureSession {
   readonly url: string;
   private browser?: Browser;
   private page?: Page;
@@ -641,3 +595,48 @@ export class ZoomSession {
     }
   }
 }
+
+// --- the platform -----------------------------------------------------------
+
+const BARE_ID = /^[\d\s-]{9,15}$/;
+
+function zoomHost(link: string): URL | null {
+  try {
+    const u = new URL(link);
+    const host = u.hostname.toLowerCase();
+    return host === "zoom.us" || host.endsWith(".zoom.us") ? u : null;
+  } catch { return null; }
+}
+
+export const zoom: Platform = {
+  id: "zoom",
+  label: "Zoom",
+  methods: ["screen"],
+  savedLogin: true,
+
+  match(link) {
+    const s = link.trim();
+    return (BARE_ID.test(s) && s.replace(/\D/g, "").length >= 9) || zoomHost(s) !== null;
+  },
+
+  /** Invite link or bare meeting ID. Only *.zoom.us over https, and the
+   *  path must carry a meeting ID. */
+  normalize(link) {
+    const s = link.trim();
+    if (BARE_ID.test(s) && s.replace(/\D/g, "").length >= 9) return s.replace(/[\s-]/g, "");
+    const u = zoomHost(s);
+    if (!u || u.protocol !== "https:") throw new Error("link must be an https://...zoom.us/ URL");
+    if (!/\/(j|w|wc\/join|wc)\/\d{9,12}/.test(u.pathname)) throw new Error("couldn't find a meeting ID in that link");
+    return u.toString();
+  },
+
+  /** The meeting number. The link itself carries the passcode. */
+  publicId(link) {
+    const m = /(\d{9,12})/.exec(link.replace(/[\s-]/g, ""));
+    return m ? m[1] : "?";
+  },
+
+  create(link, o: SessionOpts) {
+    return new ZoomSession(link, o.displayName, o.width, o.height, o.auth, o.email);
+  },
+};
