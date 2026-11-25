@@ -35,6 +35,11 @@ form .actions button.primary { flex: 1; }
 label.check { display: flex; align-items: center; gap: 8px; font-weight: normal; }
 label.check input { width: auto; margin: 0; }
 label.check[hidden] { display: none; }
+.auditf { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 6px; margin-bottom: 10px; }
+@media (max-width: 600px) { .auditf { grid-template-columns: 1fr; } }
+.change { font-size: 13px; overflow-wrap: anywhere; }
+.change b { font-weight: 600; }
+#amore[hidden] { display: none; }
 </style>
 </head>
 <body>
@@ -71,6 +76,16 @@ label.check[hidden] { display: none; }
     <section>
       <h2>Captures</h2>
       <div class="list" id="jobs"><div class="empty">Loading...</div></div>
+    </section>
+    <section>
+      <h2>Audit log</h2>
+      <form id="auditf" class="auditf" autocomplete="off">
+        <select id="aaction" aria-label="Action"><option value="">All actions</option></select>
+        <input id="aactor" placeholder="Who" aria-label="Who">
+        <input id="atarget" placeholder="What (name, email)" aria-label="What">
+      </form>
+      <div class="list" id="audit"><div class="empty">Loading...</div></div>
+      <button type="button" id="amore" hidden>Older</button>
     </section>
   </div>
   <div>
@@ -226,7 +241,7 @@ function cancel(id) { aapi("DELETE", "/api/admin/jobs/" + id).then(refresh, func
 
 function refresh() {
   return Promise.all([aapi("GET", "/api/admin/jobs"), aapi("GET", "/api/admin/recordings")])
-    .then(function (d) { renderJobs(d[0]); renderRecs(d[1]); refreshLogin(); })
+    .then(function (d) { renderJobs(d[0]); renderRecs(d[1]); refreshLogin(); if (!auditOlder) loadAudit(); })
     .catch(function (e) { fill(document.getElementById("jobs"), el("div", { "class": "empty", text: "Can't reach the server: " + e.message })); });
 }
 
@@ -297,6 +312,50 @@ document.getElementById("form").addEventListener("submit", function (ev) {
     f.reset(); refresh();
   }, function (e) { msg.className = "msg err"; msg.textContent = e.message; });
 });
+
+// --- audit log ---
+var auditOlder = false, auditTimer = null;
+function auditQuery(before) {
+  var q = new URLSearchParams();
+  var a = document.getElementById("aaction").value, w = document.getElementById("aactor").value.trim(), t = document.getElementById("atarget").value.trim();
+  if (a) q.set("action", a); if (w) q.set("actor", w); if (t) q.set("target", t);
+  if (before) q.set("before", before);
+  return "/api/admin/audit?" + q.toString();
+}
+function show(v) { return v === null || v === undefined ? "none" : typeof v === "string" ? v : JSON.stringify(v); }
+function auditRow(e) {
+  var b = e.before || {}, a = e.after || {}, keys = Object.keys(a).length ? Object.keys(a) : Object.keys(b);
+  var changes = el("div", { "class": "sub" });
+  keys.forEach(function (k) {
+    var line = e.before && e.after ? show(b[k]) + " → " + show(a[k]) : show(e.after ? a[k] : b[k]);
+    changes.appendChild(el("div", { "class": "change" }, el("b", { text: k + ": " }), line));
+  });
+  return el("div", { "class": "row" },
+    el("div", { "class": "title" }, el("span", { "class": "pill", text: e.action }), e.targetLabel || e.targetType),
+    el("div", null),
+    el("div", { "class": "sub", text: fmt(e.at) + " · " + e.actor + (e.ip ? " · " + e.ip : "") }),
+    keys.length ? changes : null);
+}
+function loadAudit(before) {
+  return aapi("GET", auditQuery(before)).then(function (d) {
+    var box = document.getElementById("audit"), sel = document.getElementById("aaction");
+    var have = [].map.call(sel.options, function (o) { return o.value; });
+    d.actions.forEach(function (x) { if (have.indexOf(x) < 0) sel.appendChild(el("option", { value: x, text: x })); });
+    if (!before) fill(box);
+    d.entries.forEach(function (e) { box.appendChild(auditRow(e)); });
+    if (!before && !d.entries.length) box.appendChild(el("div", { "class": "empty", text: "Nothing yet." }));
+    var more = document.getElementById("amore");
+    more.hidden = d.entries.length < 50;
+    more.dataset.before = d.entries.length ? d.entries[d.entries.length - 1].id : "";
+  }).catch(function (e) { fill(document.getElementById("audit"), el("div", { "class": "empty", text: e.message })); });
+}
+document.getElementById("amore").addEventListener("click", function (ev) { auditOlder = true; loadAudit(ev.target.dataset.before); });
+["aaction", "aactor", "atarget"].forEach(function (id) {
+  document.getElementById(id).addEventListener("input", function () {
+    clearTimeout(auditTimer); auditOlder = false; auditTimer = setTimeout(function () { loadAudit(); }, 300);
+  });
+});
+document.getElementById("auditf").addEventListener("submit", function (ev) { ev.preventDefault(); });
 
 renderMe(document.getElementById("me"), true);
 aapi("GET", "/api/admin/info").then(function (i) {

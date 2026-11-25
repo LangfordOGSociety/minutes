@@ -99,6 +99,12 @@ captures).
   Public = a job made it, its meeting is public and not cancelled, video or
   live. `publicFiles()` is the only list /media serves from (never
   manifest.json: it holds the link and passcode).
+- `src/audit.ts` audit_log (migration 4): `audit.record(actor, action,
+  target, before, after)` stores only changed fields, through `redact()`
+  (links -> meeting number, `email` keys -> [set]/[changed], password /
+  hash / token keys dropped, any `pwd=` in any string). serve.ts records
+  admin writes and password changes, `minutes user` records as "cli". New
+  admin writes (feeds, meetings, tokens, publish) must record too.
 - `src/net.ts` TRUSTED_PROXIES (X-Forwarded-For/-Proto believed only from
   those), security headers, page CSP.
 - `src/timeline.ts` active speaker + Zoom captions: appended per change to

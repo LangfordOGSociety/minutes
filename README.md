@@ -148,6 +148,13 @@ them on the server:
     minutes user disable|enable <email>
     minutes user list
 
+Every admin change (schedule, edit, cancel, stop, record again, Zoom login
+check), every password change, and every `minutes user` command lands in
+the **audit log** on the admin page: who (the account, or `cli`), from
+which address, when, and the fields that changed. Meeting links show only
+the meeting number, the email typed into Zoom only that it was set or
+changed, and passwords never appear. Filter by action, who and what.
+
 Passwords are scrypt hashes; sessions are a random cookie stored only as a
 hash, valid 14 days from last use. Failed sign-ins are limited per account
 (10 per 15 min) and per address (30). The cookie is `__Host-` prefixed and
