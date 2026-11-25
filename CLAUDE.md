@@ -319,6 +319,19 @@ chromium`), so its revision always matches the library: bump playwright alone.
 (Was the 1.95GB mcr playwright image, which also ships Firefox and WebKit.)
 The transcriber drops `triton` (~1GB, GPU-only, pulled in by whisperx on x86).
 
+## Tests
+
+`npm test` (node:test, no deps): `test/*.test.ts`, compiled with
+`tsconfig.test.json` into `.test-build/` (never shipped: tsconfig.json and
+.dockerignore leave test/ out). Covers platform links and MARKERS, db
+migrations, the Scheduler (validation, edit, cancel, retry, jobs.json
+import), timelines, recorder stream input + stitch against real ffmpeg, and
+in Chromium the media guard (peak exactly 0, with an unguarded control that
+must be audible) and the `pageAgent` classifier. ffmpeg/Chromium tests skip
+locally when missing, fail in CI (CI=true). The `test` job in ci.yml runs on
+a GitHub-hosted runner for every PR and push; release needs it. When a new
+live page breaks a marker, add its text as a classifier case.
+
 ## Style
 
 - No runtime deps beyond playwright. Keep it that way unless there's a real reason.

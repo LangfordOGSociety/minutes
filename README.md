@@ -181,3 +181,15 @@ and watch the `state` events in the manifest. To see what the bot sees:
 ## Develop
 
     npm install && npm run build
+    npm test
+
+`npm test` builds `src` and `test` into `.test-build/` and runs them with
+`node --test`. The recorder and stitch tests need ffmpeg, and the media
+guard and page classifier tests need Playwright's Chromium
+(`npx playwright install chromium`); without them those tests skip locally.
+CI installs both and runs everything on every pull request. To run it all in
+the image instead:
+
+    npx tsc -p tsconfig.test.json && docker build -t minutes .
+    docker run --rm --entrypoint node -e CI=true -v "$PWD/.test-build:/app/.test-build:ro" \
+      -w /app minutes --test '.test-build/test/**/*.test.js'
