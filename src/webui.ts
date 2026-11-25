@@ -217,6 +217,12 @@ function renderJobs(jobs) {
       actions.appendChild(el("button", { "class": "danger", text: "Cancel", on: { click: function () {
         if (confirm("Cancel " + j.slug + "?")) cancel(j.id);
       } } }));
+    } else if (j.status !== "cancelled" && !jobs.some(function (o) { return o.meetingRef === j.meetingRef && o.status in ACTIVE; })) {
+      actions.appendChild(el("button", { text: "Record again", on: { click: function () {
+        if (confirm("Record this meeting again? A new capture starts now (or at the meeting's time if that's still ahead), in a new folder.")) {
+          api("POST", "/api/jobs/" + j.id + "/retry").then(refresh, function (e) { alert(e.message); });
+        }
+      } } }));
     }
     var sub = "Meeting " + j.meetingId + " · starts " + fmt(j.start) + " · as “" + j.name + "”" + (j.hasEmail ? " · email set" : "");
     if (j.outcome) sub += " · outcome " + j.outcome;

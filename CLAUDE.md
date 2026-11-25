@@ -33,6 +33,13 @@ captures).
 - `src/db.ts` `<out>/minutes.db` via `node:sqlite` (Node 24, no deps): WAL,
   numbered append-only migrations in `PRAGMA user_version`, `tx()` helper.
   Only the server opens it; capture children write their own manifest.json.
+- `src/meetings.ts` one row per real-world meeting (title, body, platform,
+  secret link, start, visibility, base slug). A job is one capture attempt
+  of a meeting (`Job.meetingRef`; the API's `meetingId` is still the Zoom
+  number). Scheduling by hand creates both. Link/start edits go through
+  `Scheduler.updateMeeting()`, which copies them to attempts that haven't
+  launched. `retry()` (`POST /api/jobs/:id/retry`, "Record again") adds an
+  attempt in `<slug>-2`, `-3`... starting now or at the meeting's time.
 - `src/jobs.ts` scheduler: `jobs` table (old jobs.json imported once, kept
   as jobs.json.migrated), mirrors running/stopping jobs to `active.json`
   for the transcriber, launches the normal CLI as a

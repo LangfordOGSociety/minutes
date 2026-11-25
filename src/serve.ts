@@ -8,6 +8,7 @@
  *   POST   /api/jobs               {link, start, slug?, name?}
  *   PATCH  /api/jobs/:id           edit a scheduled capture {link?, start?, slug?, name?}
  *   DELETE /api/jobs/:id           cancel, or stop a running capture
+ *   POST   /api/jobs/:id/retry     another attempt at a finished capture's meeting
  *   GET    /api/jobs/:id/screen    PNG of what the bot's display shows now
  *   GET    /api/jobs/:id/log       tail of that capture's log
  *   GET    /api/session            saved Zoom login: ok|expired|missing|error, last check
@@ -286,6 +287,9 @@ export async function serve(o: ServeOpts, entry: string): Promise<number> {
           if (parts.length === 3 && method === "DELETE") {
             const j = sched.cancel(job.id);
             return send(res, 200, publicJob(j));
+          }
+          if (parts.length === 4 && parts[3] === "retry" && method === "POST") {
+            return send(res, 201, publicJob(sched.retry(job.id)));
           }
           if (parts[3] === "log" && read) return send(res, 200, tail(path.join(o.out, job.slug, "capture.log")));
           if (parts[3] === "screen" && read) {

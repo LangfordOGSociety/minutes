@@ -37,6 +37,34 @@ const MIGRATIONS: string[] = [
    );
    CREATE INDEX jobs_status ON jobs (status);
    CREATE INDEX jobs_slug ON jobs (slug);`,
+
+  // 2: meetings, separate from capture attempts (jobs). Each existing job
+  // becomes the only attempt of its own meeting.
+  `CREATE TABLE meetings (
+     id          TEXT PRIMARY KEY,
+     feed_id     TEXT,                   -- NULL: entered by hand
+     external_id TEXT,                   -- the feed's stable id
+     title       TEXT NOT NULL,
+     body        TEXT,
+     platform    TEXT NOT NULL,
+     method      TEXT,
+     link        TEXT NOT NULL,          -- secret, never sent to the browser
+     start       TEXT NOT NULL,          -- ISO UTC
+     end_est     TEXT,
+     agenda_url  TEXT,
+     status      TEXT NOT NULL,          -- scheduled | cancelled
+     visibility  TEXT NOT NULL,          -- public | hidden
+     slug        TEXT NOT NULL,          -- base for its jobs' folder names
+     created_at  TEXT NOT NULL,
+     updated_at  TEXT NOT NULL,
+     UNIQUE (feed_id, external_id)
+   );
+   CREATE INDEX meetings_start ON meetings (start);
+   ALTER TABLE jobs ADD COLUMN meeting_id TEXT REFERENCES meetings (id);
+   INSERT INTO meetings (id, title, platform, link, start, status, visibility, slug, created_at, updated_at)
+     SELECT 'm-' || id, slug, 'zoom', link, start, 'scheduled', 'public', slug, created_at, created_at FROM jobs;
+   UPDATE jobs SET meeting_id = 'm-' || id;
+   CREATE INDEX jobs_meeting ON jobs (meeting_id);`,
 ];
 
 export function openDb(file: string): DB {
@@ -62,8 +90,10 @@ function migrate(db: DB): void {
   }
 }
 
-/** Run fn in a transaction; rolls back if it throws. Not reentrant. */
+/** Run fn in a transaction; rolls back if it throws. Inside another
+ *  transaction it just runs fn (the outer one commits or rolls back). */
 export function tx<T>(db: DB, fn: () => T): T {
+  if (db.isTransaction) return fn();
   db.exec("BEGIN IMMEDIATE");
   try {
     const r = fn();
