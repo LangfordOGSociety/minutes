@@ -12,8 +12,9 @@ Zoom, and publish the official video 24-48h later. The goal is having video
 Renamed from zoom-capture (2026-11-24). The homelab k8s deployment moved
 to namespace `minutes` the same day by rebinding the same Ceph volume (PV
 now `Retain`), see `deploy/k8s/MIGRATION.md`. Images are
-`registry.lab.emc2.build/minutes` and `minutes-transcriber`; the cluster
-still runs the pre-rename build `9d03617` under those names.
+`ghcr.io/langfordogsociety/minutes` and `minutes-transcriber`, built and
+deployed by CI on push to main (`.github/workflows/`, deploy waits for
+captures).
 
 ## Layout
 
