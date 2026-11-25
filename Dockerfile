@@ -1,9 +1,9 @@
-# Ubuntu 22.04 + Node 20, with only Chromium from Playwright. (The
+# Ubuntu 22.04 + Node 24 LTS (node:sqlite), with only Chromium from Playwright. (The
 # mcr.microsoft.com/playwright image also ships Firefox and WebKit and their
 # libraries, ~700MB we never use.) The browser comes from the playwright npm
 # package in package-lock.json, so its revision always matches the library.
 FROM ubuntu:22.04 AS base
-ARG NODE_VERSION=20.18.0
+ARG NODE_VERSION=24.22.3
 ARG TARGETARCH
 ENV DEBIAN_FRONTEND=noninteractive
 RUN set -e; \
@@ -46,10 +46,12 @@ RUN set -e; \
     rm -rf /var/lib/apt/lists/* /root/.cache /root/.npm /tmp/*; \
     useradd -m -u 1000 -s /bin/bash pwuser
 
-# Newer timezone data for Node's ICU. The bundled Node ships tzdata 2024a,
-# which predates BC's move to permanent daylight time (2026-11-01, UTC-7), so
-# --start and chapter times came out an hour off. ICU loads these .res files
-# from ICU_TIMEZONE_FILES_DIR in preference to its built-in data. Bump
+# Timezone data for Node's ICU, pinned. Node 20.18 shipped tzdata 2024a,
+# which predates BC's move to permanent daylight time (2026-11-01, UTC-7),
+# so --start and chapter times came out an hour off. Node 24.22.3 bundles
+# 2026e (already has it, checked 2026-11-24); this keeps the data at least
+# this new whatever Node ships. ICU loads these .res files from
+# ICU_TIMEZONE_FILES_DIR in preference to its built-in data. Bump
 # ICU_TZ_VERSION and the sums together (from unicode-org/icu-data).
 ARG ICU_TZ_VERSION=2026f
 RUN set -e; \

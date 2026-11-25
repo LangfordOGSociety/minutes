@@ -66,7 +66,7 @@ later, the transcriber works through the recording while it's still being
 captured (`LIVE_TRANSCRIBE=1`, the default).
 
 1. **While the capture runs**, every 15s the transcriber looks for running
-   jobs (`recordings/jobs.json`). Each part file (`part_NNN.mkv`) is flushed
+   jobs (`recordings/active.json`, written by the server). Each part file (`part_NNN.mkv`) is flushed
    to disk every second, so it can be read while it grows.
 2. Once at least `LIVE_CHUNK_S` (120s) of new audio exists, it decodes only
    that window, cuts it at the quietest 0.3s near the end (so no word is
@@ -149,7 +149,8 @@ Open http://127.0.0.1:8080/ (any username, password = `CAPTURE_WEB_TOKEN`).
 
 Each capture runs on its own virtual display and audio sink, so meetings can
 overlap (`--max-jobs`, default 2; each 1080p30 x264 capture needs roughly a CPU
-core). Jobs live in `recordings/jobs.json`. If the server restarts mid-capture,
+core). Jobs live in `recordings/minutes.db` (SQLite; an older `jobs.json` is
+imported on first start and kept as `jobs.json.migrated`). If the server restarts mid-capture,
 that job is marked *interrupted* and not relaunched (it would overwrite its
 parts). Give `docker stop` time to stitch: `--stop-timeout 120`.
 

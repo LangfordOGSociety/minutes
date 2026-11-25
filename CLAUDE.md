@@ -30,7 +30,12 @@ captures).
   serving for video, optional Basic auth (CAPTURE_WEB_TOKEN), same-origin
   check on writes. Only serves .mp4/.mkv/.png/.json/.vtt/.srt/.txt directly inside
   a slug dir.
-- `src/jobs.ts` scheduler: jobs.json (atomic), launches the normal CLI as a
+- `src/db.ts` `<out>/minutes.db` via `node:sqlite` (Node 24, no deps): WAL,
+  numbered append-only migrations in `PRAGMA user_version`, `tx()` helper.
+  Only the server opens it; capture children write their own manifest.json.
+- `src/jobs.ts` scheduler: `jobs` table (old jobs.json imported once, kept
+  as jobs.json.migrated), mirrors running/stopping jobs to `active.json`
+  for the transcriber, launches the normal CLI as a
   child per job with its own Xvfb display (:100+) and null sink (zoom_<n>)
   via DISPLAY / CAPTURE_SINK / PULSE_SINK. Never touches the default source.
   Links are restricted to *.zoom.us or bare IDs; the meeting password never
@@ -133,11 +138,13 @@ Verified live:
   the browser-UI height instead (`hideBrowserUi`, verified offline on Xvfb,
   not yet in a live meeting).
 
-Timezone data: the image's Node ships tzdata 2024a, and even Node 24's 2025b
-predates BC's move to permanent daylight time (2026-11-01, UTC-7), so
-`--start` and chapter times were an hour off. The Dockerfile now installs ICU
-tz files for 2026f (pinned, sha256-checked) and sets ICU_TIMEZONE_FILES_DIR;
-verified `--start 2026-11-16T19:00` -> 02:00Z and chapter clock correct. The
+Timezone data: Node 20.18 shipped tzdata 2024a, which predates BC's move
+to permanent daylight time (2026-11-01, UTC-7), so `--start` and chapter
+times were an hour off. The Dockerfile installs ICU tz files for 2026f
+(pinned, sha256-checked) and sets ICU_TIMEZONE_FILES_DIR. Re-checked on
+Node 24.22.3 (2026-11-24): built-in data is 2026e (also correct), the
+override still loads (`process.versions.tz` 2026f), `2026-11-16T19:00` ->
+02:00Z (GMT-0700). The
 `config` event at startup logs `tzdata` and the resolved start with offset:
 check it. Running outside the image (plain `node dist/index.js`) still uses
 Node's built-in tzdata, so pass an explicit offset there.
@@ -288,7 +295,7 @@ Still untested live:
       --link "https://zoom.us/j/87093163922" --start 2026-11-16T19:00 \
       --slug council-2026-11-16 --name "Recorder (Eric)"
 
-The image is Ubuntu 22.04 + Node 20.18.0 (`NODE_VERSION`) with only Chromium,
+The image is Ubuntu 22.04 + Node 24 LTS (`NODE_VERSION`, for `node:sqlite`) with only Chromium,
 installed by the `playwright` npm package itself (`playwright install --with-deps
 chromium`), so its revision always matches the library: bump playwright alone.
 (Was the 1.95GB mcr playwright image, which also ships Firefox and WebKit.)

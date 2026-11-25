@@ -1,8 +1,11 @@
 /**
  * Scheduler behind the web interface.
  *
- * Each submitted meeting is a Job, persisted in <out>/jobs.json (atomic
- * tmp + rename, like manifest.json). Shortly before the job's start time the
+ * Each submitted meeting is a Job, persisted in the `jobs` table of
+ * <out>/minutes.db (src/db.ts); the old <out>/jobs.json is imported once and
+ * kept as jobs.json.migrated. Running and stopping captures are also written
+ * to <out>/active.json (atomic tmp + rename) for the transcriber, which
+ * doesn't open the database. Shortly before the job's start time the
  * scheduler launches the normal CLI capture as a child process, so the
  * runner's recovery logic is exactly what's been tested live.
  *
@@ -15,6 +18,7 @@
 import { execFile, spawn, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { createWriteStream, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { tx, type DB } from "./db.js";
 import path from "node:path";
 import { promisify } from "node:util";
 import { SLUG_RE, TIMEOUT, defaultSlug, logger, withTimeout } from "./util.js";
@@ -95,37 +99,39 @@ export class Scheduler {
   private jobs: Job[] = [];
   private running = new Map<string, Running>();
   private launching = new Set<string>();
-  private file: string;
+  private activeFile: string;
   private timer?: NodeJS.Timeout;
   private ticking = false;
 
-  constructor(private o: SchedulerOpts) {
-    this.file = path.join(o.out, "jobs.json");
+  constructor(private o: SchedulerOpts, private db: DB) {
     mkdirSync(o.out, { recursive: true });
-    if (existsSync(this.file)) {
-      try {
-        this.jobs = JSON.parse(readFileSync(this.file, "utf8"));
-      } catch (e) {
-        log.error("jobs.json is unreadable; starting with no jobs", e);
-      }
-      // A capture that was running when the server died is gone with it.
-      // Don't relaunch into the same folder: part numbering would restart
-      // at 1 and overwrite what's there.
-      for (const j of this.jobs) {
-        if (j.status === "running" || j.status === "stopping") {
-          j.status = "interrupted";
-          j.endedAt ??= new Date().toISOString();
-          j.error = "the server stopped while this capture was running";
-        }
-      }
-      this.save();
+    this.activeFile = path.join(o.out, "active.json");
+    importJobsJson(db, o.out);
+    this.jobs = (db.prepare("SELECT * FROM jobs ORDER BY created_at, rowid").all() as unknown as JobRow[]).map(fromRow);
+    // A capture that was running when the server died is gone with it.
+    // Don't relaunch into the same folder: part numbering would restart
+    // at 1 and overwrite what's there.
+    const lost = this.jobs.filter((j) => j.status === "running" || j.status === "stopping");
+    for (const j of lost) {
+      j.status = "interrupted";
+      j.endedAt ??= new Date().toISOString();
+      j.error = "the server stopped while this capture was running";
     }
+    this.save(...lost);
   }
 
-  private save(): void {
-    const tmp = `${this.file}.tmp`;
-    writeFileSync(tmp, JSON.stringify(this.jobs, null, 2));
-    renameSync(tmp, this.file);
+  /** Write these jobs to the database (one transaction), then refresh
+   *  active.json. Call after every change to a job. */
+  private save(...jobs: Job[]): void {
+    if (jobs.length) {
+      const st = this.db.prepare(UPSERT);
+      tx(this.db, () => { for (const j of jobs) st.run(toRow(j)); });
+    }
+    const active = this.jobs.filter((j) => j.status === "running" || j.status === "stopping")
+      .map((j) => ({ id: j.id, slug: j.slug, status: j.status }));
+    const tmp = `${this.activeFile}.tmp`;
+    writeFileSync(tmp, JSON.stringify(active, null, 1));
+    renameSync(tmp, this.activeFile);
   }
 
   list(): Job[] { return this.jobs.map((j) => ({ ...j })); }
@@ -182,7 +188,7 @@ export class Scheduler {
       status: "scheduled", createdAt: new Date().toISOString(),
     };
     this.jobs.push(job);
-    this.save();
+    this.save(job);
     log.info(`scheduled ${slug} for ${job.start}`);
     void this.tick();
     return { ...job };
@@ -211,7 +217,7 @@ export class Scheduler {
     if (email) j.email = email; else delete j.email;
     // A queued job that moved later goes back to waiting for its time.
     if (j.status === "queued") j.status = "scheduled";
-    this.save();
+    this.save(j);
     log.info(`edited ${j.slug}: ${changed.join(", ") || "no changes"}`);
     void this.tick();
     return { ...j };
@@ -225,7 +231,7 @@ export class Scheduler {
     if (j.status === "scheduled" || j.status === "queued") {
       j.status = "cancelled";
       j.endedAt = new Date().toISOString();
-      this.save();
+      this.save(j);
     } else if (j.status === "running") {
       const r = this.running.get(id);
       if (r) {
@@ -233,7 +239,7 @@ export class Scheduler {
         r.proc.kill("SIGTERM");
       }
       j.status = "stopping";
-      this.save();
+      this.save(j);
     } else if (j.status !== "stopping") {
       throw new BadRequest(`job is already ${j.status}`, 409);
     }
@@ -250,8 +256,9 @@ export class Scheduler {
     if (this.timer) clearInterval(this.timer);
     const all = [...this.running.values()];
     for (const r of all) { r.stopRequested = true; r.proc.kill("SIGTERM"); }
-    for (const j of this.jobs) if (j.status === "running") j.status = "stopping";
-    this.save();
+    const stopping = this.jobs.filter((j) => j.status === "running");
+    for (const j of stopping) j.status = "stopping";
+    this.save(...stopping);
     if ((await withTimeout(Promise.all(all.map((r) => r.exited)), timeoutMs)) === TIMEOUT) {
       log.warn("captures didn't finish stitching in time");
     }
@@ -271,7 +278,7 @@ export class Scheduler {
           if (j.status !== "queued") {
             j.status = "queued";
             log.warn(`${j.slug} is due but ${this.running.size} capture(s) are already running`);
-            this.save();
+            this.save(j);
           }
           continue;
         }
@@ -324,7 +331,7 @@ export class Scheduler {
       j.status = "failed";
       j.error = `couldn't set up display/audio: ${String(e).slice(0, 200)}`;
       j.endedAt = new Date().toISOString();
-      this.save();
+      this.save(j);
       log.error(`${j.slug}: ${j.error}`);
       capLog.end();
       return;
@@ -376,7 +383,7 @@ export class Scheduler {
         j.outcome = readOutcome(dir);
         j.status = code === 0 ? "done" : run.stopRequested ? "stopped" : "failed";
         if (j.status === "failed" && !j.error) j.error = signal ? `capture killed by ${signal}` : `capture exited ${code}`;
-        this.save();
+        this.save(j);
         log.info(`${j.slug} finished: ${j.status} (outcome ${j.outcome ?? "?"})`);
         resolve();
         void this.tick(); // a queued job may be waiting for this slot
@@ -387,11 +394,71 @@ export class Scheduler {
     j.status = "running";
     j.launchedAt = new Date().toISOString();
     delete j.error;
-    this.save();
+    this.save(j);
     log.info(`launched ${j.slug} on display ${display}, sink ${sink}`);
   }
 }
 
 function readOutcome(dir: string): string | undefined {
   try { return JSON.parse(readFileSync(path.join(dir, "manifest.json"), "utf8")).outcome; } catch { return undefined; }
+}
+
+// --- database rows ---------------------------------------------------------
+
+type JobRow = {
+  id: string; link: string; start: string; slug: string; name: string; email: string | null;
+  status: string; created_at: string; launched_at: string | null; ended_at: string | null;
+  exit_code: number | null; outcome: string | null; error: string | null;
+};
+
+const UPSERT = `INSERT INTO jobs (id, link, start, slug, name, email, status, created_at, launched_at, ended_at, exit_code, outcome, error)
+  VALUES (:id, :link, :start, :slug, :name, :email, :status, :created_at, :launched_at, :ended_at, :exit_code, :outcome, :error)
+  ON CONFLICT (id) DO UPDATE SET link = excluded.link, start = excluded.start, slug = excluded.slug, name = excluded.name,
+    email = excluded.email, status = excluded.status, launched_at = excluded.launched_at, ended_at = excluded.ended_at,
+    exit_code = excluded.exit_code, outcome = excluded.outcome, error = excluded.error`;
+
+function toRow(j: Job): JobRow {
+  return {
+    id: j.id, link: j.link, start: j.start, slug: j.slug, name: j.name, email: j.email ?? null,
+    status: j.status, created_at: j.createdAt, launched_at: j.launchedAt ?? null, ended_at: j.endedAt ?? null,
+    exit_code: j.exitCode === undefined ? null : j.exitCode, outcome: j.outcome ?? null, error: j.error ?? null,
+  };
+}
+
+/** Optional fields stay absent (not null) so the API's JSON is unchanged.
+ *  exitCode keeps null once the job has ended (killed by a signal). */
+function fromRow(r: JobRow): Job {
+  const j: Job = { id: r.id, link: r.link, start: r.start, slug: r.slug, name: r.name,
+    status: r.status as JobStatus, createdAt: r.created_at };
+  if (r.email !== null) j.email = r.email;
+  if (r.launched_at !== null) j.launchedAt = r.launched_at;
+  if (r.ended_at !== null) j.endedAt = r.ended_at;
+  if (r.exit_code !== null || r.ended_at !== null && r.launched_at !== null) j.exitCode = r.exit_code;
+  if (r.outcome !== null) j.outcome = r.outcome;
+  if (r.error !== null) j.error = r.error;
+  return j;
+}
+
+/** First start on the database: bring over <out>/jobs.json once, then
+ *  rename it so it's never imported twice (and stays as a backup). */
+function importJobsJson(db: DB, out: string): void {
+  const file = path.join(out, "jobs.json");
+  if (!existsSync(file)) return;
+  let jobs: Job[];
+  try {
+    jobs = JSON.parse(readFileSync(file, "utf8"));
+    if (!Array.isArray(jobs)) throw new Error("not a list");
+  } catch (e) {
+    log.error("jobs.json is unreadable; not importing it (left in place)", e);
+    return;
+  }
+  const st = db.prepare(UPSERT);
+  tx(db, () => {
+    for (const j of jobs) {
+      if (!j || typeof j.id !== "string" || typeof j.slug !== "string") continue;
+      st.run(toRow(j));
+    }
+  });
+  renameSync(file, `${file}.migrated`);
+  log.info(`imported ${jobs.length} job(s) from jobs.json (kept as jobs.json.migrated)`);
 }

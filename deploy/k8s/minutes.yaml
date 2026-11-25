@@ -29,7 +29,7 @@ metadata:
   namespace: minutes
   labels: { app: minutes }
 spec:
-  replicas: 1   # one scheduler, one owner of jobs.json; never scale up
+  replicas: 1   # one scheduler, one owner of minutes.db; never scale up
   strategy: { type: Recreate }   # RWO volume, and two would both join meetings
   selector:
     matchLabels: { app: minutes }

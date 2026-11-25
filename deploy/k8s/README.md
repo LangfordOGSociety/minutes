@@ -47,7 +47,7 @@ it. After a fresh namespace, re-set the repo secret:
 ## Notes
 
 - Never run two schedulers on one Zoom account for the same meeting: the
-  laptop's `docker compose` and the cluster each keep their own `jobs.json`.
+  laptop's `docker compose` and the cluster each keep their own `minutes.db`.
 - `Recreate` strategy and one replica: a rolling update would run two pods
   that both join meetings. A deploy during a capture stops it (SIGTERM
   closes the part and stitches, 180s grace) and the capture does not
