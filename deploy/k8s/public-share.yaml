@@ -1,0 +1,67 @@
+# Temporary read-only public site at https://minutes.emc2.build/ until the
+# public/admin split (#5, #6) lands. NOT in kustomization.yaml:
+#   kubectl --context homelab apply -f deploy/k8s/public-share.yaml
+#   kubectl --context homelab delete -f deploy/k8s/public-share.yaml
+#
+# The app has no login, and a write (POST/PATCH/DELETE) can make the signed-in
+# Zoom account join any meeting or stop a capture. So this host routes GET and
+# HEAD only, and not the operator reads either: a capture's log, the bot's
+# live screen, the saved Zoom login state. Anything else gets Traefik's 404.
+# Scheduling, Stop and Edit stay on minutes.lab.emc2.build (LAN).
+#
+# DNS: minutes.emc2.build is the *.emc2.build wildcard, DNS-only (not
+# Cloudflare-proxied), so no cloudflare-only allowlist, and the rate limit
+# keys on the client address.
+#
+# TLS: the certificate comes from the minutes-public-share Ingress below
+# (cert-manager ingress-shim, secret minutes-public-tls), which also routes
+# the first shared recording's /media path; the IngressRoute covers the rest.
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: public-ratelimit
+  namespace: minutes
+spec:
+  rateLimit:
+    average: 20   # video players send many Range requests while seeking
+    burst: 100
+    period: 1s
+---
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: minutes-public
+  namespace: minutes
+spec:
+  entryPoints: [websecure]
+  routes:
+    - kind: Rule
+      match: >-
+        Host(`minutes.emc2.build`) && (Method(`GET`) || Method(`HEAD`))
+        && !PathRegexp(`^/api/jobs/[^/]+/(log|screen)$`)
+        && !PathPrefix(`/api/session`)
+      middlewares: [{ name: public-ratelimit }]
+      services: [{ name: minutes, port: http }]
+  tls:
+    secretName: minutes-public-tls
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: minutes-public-share
+  namespace: minutes
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+    traefik.ingress.kubernetes.io/router.entrypoints: websecure
+    traefik.ingress.kubernetes.io/router.tls: "true"
+    traefik.ingress.kubernetes.io/router.middlewares: minutes-public-ratelimit@kubernetescrd
+spec:
+  ingressClassName: traefik
+  tls: [{ hosts: [minutes.emc2.build], secretName: minutes-public-tls }]
+  rules:
+    - host: minutes.emc2.build
+      http:
+        paths:
+          - path: /media/meeting-20261124-1730/
+            pathType: Prefix
+            backend: { service: { name: minutes, port: { name: http } } }
