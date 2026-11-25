@@ -57,5 +57,8 @@ it. After a fresh namespace, re-set the repo secret:
 - The volume's PV is `Retain` (since the move from the `zoom-capture`
   namespace, 2026-11-24, see MIGRATION.md): deleting the PVC or namespace
   keeps the data, and `minutes.yaml` binds the PVC to that PV by name.
-- Public host `minutes.emc2.build` is not routed yet: it waits for the
-  public/admin split (#5, #6). Make its Cloudflare record proxied first.
+- Public host `minutes.emc2.build` is a temporary read-only share
+  (`public-share.yaml`, applied by hand, not in the kustomization): GET/HEAD
+  only, no capture logs, live screen or session state. Remove it once the
+  public/admin split (#5, #6) lands. The name is the DNS-only `*.emc2.build`
+  wildcard, so viewers stream straight from the homelab.

@@ -28,7 +28,9 @@ const PRIORITY: Record<string, number> = {
 
 // --- markers: VERIFY AGAINST A LIVE MEETING ------------------------------
 export const MARKERS = {
-  ended: String.raw`meeting (has been|has) ended|webinar (has|is) (ended|over)|host (has )?removed you|meeting is no longer available`,
+  // "This webinar has been ended by host" seen live 2026-11-24 (Langford
+  // council, a webinar): the old pattern only had "meeting has been ended".
+  ended: String.raw`(meeting|webinar) (has been|has|is) (ended|over)|host (has )?removed you|(meeting|webinar) is no longer available`,
   // "Host has joined. We've let them know you're here." seen live 2026-11-05
   // in the waiting room of a signed-in join.
   waiting: String.raw`let them know you.re here|waiting room|waiting for (the )?host|webinar (has not|hasn't) (yet )?started|will begin soon|host will let you in|meeting has not started`,
