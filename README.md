@@ -178,6 +178,31 @@ run on a committee meeting with `-e LOG_LEVEL=DEBUG` to see every agent signal,
 and watch the `state` events in the manifest. To see what the bot sees:
 `docker exec <id> ffmpeg -f x11grab -video_size 1920x1080 -i :99 -frames:v 1 /recordings/shot.png`.
 
+## Backups
+
+With `BACKUP_DIR` set (compose and the k8s deployment set it to
+`/backups`), `minutes serve` backs up its state once a day after 03:00
+local (`BACKUP_HOUR`) and keeps 14 days (`BACKUP_KEEP_DAYS`). A backup is a
+folder `minutes-YYYY-MM-DD_HHMM` with a `VACUUM INTO` copy of `minutes.db`,
+the saved Zoom login, and `backup.json` (schema, row counts, sha256 of each
+file). Each one is checked before it's kept: sqlite `integrity_check`, the
+schema, the hashes. A failed backup is logged, sent to `CAPTURE_NOTIFY_URL`
+once, and retried hourly. Recordings aren't backed up.
+
+The folder holds live session tokens: keep it as private as `auth/`.
+
+    minutes backup --dir /backups            # one now
+    minutes backup --dir /backups --list
+    minutes backup --verify /backups/<name>
+    minutes restore /backups/<name> --out /recordings --auth /auth/zoom-auth.json
+
+`restore` needs the server stopped. It verifies the backup, then puts the
+database and login back; the files it replaces stay next to them as
+`*.before-restore-<time>`. With compose: `docker compose stop capture`,
+`docker compose run --rm capture restore /backups/<name> --out /recordings
+--auth /auth/zoom-auth.json`, `docker compose start capture`. On the
+cluster: `deploy/k8s/restore.sh` (see `deploy/k8s/README.md`).
+
 ## Develop
 
     npm install && npm run build

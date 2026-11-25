@@ -30,9 +30,13 @@ services:
       # Optional: typed only when a host requires an email to join (the
       # host sees it). Without it such meetings end as "email_required".
       CAPTURE_EMAIL: ${CAPTURE_EMAIL:-}
+      # Nightly backup of minutes.db and the saved login, kept 14 days.
+      # Holds live session tokens, like auth/: keep it private.
+      BACKUP_DIR: /backups
     volumes:
       - ./recordings:/recordings
       - ./auth:/auth
+      - ./backups:/backups
 
   transcriber:
     build: ./transcriber

@@ -18,7 +18,11 @@ const USAGE = `usage: minutes --link <zoom link or id> --start <ISO datetime> [o
        minutes check-login [--auth <file>]   is the saved session still signed in? (refreshes it)
        minutes serve [--port 8080] [--auth <file>] [--max-jobs 2]
                                           web interface: schedule meetings, replay recordings
-                                          (env CAPTURE_WEB_TOKEN sets a password)
+                                          (env CAPTURE_WEB_TOKEN sets a password; BACKUP_DIR
+                                          turns on nightly backups, see README)
+       minutes backup [--out <dir>] [--auth <file>] [--dir <backups>]   back up now
+       minutes backup --list | --verify <backup folder>
+       minutes restore <backup folder> [--out <dir>] [--auth <file>]   server must be stopped
 
   --auth <file>            Zoom session from "login" (env CAPTURE_AUTH). Needed
                            when Zoom blocks anonymous web-client joins.
@@ -144,6 +148,47 @@ if (process.argv[2] === "check-login") {
   process.exit(r.state === "ok" ? 0 : 1);
 }
 
+if (process.argv[2] === "backup" || process.argv[2] === "restore") {
+  const env = process.env;
+  const { values: v, positionals } = parseArgs({
+    args: process.argv.slice(3),
+    options: {
+      out: { type: "string", default: env.CAPTURE_OUT ?? "/recordings" },
+      auth: { type: "string", default: env.CAPTURE_AUTH },
+      dir: { type: "string", default: env.BACKUP_DIR },
+      list: { type: "boolean", default: false },
+      verify: { type: "string" },
+    },
+    allowPositionals: process.argv[2] === "restore",
+    strict: true,
+  });
+  const b = await import("./backup.js");
+  const path = (await import("node:path")).default;
+  try {
+    if (process.argv[2] === "restore") {
+      if (positionals.length !== 1) fail("restore takes one backup folder");
+      for (const f of b.restoreBackup(path.resolve(positionals[0]), v.out!, v.auth ?? null)) console.log(`restored ${f}`);
+      console.log("previous files kept as *.before-restore-<time>; start the server now");
+    } else if (v.verify) {
+      const m = b.verifyBackup(path.resolve(v.verify));
+      console.log(`ok: ${m.createdAt}, schema ${m.schema}, ${Object.entries(m.counts).map(([t, n]) => `${t} ${n}`).join(", ")}`);
+    } else {
+      if (!v.dir) fail("--dir (or BACKUP_DIR) is required");
+      if (v.list) {
+        for (const n of b.listBackups(v.dir)) console.log(path.join(v.dir, n));
+      } else {
+        const { openDb } = await import("./db.js");
+        const db = openDb(path.join(v.out!, "minutes.db"));
+        try { console.log(b.backupNow(db, v.dir, v.auth ?? null).path); } finally { db.close(); }
+      }
+    }
+    process.exit(0);
+  } catch (e) {
+    console.error(`${process.argv[2]} failed: ${(e as Error).message}`);
+    process.exit(1);
+  }
+}
+
 if (process.argv[2] === "serve") {
   const env = process.env;
   const { values: v } = parseArgs({
@@ -179,6 +224,11 @@ if (process.argv[2] === "serve") {
       preflightMs: n("CAPTURE_LOGIN_PREFLIGHT_H", env.CAPTURE_LOGIN_PREFLIGHT_H ?? "2", 0) * 3_600_000,
       notifyUrl: env.CAPTURE_NOTIFY_URL || null,
     },
+    backup: env.BACKUP_DIR ? {
+      dir: env.BACKUP_DIR,
+      keepDays: n("BACKUP_KEEP_DAYS", env.BACKUP_KEEP_DAYS ?? "14", 1),
+      atHour: Math.min(n("BACKUP_HOUR", env.BACKUP_HOUR ?? "3", 0), 23),
+    } : null,
   }, entry));
 }
 

@@ -22,6 +22,24 @@ spec:
     requests:
       storage: 200Gi   # ~0.6 GB per meeting hour, plus ~5 GB of models
 ---
+# Nightly backups of minutes.db and the saved Zoom login (#31), 14 days.
+# CephFS, not another RBD image: a different Ceph pool and filesystem from
+# `data`, and ReadWriteMany, so the restore pod (restore.sh) can read it
+# while the server pod still exists. Holds live session tokens: mounted
+# only into the capture container, never served. After the first apply,
+# set its PV to Retain like `data` (README).
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: backups
+  namespace: minutes
+spec:
+  accessModes: [ReadWriteMany]
+  storageClassName: csi-cephfs-sc
+  resources:
+    requests:
+      storage: 1Gi   # a backup is the database (KBs to MBs) + a ~10 KB login
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -60,12 +78,14 @@ spec:
             - -c
             - >-
               mkdir -p /data/recordings /data/models/hf /data/models/torch /data/models/cache /data/auth &&
+              chown 1000:1000 /backups && chmod 700 /backups &&
               { [ -s /data/auth/zoom-auth.json ] || [ ! -f /seed/zoom-auth.json ] || cp /seed/zoom-auth.json /data/auth/; } &&
               chown -R 1000:1000 /data/recordings /data/auth && chown 1000:1000 /data/models /data/models/* &&
               chmod 700 /data/auth && chmod -f 600 /data/auth/* || true
           volumeMounts:
             - { name: data, mountPath: /data }
             - { name: seed, mountPath: /seed, readOnly: true }
+            - { name: backups, mountPath: /backups }
       containers:
         - name: capture
           image: ghcr.io/langfordogsociety/minutes:main
@@ -79,6 +99,8 @@ spec:
               valueFrom: { secretKeyRef: { name: minutes, key: CAPTURE_NOTIFY_URL, optional: true } }
             - name: CAPTURE_EMAIL
               valueFrom: { secretKeyRef: { name: minutes, key: CAPTURE_EMAIL, optional: true } }
+            # Nightly after 03:00 local, kept 14 days (BACKUP_KEEP_DAYS).
+            - { name: BACKUP_DIR, value: /backups }
           resources:
             # x264 1080p30 + Chromium per meeting; two overlapping captures fit.
             # Requests are what's free to reserve on k3s-04; limits use its idle cores.
@@ -90,6 +112,7 @@ spec:
           volumeMounts:
             - { name: data, mountPath: /recordings, subPath: recordings }
             - { name: data, mountPath: /auth, subPath: auth }
+            - { name: backups, mountPath: /backups }
             - { name: shm, mountPath: /dev/shm }
         - name: transcriber
           image: ghcr.io/langfordogsociety/minutes-transcriber:main
@@ -117,6 +140,8 @@ spec:
       volumes:
         - name: data
           persistentVolumeClaim: { claimName: data }
+        - name: backups
+          persistentVolumeClaim: { claimName: backups }
         - name: seed
           secret: { secretName: minutes-zoom-auth, optional: true, defaultMode: 0400 }
         - name: shm

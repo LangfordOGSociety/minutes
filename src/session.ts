@@ -20,7 +20,7 @@ import { chromium, type Browser } from "playwright";
 import type { Job } from "./jobs.js";
 import { platformFor } from "./platforms/registry.js";
 import { SIGNED_IN, saveStorageState } from "./login.js";
-import { TIMEOUT, logger, withTimeout } from "./util.js";
+import { TIMEOUT, logger, notify, withTimeout } from "./util.js";
 
 const log = logger("session");
 
@@ -143,15 +143,7 @@ export class SessionKeeper {
     return this.get();
   }
 
-  private async notify(text: string): Promise<void> {
-    if (!this.o.notifyUrl) return;
-    try {
-      await fetch(this.o.notifyUrl, {
-        method: "POST", body: text, headers: { "Content-Type": "text/plain", Title: "minutes" },
-        signal: AbortSignal.timeout(10_000),
-      });
-    } catch (e) { log.warn("notification failed", e); }
-  }
+  private notify(text: string): Promise<void> { return notify(this.o.notifyUrl, text); }
 
   /** Only platforms that use the saved login (Zoom) need it kept alive. */
   private loginJobs(): Job[] {
