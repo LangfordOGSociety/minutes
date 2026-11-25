@@ -19,19 +19,21 @@ describe("http: accounts and permissions", () => {
   });
   after(async () => { for (const f of cleanups.reverse()) await f(); });
 
-  it("signed out: recordings yes, the capture page and job APIs no", async () => {
+  it("signed out: the public site yes, the admin page and APIs no", async () => {
     const c = new Client(base);
     assert.deepEqual((await c.get("/api/me")).json, { user: null, setupNeeded: true });
-    const page = await c.get("/");
+    assert.equal((await c.get("/")).status, 200);
+    const page = await c.get("/admin");
     assert.equal(page.status, 302);
-    assert.equal(page.headers.get("location"), "/login?next=%2F");
+    assert.equal(page.headers.get("location"), "/login?next=%2Fadmin");
     assert.equal((await c.get("/login")).status, 200);
     assert.equal((await c.get("/api/recordings")).status, 200);
-    assert.equal((await c.get("/api/info")).status, 200);
-    assert.equal((await c.get("/api/jobs")).status, 401);
-    assert.equal((await c.get("/api/session")).status, 401);
-    assert.equal((await c.post("/api/jobs", { link: LINK, start: inDays(1) })).status, 401);
-    assert.equal((await c.post("/api/session/check")).status, 401);
+    assert.equal((await c.get("/api/admin/info")).status, 401);
+    assert.equal((await c.get("/api/admin/recordings")).status, 401);
+    assert.equal((await c.get("/api/admin/jobs")).status, 401);
+    assert.equal((await c.get("/api/admin/session")).status, 401);
+    assert.equal((await c.post("/api/admin/jobs", { link: LINK, start: inDays(1) })).status, 401);
+    assert.equal((await c.post("/api/admin/session/check")).status, 401);
   });
 
   it("admin: one-time password, forced change, then everything", async () => {
@@ -44,20 +46,20 @@ describe("http: accounts and permissions", () => {
     assert.match(r.setCookie!, /^__Host-minutes_session=[A-Za-z0-9_-]{43}; Path=\/; HttpOnly; SameSite=Lax; Secure; Max-Age=1209600$/);
 
     // Nothing else until the password is changed.
-    assert.deepEqual((await c.get("/api/jobs")).json, { error: "change your password first" });
-    assert.equal((await c.get("/")).headers.get("location"), "/account?denied=1");
+    assert.deepEqual((await c.get("/api/admin/jobs")).json, { error: "change your password first" });
+    assert.equal((await c.get("/admin")).headers.get("location"), "/account?denied=1");
     assert.equal((await c.post("/api/account/password", { current: "wrong", password: "a brand new password" })).status, 403);
     assert.equal((await c.post("/api/account/password", { current: "one-time-pass", password: "short" })).status, 400);
     const ch = await c.post("/api/account/password", { current: "one-time-pass", password: "a brand new password" });
     assert.equal(ch.status, 200);
     assert.equal(ch.json.user.mustChangePassword, false);
 
-    assert.equal((await c.get("/")).status, 200);
-    assert.equal((await c.get("/api/jobs")).status, 200);
-    const add = await c.post("/api/jobs", { link: LINK, start: inDays(1), slug: "council-x" });
+    assert.equal((await c.get("/admin")).status, 200);
+    assert.equal((await c.get("/api/admin/jobs")).status, 200);
+    const add = await c.post("/api/admin/jobs", { link: LINK, start: inDays(1), slug: "council-x" });
     assert.equal(add.status, 201);
     assert.equal(add.json.link, undefined);
-    assert.equal((await c.get("/api/session")).status, 200);
+    assert.equal((await c.get("/api/admin/session")).status, 200);
 
     // Old password is gone; new one works.
     assert.equal((await new Client(base).login("admin@example.com", "one-time-pass")).status, 401);
@@ -65,7 +67,7 @@ describe("http: accounts and permissions", () => {
 
     assert.equal((await c.post("/api/logout")).status, 200);
     assert.equal(c.cookie, "");
-    assert.equal((await c.get("/api/jobs")).status, 401);
+    assert.equal((await c.get("/api/admin/jobs")).status, 401);
   });
 
   it("a user account can watch but not run captures", async () => {
@@ -73,9 +75,9 @@ describe("http: accounts and permissions", () => {
     const c = new Client(base);
     assert.equal((await c.login("viewer@example.com", "viewer password")).status, 200);
     assert.equal((await c.get("/api/recordings")).status, 200);
-    assert.equal((await c.get("/api/jobs")).status, 403);
-    assert.equal((await c.post("/api/jobs", { link: LINK, start: inDays(1) })).status, 403);
-    assert.equal((await c.get("/")).headers.get("location"), "/account?denied=1");
+    assert.equal((await c.get("/api/admin/jobs")).status, 403);
+    assert.equal((await c.post("/api/admin/jobs", { link: LINK, start: inDays(1) })).status, 403);
+    assert.equal((await c.get("/admin")).headers.get("location"), "/account?denied=1");
     app.accounts.setDisabled("viewer@example.com", true);
     assert.equal((await c.get("/api/me")).json.user, null);
   });

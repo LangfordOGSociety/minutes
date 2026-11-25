@@ -273,6 +273,7 @@ if (process.argv[2] === "serve") {
   const entry = fileURLToPath(new URL("./index.js", import.meta.url));
   process.exit(await serve({
     host: v.host!, port: n("port", v.port, 1), tz: env.TZ!, secureCookie: env.COOKIE_SECURE !== "0",
+    trustedProxies: env.TRUSTED_PROXIES,
     out: v.out!, auth: v.auth ?? null, defaultName: v.name!,
     leadMs: n("lead-min", v["lead-min"]) * 60_000, noShowMs: n("no-show-min", v["no-show-min"]) * 60_000,
     maxConcurrent: n("max-jobs", v["max-jobs"], 1),

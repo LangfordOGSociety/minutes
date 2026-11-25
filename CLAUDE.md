@@ -47,7 +47,6 @@ captures).
   10 min), in-memory failure limits. A one-time password (`minutes user
   add|passwd`) sets must_change_password: until changed, the session has
   public capabilities only. The last active admin can't be demoted/disabled.
-- `src/pages/login.ts` /login and /account (same String.raw rules as webui).
 - `src/db.ts` `<out>/minutes.db` via `node:sqlite` (Node 24, no deps): WAL,
   numbered append-only migrations in `PRAGMA user_version`, `tx()` helper.
   Only the server opens it; capture children write their own manifest.json.
@@ -56,7 +55,7 @@ captures).
   of a meeting (`Job.meetingRef`; the API's `meetingId` is still the Zoom
   number). Scheduling by hand creates both. Link/start edits go through
   `Scheduler.updateMeeting()`, which copies them to attempts that haven't
-  launched. `retry()` (`POST /api/jobs/:id/retry`, "Record again") adds an
+  launched. `retry()` (`POST /api/admin/jobs/:id/retry`, "Record again") adds an
   attempt in `<slug>-2`, `-3`... starting now or at the meeting's time.
 - `src/jobs.ts` scheduler: `jobs` table (old jobs.json imported once, kept
   as jobs.json.migrated), mirrors running/stopping jobs to `active.json`
@@ -65,7 +64,7 @@ captures).
   via DISPLAY / CAPTURE_SINK / PULSE_SINK. Never touches the default source.
   Links are restricted to *.zoom.us or bare IDs; the meeting password never
   leaves the server (API returns meetingId only).
-  Scheduled/queued jobs can be edited (`PATCH /api/jobs/:id`, Edit button):
+  Scheduled/queued jobs can be edited (`PATCH /api/admin/jobs/:id`, Edit button):
   blank fields keep their value (the page never has the link, so a blank
   link means "keep"), all fields validated before any is applied, refused
   once the job starts launching.
@@ -89,9 +88,19 @@ captures).
   never throw out of the timer. `minutes backup` / `minutes restore`
   (restore copies first, then renames, old files kept as
   `*.before-restore-<time>`). k8s: `backups` CephFS PVC, `restore.sh`.
-- `src/webui.ts` the page, as a String.raw template: its script must not use
-  backticks or dollar-brace. All data goes in via textContent; build children
-  with `fill()`, not `replaceChildren()` (which renders a null arg as "null").
+- `src/pages/` the pages, as String.raw templates: their scripts must not
+  use backticks or dollar-brace. All data goes in via textContent; build
+  children with `fill()`, not `replaceChildren()` (which renders a null arg
+  as "null"). `common.ts` (CSS, helpers, replay player, live transcript)
+  is pasted into `public.ts` (`/`) and `admin.ts` (`/admin`); `login.ts`.
+  Served with a CSP of their script's sha256 (net.ts `pageCsp`), so no
+  eval and no inline handlers: attach listeners in the script.
+- `src/recordings.ts` recordings on disk, admin view and public view.
+  Public = a job made it, its meeting is public and not cancelled, video or
+  live. `publicFiles()` is the only list /media serves from (never
+  manifest.json: it holds the link and passcode).
+- `src/net.ts` TRUSTED_PROXIES (X-Forwarded-For/-Proto believed only from
+  those), security headers, page CSP.
 - `src/timeline.ts` active speaker + Zoom captions: appended per change to
   `speakers.jsonl` / `captions.jsonl` while recording, then mapped onto the
   stitched clock as `<slug>.speakers.json`, `<slug>.zoom-captions.{json,vtt}`.

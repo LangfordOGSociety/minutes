@@ -1,44 +1,58 @@
 /**
- * Web interface: schedule meetings, watch captures, replay recordings.
+ * Web interface: the public site, the capture admin, sign-in.
  *
  * node:http only (no runtime deps beyond playwright). Routes:
- *   GET    /                       the page (src/webui.ts)
- *   GET    /api/info               server timezone etc. for the form
- *   GET    /api/jobs               scheduled / running / finished captures
- *   POST   /api/jobs               {link, start, slug?, name?}
- *   PATCH  /api/jobs/:id           edit a scheduled capture {link?, start?, slug?, name?}
- *   DELETE /api/jobs/:id           cancel, or stop a running capture
- *   POST   /api/jobs/:id/retry     another attempt at a finished capture's meeting
- *   GET    /api/jobs/:id/screen    PNG of what the bot's display shows now
- *   GET    /api/jobs/:id/log       tail of that capture's log
- *   GET    /api/session            saved Zoom login: ok|expired|missing|error, last check
- *   POST   /api/session/check      check (and refresh) the saved login now
- *   GET    /api/recordings         every <out>/<slug>/manifest.json, summarized
- *   GET    /media/:slug/:file      video and stills, with Range support
- *   GET    /login, /account        sign in, change password (src/pages/login.ts)
- *   GET    /api/status?within=45   busy: a capture running or due (the deploy guard)
- *   GET    /api/me                 who is signed in, and what they may do
- *   POST   /api/login              {email, password}; sets the session cookie
- *   POST   /api/logout
- *   POST   /api/account/password   {current, password}
  *
- * Every route needs a capability (accounts.ts ROLE_CAPS): the capture page
- * and job/session APIs are admin only; recordings and media are "watch",
- * which everyone has. Accounts are made with `minutes user add`.
+ * Public (anyone; capability "watch"):
+ *   GET    /                         published recordings, live transcripts (pages/public.ts)
+ *   GET    /api/recordings           published recordings, public fields only
+ *   GET    /media/:slug/:file        a published recording's video, subtitles, transcript, live draft
+ *   GET    /api/status?within=45     busy: a capture running or due (the deploy guard); counts only
+ *
+ * Accounts:
+ *   GET    /login, /account          sign in, change password (pages/login.ts)
+ *   GET    /api/me                   who is signed in, and what they may do
+ *   POST   /api/login                {email, password}; sets the session cookie
+ *   POST   /api/logout
+ *   POST   /api/account/password     {current, password}
+ *
+ * Admin (admin.view to read, admin.manage to change). All under /admin and
+ * /api/admin, so a proxy can keep them off the internet by path:
+ *   GET    /admin                    the capture page (pages/admin.ts)
+ *   GET    /admin/media/:slug/:file  any recording's files, incl. manifest.json and parts
+ *   GET    /api/admin/info           timezone, tzdata, lead time
+ *   GET    /api/admin/recordings     every recording, incl. failed attempts
+ *   GET    /api/admin/jobs           scheduled / running / finished captures
+ *   POST   /api/admin/jobs           {link, start, slug?, name?, email?}
+ *   PATCH  /api/admin/jobs/:id       edit a scheduled capture
+ *   DELETE /api/admin/jobs/:id       cancel, or stop a running capture
+ *   POST   /api/admin/jobs/:id/retry another attempt at a finished capture's meeting
+ *   GET    /api/admin/jobs/:id/screen  PNG of what the bot's display shows now
+ *   GET    /api/admin/jobs/:id/log   tail of that capture's log
+ *   GET    /api/admin/session        saved Zoom login state
+ *   POST   /api/admin/session/check  check (and refresh) the saved login now
+ *
+ * Hardening: security headers on everything, a CSP with the pages' script
+ * hashes, writes only from this origin with a JSON body, X-Forwarded-* only
+ * from TRUSTED_PROXIES, caps on URL, header and body size and on how long a
+ * request may take to arrive.
  */
 import { execFile } from "node:child_process";
-import { createReadStream, existsSync, openSync, readFileSync, readSync, closeSync, readdirSync, statSync } from "node:fs";
+import { closeSync, createReadStream, existsSync, openSync, readSync, statSync } from "node:fs";
 import http from "node:http";
 import path from "node:path";
 import { Accounts, AccountError, FailureLimiter, ROLE_CAPS, SESSION_MAX_AGE_S, can, type Capability, type User } from "./accounts.js";
-import { LOGIN_PAGE } from "./pages/login.js";
+import { NightlyBackup, type NightlyOpts } from "./backup.js";
 import { openDb } from "./db.js";
-import { platformFor } from "./platforms/registry.js";
 import { BadRequest, Scheduler, type Job, type SchedulerOpts } from "./jobs.js";
+import { Proxies, SECURITY_HEADERS, pageCsp } from "./net.js";
+import { ADMIN_PAGE } from "./pages/admin.js";
+import { LOGIN_PAGE } from "./pages/login.js";
+import { PUBLIC_PAGE } from "./pages/public.js";
+import { platformFor } from "./platforms/registry.js";
+import { FILE_RE, listRecordings, publicFiles, toPublic } from "./recordings.js";
 import { SessionKeeper, type KeeperOpts } from "./session.js";
 import { SLUG_RE, logger, notify } from "./util.js";
-import { NightlyBackup, type NightlyOpts } from "./backup.js";
-import { PAGE } from "./webui.js";
 
 const log = logger("web");
 
@@ -47,8 +61,10 @@ export interface ServeOpts extends Omit<SchedulerOpts, "entry"> {
   port: number;
   tz: string;
   /** Mark the session cookie Secure (and use the __Host- prefix). Off only
-   *  for plain-http development on a non-localhost address. */
+   *  for plain-http development. */
   secureCookie: boolean;
+  /** Comma-separated IPs/CIDRs whose X-Forwarded-For/-Proto are believed. */
+  trustedProxies?: string;
   session: Omit<KeeperOpts, "auth" | "out" | "leadMs">;
   /** Nightly backups; null = off. */
   backup: Omit<NightlyOpts, "auth" | "notifyUrl"> | null;
@@ -63,7 +79,7 @@ const MEDIA_TYPES: Record<string, string> = {
   ".srt": "application/x-subrip; charset=utf-8",
   ".txt": "text/plain; charset=utf-8",
 };
-const FILE_RE = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+const MAX_URL = 2048;
 
 function send(res: http.ServerResponse, status: number, body: unknown, headers: Record<string, string> = {}): void {
   const isText = typeof body === "string" || Buffer.isBuffer(body);
@@ -71,7 +87,6 @@ function send(res: http.ServerResponse, status: number, body: unknown, headers: 
   res.writeHead(status, {
     "Content-Type": isText ? "text/plain; charset=utf-8" : "application/json",
     "Cache-Control": "no-store",
-    "X-Content-Type-Options": "nosniff",
     ...headers,
   });
   res.end(data);
@@ -79,6 +94,7 @@ function send(res: http.ServerResponse, status: number, body: unknown, headers: 
 
 function readBody(req: http.IncomingMessage, limit = 16 * 1024): Promise<string> {
   return new Promise((resolve, reject) => {
+    if (Number(req.headers["content-length"] ?? 0) > limit) { reject(new BadRequest("request too large", 413)); return; }
     let size = 0;
     const chunks: Buffer[] = [];
     req.on("data", (c: Buffer) => {
@@ -105,16 +121,16 @@ export function safeNext(v: string | null): string {
   return v && /^\/(?![/\\])[^\s]*$/.test(v) ? v : "/";
 }
 
-/** Writes must come from this page: a cross-site form or fetch can't set a
- *  JSON content type without a preflight we never answer, and the Origin,
- *  when present, has to be us. */
-/** A job as the page sees it: never the link (it can hold the passcode) or
- *  the email, only the meeting ID and whether an email is set. */
-function publicJob(j: Job) {
+/** A job as the admin page sees it: never the link (it can hold the
+ *  passcode) or the email, only the meeting ID and whether an email is set. */
+function adminJob(j: Job) {
   const { link, email, ...rest } = j;
   return { ...rest, meetingId: platformFor(link)?.publicId(link) ?? "?", hasEmail: !!email };
 }
 
+/** Writes must come from our own pages: a cross-site form or fetch can't
+ *  set a JSON content type without a preflight we never answer, and the
+ *  Origin, when present, has to be us. */
 function sameOrigin(req: http.IncomingMessage): boolean {
   const origin = req.headers.origin;
   if (!origin) return true;
@@ -136,67 +152,6 @@ function tail(file: string, bytes = 64 * 1024): string {
   } finally {
     closeSync(fd);
   }
-}
-
-interface Recording {
-  slug: string;
-  scheduledStart: string | null;
-  outcome: string;
-  active: boolean;
-  video: string | null;
-  videoBytes: number | null;
-  parts: { index: number; started: string; ended: string | null }[];
-  chapters: { title: string; at: number }[];
-  /** From the transcriber's transcript.status.json, if it has seen this one. */
-  transcript: { status: string; stage: string | null; progress: number | null; error: string | null } | null;
-  /** Side files that exist: subtitles, transcript, Zoom captions, speakers. */
-  files: { vtt?: string; srt?: string; txt?: string; transcript?: string; zoomCaptions?: string; speakers?: string };
-}
-
-function listRecordings(out: string, sched: Scheduler, tz: string): Recording[] {
-  const clock = new Intl.DateTimeFormat("en-CA", { timeZone: tz, hour: "2-digit", minute: "2-digit", hourCycle: "h23" });
-  const recs: Recording[] = [];
-  let names: string[] = [];
-  try { names = readdirSync(out); } catch { return recs; }
-  for (const slug of names) {
-    if (!SLUG_RE.test(slug)) continue;
-    const mf = path.join(out, slug, "manifest.json");
-    if (!existsSync(mf)) continue;
-    let m: any;
-    try { m = JSON.parse(readFileSync(mf, "utf8")); } catch { continue; }
-    const video = typeof m.output === "string" && FILE_RE.test(m.output) && existsSync(path.join(out, slug, m.output))
-      ? m.output : null;
-    const parts = Array.isArray(m.parts) ? m.parts.map((p: any) => ({ index: p.index, started: p.started, ended: p.ended })) : [];
-    // Chapter offsets: part 1 at 0, then each gap's offset (same as the MP4's chapters).
-    const gaps: any[] = Array.isArray(m.gaps) ? m.gaps : [];
-    const chapters = parts.length ? [{ title: `Part 1 (${clock.format(new Date(parts[0].started))})`, at: 0 }] : [];
-    for (const g of gaps) {
-      const p = parts.find((x: any) => x.index === g.beforePart);
-      const when = p ? clock.format(new Date(p.started)) : "?";
-      chapters.push({ title: `Part ${g.beforePart} (${when}, after ${Math.round(g.seconds)}s gap)`, at: g.atOffsetSeconds });
-    }
-    const has = (f: string) => existsSync(path.join(out, slug, f)) ? f : undefined;
-    const st = (() => { try { return JSON.parse(readFileSync(path.join(out, slug, "transcript.status.json"), "utf8")); } catch { return null; } })();
-    const files = {
-      vtt: has(`${slug}.vtt`), srt: has(`${slug}.srt`), txt: has(`${slug}.txt`),
-      transcript: has(`${slug}.transcript.json`), zoomCaptions: has(`${slug}.zoom-captions.vtt`),
-      speakers: has(`${slug}.speakers.json`),
-    };
-    recs.push({
-      slug,
-      transcript: st ? { status: String(st.status ?? "unknown"), stage: st.stage ?? null,
-        progress: typeof st.progress === "number" ? st.progress : null, error: st.error ?? null } : null,
-      files: Object.fromEntries(Object.entries(files).filter(([, v]) => v)) as Recording["files"],
-      scheduledStart: m.scheduledStart ?? null,
-      outcome: m.outcome ?? "unknown",
-      active: sched.isActive(slug),
-      video,
-      videoBytes: video ? statSync(path.join(out, slug, video)).size : null,
-      parts,
-      chapters,
-    });
-  }
-  return recs.sort((a, b) => (b.scheduledStart ?? "").localeCompare(a.scheduledStart ?? ""));
 }
 
 function serveFile(req: http.IncomingMessage, res: http.ServerResponse, file: string): void {
@@ -244,6 +199,7 @@ export interface App {
 export function createApp(o: ServeOpts, entry: string): App {
   const db = openDb(path.join(o.out, "minutes.db"));
   const accounts = new Accounts(db);
+  const proxies = new Proxies(o.trustedProxies);
   const cookieName = o.secureCookie ? "__Host-minutes_session" : "minutes_session";
   const cookieAttrs = `Path=/; HttpOnly; SameSite=Lax${o.secureCookie ? "; Secure" : ""}`;
   const failsByIp = new FailureLimiter(30, 15 * 60_000);
@@ -253,6 +209,7 @@ export function createApp(o: ServeOpts, entry: string): App {
   if (!accounts.count("admin")) {
     log.warn("no admin account yet: run `minutes user add --admin <email>` on the server to create one");
   }
+
   const sched = new Scheduler({ ...o, entry }, db);
   sched.start();
   const keeper = new SessionKeeper({ ...o.session, auth: o.auth, out: o.out, leadMs: o.leadMs }, () => sched.list());
@@ -266,16 +223,27 @@ export function createApp(o: ServeOpts, entry: string): App {
   } else {
     log.warn("no BACKUP_DIR: nightly backups are off");
   }
-  const page = PAGE.replace("__TZ__", JSON.stringify(o.tz));
-  const loginPage = LOGIN_PAGE;
 
-  const server = http.createServer(async (req, res) => {
+  const pages = Object.fromEntries(Object.entries({ public: PUBLIC_PAGE, admin: ADMIN_PAGE, login: LOGIN_PAGE }).map(([k, html]) => {
+    const body = html.replace("__TZ__", JSON.stringify(o.tz));
+    return [k, { body, csp: pageCsp(body) }];
+  })) as Record<"public" | "admin" | "login", { body: string; csp: string }>;
+  const sendPage = (res: http.ServerResponse, p: { body: string; csp: string }) =>
+    send(res, 200, p.body, { "Content-Type": "text/html; charset=utf-8", "Content-Security-Policy": p.csp });
+
+  const publicRecordings = () => listRecordings(o.out, sched, o.tz).filter((r) => r.public).map(toPublic);
+
+  const server = http.createServer({ maxHeaderSize: 16 * 1024, requestTimeout: 30_000, headersTimeout: 15_000 }, async (req, res) => {
+    for (const [k, v] of Object.entries(SECURITY_HEADERS)) res.setHeader(k, v);
     try {
+      if ((req.url ?? "").length > MAX_URL) return send(res, 414, "URL too long");
+      if (proxies.https(req)) res.setHeader("Strict-Transport-Security", "max-age=15552000");
       const url = new URL(req.url ?? "/", "http://x");
-      const parts = url.pathname.split("/").filter(Boolean).map(decodeURIComponent);
+      let parts: string[];
+      try { parts = url.pathname.split("/").filter(Boolean).map(decodeURIComponent); } catch { return send(res, 400, "bad URL"); }
       const method = req.method ?? "GET";
       const read = method === "GET" || method === "HEAD";
-      const ip = req.socket.remoteAddress ?? "?";
+      const ip = proxies.clientIp(req);
 
       // Who's asking. A user who must change their password can do nothing
       // else until they have.
@@ -299,150 +267,145 @@ export function createApp(o: ServeOpts, entry: string): App {
         }
         return false;
       };
+      if (!read && !sameOrigin(req)) return send(res, 403, "cross-origin request refused");
+      const jsonBody = async (): Promise<Record<string, unknown> | null> => {
+        if (!/^application\/json\b/i.test(req.headers["content-type"] ?? "")) { send(res, 415, "send JSON"); return null; }
+        try {
+          const b = JSON.parse(await readBody(req));
+          if (b && typeof b === "object" && !Array.isArray(b)) return b as Record<string, unknown>;
+        } catch (e) {
+          if (e instanceof BadRequest) throw e;
+        }
+        send(res, 400, { error: "body must be a JSON object" });
+        return null;
+      };
+      const media = (slug: string, file: string, allowed: (slug: string, file: string) => boolean) => {
+        if (!read || !SLUG_RE.test(slug) || !FILE_RE.test(file) || !allowed(slug, file)) return send(res, 404, "not found");
+        return serveFile(req, res, path.join(o.out, slug, file));
+      };
 
-      if ((url.pathname === "/login" || url.pathname === "/account") && read) {
-        return send(res, 200, loginPage, {
-          "Content-Type": "text/html; charset=utf-8",
-          "Content-Security-Policy": "default-src 'self'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src 'self' data:",
-        });
+      // --- pages ---
+      if (read && url.pathname === "/") return sendPage(res, pages.public);
+      if (read && (url.pathname === "/login" || url.pathname === "/account")) return sendPage(res, pages.login);
+      if (read && (url.pathname === "/admin" || url.pathname === "/admin/")) {
+        return allow("admin.view", true) ? sendPage(res, pages.admin) : undefined;
       }
-      if (url.pathname === "/" && read) {
-        if (!allow("admin.view", true)) return;
-        return send(res, 200, page, {
-          "Content-Type": "text/html; charset=utf-8",
-          "Content-Security-Policy": "default-src 'self'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src 'self' blob: data:; media-src 'self'",
-        });
+
+      // --- public ---
+      if (parts[0] === "media" && parts.length === 3) {
+        if (!allow("watch")) return;
+        const r = publicRecordings().find((x) => x.slug === parts[1]);
+        return media(parts[1], parts[2], (_, f) => !!r && publicFiles(r).has(f));
       }
-      if (parts[0] === "api") {
-        if (!read && !sameOrigin(req)) return send(res, 403, "cross-origin request refused");
-        const jsonBody = async (): Promise<Record<string, unknown> | null> => {
-          if (!/^application\/json\b/i.test(req.headers["content-type"] ?? "")) { send(res, 415, "send JSON"); return null; }
-          try {
-            const b = JSON.parse(await readBody(req));
-            if (b && typeof b === "object" && !Array.isArray(b)) return b as Record<string, unknown>;
-          } catch (e) {
-            if (e instanceof BadRequest) throw e;
-          }
-          send(res, 400, { error: "body must be a JSON object" });
-          return null;
-        };
+      if (parts[0] === "api" && parts[1] === "recordings" && parts.length === 2 && read) {
+        if (!allow("watch")) return;
+        return send(res, 200, publicRecordings());
+      }
+      if (parts[0] === "api" && parts[1] === "status" && parts.length === 2 && read) {
+        // For the deploy guard (scripts/deploy-guard.sh): is a capture
+        // running, queued, or starting within ?within= minutes? Counts and
+        // a start time only: no names, links or IDs.
+        const within = Math.min(Math.max(Number(url.searchParams.get("within") ?? 45) || 0, 0), 1440) * 60_000;
+        const now = Date.now();
+        const jobs = sched.list();
+        const running = jobs.filter((j) => j.status === "running" || j.status === "stopping" || j.status === "queued").length;
+        const due = jobs.filter((j) => j.status === "scheduled" && Date.parse(j.start) - now < within).map((j) => j.start).sort();
+        return send(res, 200, { busy: running > 0 || due.length > 0, running, nextStart: due[0] ?? null });
+      }
 
-        if (parts[1] === "me" && parts.length === 2 && read) {
-          return send(res, 200, { user: me(), setupNeeded: accounts.count("admin") === 0 });
+      // --- accounts ---
+      if (parts[0] === "api" && parts[1] === "me" && parts.length === 2 && read) {
+        return send(res, 200, { user: me(), setupNeeded: accounts.count("admin") === 0 });
+      }
+      if (parts[0] === "api" && parts[1] === "login" && parts.length === 2 && method === "POST") {
+        const body = await jsonBody();
+        if (!body) return;
+        const email = typeof body.email === "string" ? body.email.trim().toLowerCase().slice(0, 254) : "";
+        const wait = Math.max(failsByIp.blockedFor(ip), failsByAccount.blockedFor(email));
+        if (wait > 0) {
+          return send(res, 429, { error: `too many failed sign-ins; try again in ${Math.ceil(wait / 60_000)} min` },
+            { "Retry-After": String(Math.ceil(wait / 1000)) });
         }
-        if (parts[1] === "login" && parts.length === 2 && method === "POST") {
-          const body = await jsonBody();
-          if (!body) return;
-          const email = typeof body.email === "string" ? body.email.trim().toLowerCase().slice(0, 254) : "";
-          const wait = Math.max(failsByIp.blockedFor(ip), failsByAccount.blockedFor(email));
-          if (wait > 0) {
-            return send(res, 429, { error: `too many failed sign-ins; try again in ${Math.ceil(wait / 60_000)} min` },
-              { "Retry-After": String(Math.ceil(wait / 1000)) });
-          }
-          const u = await accounts.authenticate(email, typeof body.password === "string" ? body.password : "");
-          if (!u) {
-            failsByIp.fail(ip);
-            if (email) failsByAccount.fail(email);
-            log.warn(`failed sign-in from ${ip}`);
-            return send(res, 401, { error: "wrong email or password" });
-          }
-          failsByAccount.reset(email);
-          accounts.endSession(token);
-          const t = accounts.createSession(u.id, { ip, userAgent: req.headers["user-agent"] });
-          log.info(`${u.email} signed in from ${ip}`);
-          const r = u.mustChangePassword ? null : u.role;
-          return send(res, 200, { user: { email: u.email, name: u.name, role: u.role, mustChangePassword: u.mustChangePassword,
-            caps: ROLE_CAPS[r ?? "public"] } }, { "Set-Cookie": `${cookieName}=${t}; ${cookieAttrs}; Max-Age=${SESSION_MAX_AGE_S}` });
+        const u = await accounts.authenticate(email, typeof body.password === "string" ? body.password : "");
+        if (!u) {
+          failsByIp.fail(ip);
+          if (email) failsByAccount.fail(email);
+          log.warn(`failed sign-in from ${ip}`);
+          return send(res, 401, { error: "wrong email or password" });
         }
-        if (parts[1] === "logout" && parts.length === 2 && method === "POST") {
-          accounts.endSession(token);
-          return send(res, 200, { user: null }, { "Set-Cookie": `${cookieName}=; ${cookieAttrs}; Max-Age=0` });
+        failsByAccount.reset(email);
+        accounts.endSession(token);
+        const t = accounts.createSession(u.id, { ip, userAgent: req.headers["user-agent"] });
+        log.info(`${u.email} signed in from ${ip}`);
+        const r = u.mustChangePassword ? null : u.role;
+        return send(res, 200, { user: { email: u.email, name: u.name, role: u.role, mustChangePassword: u.mustChangePassword,
+          caps: ROLE_CAPS[r ?? "public"] } }, { "Set-Cookie": `${cookieName}=${t}; ${cookieAttrs}; Max-Age=${SESSION_MAX_AGE_S}` });
+      }
+      if (parts[0] === "api" && parts[1] === "logout" && parts.length === 2 && method === "POST") {
+        accounts.endSession(token);
+        return send(res, 200, { user: null }, { "Set-Cookie": `${cookieName}=; ${cookieAttrs}; Max-Age=0` });
+      }
+      if (parts[0] === "api" && parts[1] === "account" && parts[2] === "password" && parts.length === 3 && method === "POST") {
+        if (!user) return send(res, 401, { error: "sign in first" });
+        const body = await jsonBody();
+        if (!body) return;
+        if (failsByAccount.blockedFor(user.email.toLowerCase()) > 0) return send(res, 429, { error: "too many failed attempts; try again later" });
+        if (!(await accounts.authenticate(user.email, typeof body.current === "string" ? body.current : ""))) {
+          failsByAccount.fail(user.email.toLowerCase());
+          return send(res, 403, { error: "current password is wrong" });
         }
-        if (parts[1] === "account" && parts[2] === "password" && parts.length === 3 && method === "POST") {
-          if (!user) return send(res, 401, { error: "sign in first" });
-          const body = await jsonBody();
-          if (!body) return;
-          if (failsByAccount.blockedFor(user.email.toLowerCase()) > 0) return send(res, 429, { error: "too many failed attempts; try again later" });
-          if (!(await accounts.authenticate(user.email, typeof body.current === "string" ? body.current : ""))) {
-            failsByAccount.fail(user.email.toLowerCase());
-            return send(res, 403, { error: "current password is wrong" });
-          }
-          if (body.password === body.current) return send(res, 400, { error: "choose a new password" });
-          await accounts.setPassword(user.id, String(body.password ?? ""), { mustChange: false, keepSession: token });
-          log.info(`${user.email} changed their password`);
-          return send(res, 200, { user: { ...me(), mustChangePassword: false, caps: ROLE_CAPS[user.role] } });
-        }
+        if (body.password === body.current) return send(res, 400, { error: "choose a new password" });
+        await accounts.setPassword(user.id, String(body.password ?? ""), { mustChange: false, keepSession: token });
+        log.info(`${user.email} changed their password`);
+        return send(res, 200, { user: { ...me(), mustChangePassword: false, caps: ROLE_CAPS[user.role] } });
+      }
 
-        if (parts[1] === "status" && parts.length === 2 && read) {
-          // For the deploy guard (scripts/deploy-guard.sh): is a capture
-          // running, queued, or starting within ?within= minutes? Counts
-          // and a start time only: no names, links or IDs.
-          const within = Math.min(Math.max(Number(url.searchParams.get("within") ?? 45) || 0, 0), 1440) * 60_000;
-          const now = Date.now();
-          const jobs = sched.list();
-          const running = jobs.filter((j) => j.status === "running" || j.status === "stopping" || j.status === "queued").length;
-          const due = jobs.filter((j) => j.status === "scheduled" && Date.parse(j.start) - now < within).map((j) => j.start).sort();
-          return send(res, 200, { busy: running > 0 || due.length > 0, running, nextStart: due[0] ?? null });
-        }
-        if (parts[1] === "info" && read) {
-          if (!allow("watch")) return;
+      // --- admin ---
+      if (parts[0] === "admin" && parts[1] === "media" && parts.length === 4) {
+        if (!allow("admin.view")) return;
+        return media(parts[2], parts[3], () => true);
+      }
+      if (parts[0] === "api" && parts[1] === "admin") {
+        if (!allow(read ? "admin.view" : "admin.manage")) return;
+        const [, , what, id, sub] = parts;
+        if (what === "info" && parts.length === 3 && read) {
           return send(res, 200, { tz: o.tz, tzdata: process.versions.tz ?? null, leadMinutes: o.leadMs / 60_000, maxConcurrent: o.maxConcurrent });
         }
-        if (parts[1] === "session") {
-          if (!allow(read ? "admin.view" : "admin.manage")) return;
-          if (parts.length === 2 && read) return send(res, 200, keeper.get());
-          if (parts[2] === "check" && parts.length === 3 && method === "POST") {
+        if (what === "recordings" && parts.length === 3 && read) return send(res, 200, listRecordings(o.out, sched, o.tz));
+        if (what === "session") {
+          if (parts.length === 3 && read) return send(res, 200, keeper.get());
+          if (id === "check" && parts.length === 4 && method === "POST") {
             if (sched.list().some((j) => j.status === "running" || j.status === "stopping")) {
               return send(res, 409, { error: "a capture is running; the login is checked after it ends" });
             }
             return send(res, 200, await keeper.check("checked from the web page"));
           }
         }
-        if (parts[1] === "recordings" && read) {
-          if (!allow("watch")) return;
-          return send(res, 200, listRecordings(o.out, sched, o.tz));
-        }
-        if (parts[1] === "jobs") {
-          if (!allow(read ? "admin.view" : "admin.manage")) return;
-          if (parts.length === 2 && read) {
-            // The invite link includes the meeting password; show the ID only.
-            return send(res, 200, sched.list().map(publicJob));
-          }
-          if (parts.length === 2 && method === "POST") {
+        if (what === "jobs") {
+          if (parts.length === 3 && read) return send(res, 200, sched.list().map(adminJob));
+          if (parts.length === 3 && method === "POST") {
             const body = await jsonBody();
             if (!body) return;
-            const job = sched.add(body);
-            return send(res, 201, publicJob(job));
+            return send(res, 201, adminJob(sched.add(body)));
           }
-          const job = parts[2] ? sched.get(parts[2]) : undefined;
+          const job = id ? sched.get(id) : undefined;
           if (!job) return send(res, 404, { error: "no such job" });
-          if (parts.length === 3 && method === "PATCH") {
+          if (parts.length === 4 && method === "PATCH") {
             const body = await jsonBody();
             if (!body) return;
-            const j = sched.update(job.id, body);
-            return send(res, 200, publicJob(j));
+            return send(res, 200, adminJob(sched.update(job.id, body)));
           }
-          if (parts.length === 3 && method === "DELETE") {
-            const j = sched.cancel(job.id);
-            return send(res, 200, publicJob(j));
-          }
-          if (parts.length === 4 && parts[3] === "retry" && method === "POST") {
-            return send(res, 201, publicJob(sched.retry(job.id)));
-          }
-          if (parts[3] === "log" && read) return send(res, 200, tail(path.join(o.out, job.slug, "capture.log")));
-          if (parts[3] === "screen" && read) {
+          if (parts.length === 4 && method === "DELETE") return send(res, 200, adminJob(sched.cancel(job.id)));
+          if (parts.length === 5 && sub === "retry" && method === "POST") return send(res, 201, adminJob(sched.retry(job.id)));
+          if (parts.length === 5 && sub === "log" && read) return send(res, 200, tail(path.join(o.out, job.slug, "capture.log")));
+          if (parts.length === 5 && sub === "screen" && read) {
             const d = sched.displayOf(job.id);
             if (!d) return send(res, 409, "not running");
             return send(res, 200, await screenshot(d, o.width, o.height), { "Content-Type": "image/png" });
           }
         }
-        return send(res, 404, { error: "not found" });
       }
-      if (parts[0] === "media" && parts.length === 3 && read && SLUG_RE.test(parts[1]) && FILE_RE.test(parts[2])) {
-        if (!allow("watch")) return;
-        return serveFile(req, res, path.join(o.out, parts[1], parts[2]));
-      }
-      return send(res, 404, "not found");
+      return send(res, 404, parts[0] === "api" ? { error: "not found" } : "not found");
     } catch (e) {
       if (e instanceof BadRequest || e instanceof AccountError) return send(res, e.status, { error: e.message });
       log.error("request failed", e);
@@ -468,7 +431,7 @@ export function createApp(o: ServeOpts, entry: string): App {
 export async function serve(o: ServeOpts, entry: string): Promise<number> {
   const app = createApp(o, entry);
   await new Promise<void>((resolve) => app.server.listen(o.port, o.host, resolve));
-  log.info(`web interface on http://${o.host}:${o.port}/ (sign in with an account; \`minutes user add\` makes one)`);
+  log.info(`web interface on http://${o.host}:${o.port}/ (admin at /admin; \`minutes user add --admin\` makes an account)`);
 
   return new Promise<number>((resolve) => {
     let stopping = false;
@@ -483,4 +446,3 @@ export async function serve(o: ServeOpts, entry: string): Promise<number> {
     }
   });
 }
-

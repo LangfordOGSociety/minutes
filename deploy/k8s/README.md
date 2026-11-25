@@ -72,8 +72,17 @@ it. After a fresh namespace, re-set the repo secret:
 - The volume's PV is `Retain` (since the move from the `zoom-capture`
   namespace, 2026-11-24, see MIGRATION.md): deleting the PVC or namespace
   keeps the data, and `minutes.yaml` binds the PVC to that PV by name.
-- Public host `minutes.emc2.build` is a temporary read-only share
-  (`public-share.yaml`, applied by hand, not in the kustomization): GET/HEAD
-  only, no capture logs, live screen or session state. Remove it once the
-  public/admin split (#5, #6) lands. The name is the DNS-only `*.emc2.build`
-  wildcard, so viewers stream straight from the homelab.
+- Public host `minutes.emc2.build` (`public.yaml`, #6): the public site
+  (published recordings, transcripts, live drafts, sign-in). `/admin` and
+  `/api/admin` aren't routed there; admin is on the LAN host only. Rate
+  limited (20/s, burst 100). The app trusts X-Forwarded-For only from the
+  pod network (`TRUSTED_PROXIES`), so sign-in limits apply per real client.
+  Switching from the old hand-applied `public-share.yaml` (once, after #6
+  deploys): delete its cert-only Ingress and Certificate, then apply:
+
+      kubectl -n minutes delete ingress minutes-public-share
+      kubectl -n minutes delete certificate minutes-public-tls
+      kubectl apply -k deploy/k8s   # or setup.sh
+
+  The new `minutes-public` Certificate reuses the `minutes-public-tls`
+  secret, so TLS doesn't drop.

@@ -121,8 +121,21 @@ Schedule meetings, watch a capture live, and replay recordings in a browser:
       minutes serve --auth /auth/zoom-auth.json
     docker exec minutes node /app/dist/index.js user add --admin you@example.com
 
-The last command prints a one-time password. Open http://127.0.0.1:8080/,
+The last command prints a one-time password. Open http://127.0.0.1:8080/admin,
 sign in, and choose your own password.
+
+The site has two halves:
+
+- **`/`, public**: published recordings with their transcripts, and the
+  live draft transcript of a meeting being recorded. No join links, meeting
+  IDs, bot screen, logs, failed attempts or login state, and `/media` only
+  serves a published recording's video, subtitles and transcripts (never
+  `manifest.json`, parts or logs). A recording is published when a capture
+  job made it, its meeting is public (the default) and not cancelled, and it
+  has a video or is recording now. Share a recording as `/#<slug>`.
+- **`/admin`, admins only**: everything below. Its APIs are under
+  `/api/admin` and its files under `/admin/media`, so a proxy can keep the
+  whole admin off the internet by path (the k8s public host does).
 
 **Accounts.** Two roles: `admin` runs captures (schedule, edit, stop,
 watch the bot's screen and log, Zoom login status); `user` can sign in but,
@@ -174,9 +187,13 @@ imported on first start and kept as `jobs.json.migrated`). If the server restart
 that job is marked *interrupted* and not relaunched (it would overwrite its
 parts). Give `docker stop` time to stitch: `--stop-timeout 120`.
 
-Recordings and transcripts are open to anyone who can reach the server;
-everything else needs an admin account. Publish the port on `127.0.0.1`,
-or put TLS in front of it.
+Published recordings and transcripts are open to anyone who can reach the
+server; everything else needs an admin account. For internet exposure, put
+TLS in front and set `TRUSTED_PROXIES` to the proxy's addresses (IPs or
+CIDRs): only then is its `X-Forwarded-For` believed, for sign-in limits and
+logs. Every response carries security headers; pages get a CSP that allows
+only their own inline script (by hash). URLs over 2 KB, headers over 16 KB,
+bodies over 16 KB and requests that take over 30s to arrive are refused.
 
 ## Hardware encoding
 

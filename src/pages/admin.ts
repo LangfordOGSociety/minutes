@@ -1,0 +1,312 @@
+/**
+ * /admin: schedule and run captures, watch the bot's screen and log, the
+ * Zoom login banner, every recording (incl. failed attempts). Admin only;
+ * its APIs are under /api/admin and its files under /admin/media, so a
+ * proxy can restrict all of it by path.
+ *
+ * Kept as a TS string so `tsc` ships it in dist/. The script must not use
+ * backticks or dollar-brace: it lives inside a template literal. Server
+ * data only via textContent. __TZ__ is replaced with the server's timezone.
+ */
+import { BASE_CSS, BASE_JS, PLAYER_JS } from "./common.js";
+
+export const ADMIN_PAGE = String.raw`<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Admin · minutes</title>
+<link rel="icon" href="data:,">
+<style>
+${BASE_CSS}
+main { display: grid; grid-template-columns: minmax(320px, 420px) 1fr; gap: 20px; padding: 12px 24px 40px; align-items: start; }
+@media (max-width: 900px) { main { grid-template-columns: 1fr; padding: 12px 16px 32px; } }
+form .actions { display: flex; gap: 8px; align-items: stretch; }
+form .actions button.primary { flex: 1; }
+#editcancel { margin-top: 14px; }
+#editcancel[hidden] { display: none; }
+#login { margin: 4px 24px 0; padding: 8px 12px; border-radius: 8px; font-size: 13px; color: var(--muted);
+  display: flex; gap: 10px; align-items: center; flex-wrap: wrap; border: 1px solid transparent; }
+#login.bad { color: var(--ink); background: color-mix(in srgb, var(--bad) 12%, transparent); border-color: var(--bad); }
+#login.bad b { color: var(--bad); }
+#login button { padding: 3px 10px; font-size: 13px; }
+@media (max-width: 900px) { #login { margin: 4px 16px 0; } }
+.live img { width: 100%; border-radius: 8px; background: #000; display: block; min-height: 120px; }
+label.check { display: flex; align-items: center; gap: 8px; font-weight: normal; }
+label.check input { width: auto; margin: 0; }
+label.check[hidden] { display: none; }
+</style>
+</head>
+<body>
+<header>
+  <h1><a href="/admin">minutes</a> <small class="meta">admin</small></h1>
+  <span class="meta" id="meta"></span>
+  <span class="me" id="me"></span>
+</header>
+<div id="login" role="status"></div>
+<main>
+  <div>
+    <section>
+      <h2 id="formtitle">Schedule a meeting</h2>
+      <form id="form" autocomplete="off">
+        <label for="link">Zoom link or meeting ID</label>
+        <input id="link" name="link" required placeholder="https://us06web.zoom.us/j/123456789?pwd=...">
+        <small>Only an ID and passcode? Use https://zoom.us/j/ID?pwd=PASSCODE</small>
+        <label for="start">Start time <small id="tzlabel"></small></label>
+        <input id="start" name="start" type="datetime-local" required>
+        <label for="slug">Name <small>(folder and file name, optional)</small></label>
+        <input id="slug" name="slug" placeholder="council-2026-11-16" pattern="[A-Za-z0-9][A-Za-z0-9._\-]{0,79}">
+        <label for="name">Shown in Zoom as <small>(optional)</small></label>
+        <input id="name" name="name" placeholder="Recorder" maxlength="64">
+        <label for="email">Email <small>(optional, typed only if the host requires one; the host sees it)</small></label>
+        <input id="email" name="email" type="email" maxlength="254" placeholder="Only used if Zoom asks">
+        <label class="check" id="clearemailrow" hidden><input type="checkbox" id="clearemail" name="clearemail"> Remove the saved email</label>
+        <div class="actions">
+          <button class="primary" type="submit" id="submitbtn">Schedule capture</button>
+          <button type="button" id="editcancel" hidden>Cancel edit</button>
+        </div>
+        <div class="msg" id="formmsg" role="status"></div>
+      </form>
+    </section>
+    <section>
+      <h2>Captures</h2>
+      <div class="list" id="jobs"><div class="empty">Loading...</div></div>
+    </section>
+  </div>
+  <div>
+    <section id="viewer">
+      <h2 id="viewer-h">Recordings</h2>
+      <div id="player" hidden></div>
+      <div id="live" class="live" hidden></div>
+      <div class="list" id="recs"><div class="empty">Loading...</div></div>
+    </section>
+  </div>
+</main>
+<script>
+"use strict";
+var TZ = __TZ__;
+${BASE_JS}
+${PLAYER_JS}
+var selectedRec = null, watching = null, liveTimer = null, stopLive = null, lastJobs = [];
+var MEDIA = "/admin/media/";
+function aapi(method, url, body) { return api(method, url, body, true); }
+
+var ACTIVE = { running: 0, stopping: 1, queued: 2, scheduled: 3 };
+function renderJobs(jobs) {
+  lastJobs = jobs;
+  var box = document.getElementById("jobs");
+  fill(box);
+  var active = jobs.filter(function (j) { return j.status in ACTIVE; })
+    .sort(function (a, b) { return ACTIVE[a.status] - ACTIVE[b.status] || a.start.localeCompare(b.start); });
+  var past = jobs.filter(function (j) { return !(j.status in ACTIVE); })
+    .sort(function (a, b) { return (b.endedAt || b.start).localeCompare(a.endedAt || a.start); }).slice(0, 10);
+  if (!active.length && !past.length) { box.appendChild(el("div", { "class": "empty", text: "Nothing scheduled yet." })); return; }
+  active.concat(past).forEach(function (j) {
+    var actions = el("div", { "class": "actions" });
+    if (j.status === "running") {
+      actions.appendChild(el("button", { text: watching === j.id ? "Watching" : "Watch", on: { click: function () { watch(j.id); } } }));
+      actions.appendChild(el("button", { "class": "danger", text: "Stop", on: { click: function () {
+        if (confirm("Stop recording " + j.slug + "? What's been recorded so far is kept and stitched.")) cancel(j.id);
+      } } }));
+    } else if (j.status === "scheduled" || j.status === "queued") {
+      actions.appendChild(el("button", { text: editing && editing.id === j.id ? "Editing" : "Edit", on: { click: function () { startEdit(j); } } }));
+      actions.appendChild(el("button", { "class": "danger", text: "Cancel", on: { click: function () {
+        if (confirm("Cancel " + j.slug + "?")) cancel(j.id);
+      } } }));
+    } else if (j.status !== "cancelled" && !jobs.some(function (o) { return o.meetingRef === j.meetingRef && o.status in ACTIVE; })) {
+      actions.appendChild(el("button", { text: "Record again", on: { click: function () {
+        if (confirm("Record this meeting again? A new capture starts now (or at the meeting's time if that's still ahead), in a new folder.")) {
+          aapi("POST", "/api/admin/jobs/" + j.id + "/retry").then(refresh, function (e) { alert(e.message); });
+        }
+      } } }));
+    }
+    var sub = "Meeting " + j.meetingId + " · starts " + fmt(j.start) + " · as “" + j.name + "”" + (j.hasEmail ? " · email set" : "");
+    if (j.outcome) sub += " · outcome " + j.outcome;
+    if (j.error) sub += " · " + j.error;
+    box.appendChild(el("div", { "class": "row" + (watching === j.id || (editing && editing.id === j.id) ? " selected" : "") },
+      el("div", { "class": "title" }, pill(j.status), j.slug), actions, el("div", { "class": "sub", text: sub })));
+  });
+}
+
+function renderRecs(recs) {
+  var box = document.getElementById("recs");
+  fill(box);
+  // Attempts that never got into a meeting have nothing to replay.
+  recs = recs.filter(function (r) { return r.video || r.active || r.parts.length; });
+  if (!recs.length) { box.appendChild(el("div", { "class": "empty", text: "No recordings yet." })); return; }
+  recs.forEach(function (r) {
+    var status = r.active ? "running" : r.outcome;
+    var parts = r.parts.length + (r.parts.length === 1 ? " part" : " parts");
+    var sub = fmt(r.scheduledStart) + " · " + parts + (r.chapters.length > 1 ? " · " + (r.chapters.length - 1) + " gap(s)" : "") +
+      (r.videoBytes ? " · " + mb(r.videoBytes) : "") + (r.video ? "" : r.active ? " · recording now" : " · no video") +
+      (r.files && r.files.transcript ? " · transcript" : r.video && transcriptNote(r) ? " · " + transcriptNote(r).toLowerCase() : "") +
+      (r.public ? "" : " · not public");
+    var actions = el("div", { "class": "actions" },
+      r.video ? el("button", { text: selectedRec === r.slug ? "Playing" : "Play", on: { click: function () { playRec(r); } } }) : null);
+    box.appendChild(el("div", { "class": "row" + (selectedRec === r.slug ? " selected" : "") },
+      el("div", { "class": "title" }, pill(status), r.slug), actions, el("div", { "class": "sub", text: sub })));
+  });
+}
+
+function playRec(r) {
+  stopWatching();
+  selectedRec = r.slug;
+  var p = document.getElementById("player");
+  play(r, MEDIA, p, [el("a", { href: mediaUrl(MEDIA, r.slug, "manifest.json"), target: "_blank", text: "manifest" })]);
+  document.getElementById("viewer-h").textContent = "Replay";
+  refresh();
+  p.scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+function watch(id) {
+  selectedRec = null;
+  document.getElementById("player").hidden = true;
+  fill(document.getElementById("player"));
+  watching = id;
+  var live = document.getElementById("live");
+  var img = el("img", { alt: "What the recorder's screen shows right now" });
+  var log = el("pre", { text: "Loading log..." });
+  var j = lastJobs.find(function (x) { return x.id === id; });
+  var draft = el("div", { "class": "tlist live-t" });
+  var draftNote = el("div", { "class": "hint" });
+  fill(live,
+    el("div", { "class": "player-title" }, el("h3", { text: (j ? j.slug : "capture") + " (live)" }),
+      el("button", { text: "Close", on: { click: function () { stopWatching(); refresh(); } } })),
+    img, el("div", { "class": "hint", text: "Screen refreshes every 5 seconds. This is exactly what gets recorded." }),
+    el("h3", { "class": "live-h", text: "Live transcript (draft)" }), draft, draftNote, log);
+  live.hidden = false;
+  document.getElementById("viewer-h").textContent = "Live";
+  if (stopLive) stopLive();
+  stopLive = j ? followLive(mediaUrl(MEDIA, j.slug, "live.json"), draft, draftNote) : null;
+  function tick() {
+    var cur = lastJobs.find(function (x) { return x.id === id; });
+    if (!cur || (cur.status !== "running" && cur.status !== "stopping")) {
+      log.textContent += "\n[capture is " + (cur ? cur.status : "gone") + "]"; clearInterval(liveTimer); liveTimer = null; return;
+    }
+    fetch("/api/admin/jobs/" + id + "/screen").then(function (r) { return r.ok ? r.blob() : null; }).then(function (b) {
+      if (!b) return; var old = img.src; img.src = URL.createObjectURL(b); if (old) URL.revokeObjectURL(old);
+    }).catch(function () {});
+    aapi("GET", "/api/admin/jobs/" + id + "/log").then(function (t) {
+      var atBottom = log.scrollTop + log.clientHeight >= log.scrollHeight - 8;
+      log.textContent = t || "(no log yet)"; if (atBottom) log.scrollTop = log.scrollHeight;
+    }).catch(function () {});
+  }
+  if (liveTimer) clearInterval(liveTimer);
+  tick(); liveTimer = setInterval(tick, 5000);
+  refresh();
+}
+function stopWatching() {
+  watching = null;
+  if (liveTimer) { clearInterval(liveTimer); liveTimer = null; }
+  if (stopLive) { stopLive(); stopLive = null; }
+  var live = document.getElementById("live"); live.hidden = true; fill(live);
+  document.getElementById("viewer-h").textContent = selectedRec ? "Replay" : "Recordings";
+}
+
+var LOGIN_TEXT = { ok: "signed in", expired: "EXPIRED", missing: "MISSING", error: "couldn't check", unchecked: "not checked yet" };
+function renderLogin(s) {
+  var box = document.getElementById("login");
+  var bad = s.state === "expired" || s.state === "missing" || s.state === "error";
+  box.className = bad ? "bad" : "";
+  var when = s.checkedAt ? "checked " + ago(s.checkedAt) : "";
+  var btn = el("button", { type: "button", text: s.checking ? "Checking..." : "Check now", on: { click: function () {
+    btn.disabled = true; btn.textContent = "Checking...";
+    aapi("POST", "/api/admin/session/check").then(renderLogin, function (e) { alert(e.message); refreshLogin(); });
+  } } });
+  if (s.checking) btn.disabled = true;
+  fill(box,
+    el("span", null, "Zoom login: ", el("b", { text: LOGIN_TEXT[s.state] || s.state }), when ? " · " + when : ""),
+    bad ? el("span", { text: s.detail + (s.state === "expired" || s.state === "missing"
+      ? ". Scheduled captures will fail until you run: minutes login --auth auth/zoom-auth.json" : "") }) : null,
+    btn);
+}
+function refreshLogin() { return aapi("GET", "/api/admin/session").then(renderLogin, function () {}); }
+
+function cancel(id) { aapi("DELETE", "/api/admin/jobs/" + id).then(refresh, function (e) { alert(e.message); }); }
+
+function refresh() {
+  return Promise.all([aapi("GET", "/api/admin/jobs"), aapi("GET", "/api/admin/recordings")])
+    .then(function (d) { renderJobs(d[0]); renderRecs(d[1]); refreshLogin(); })
+    .catch(function (e) { fill(document.getElementById("jobs"), el("div", { "class": "empty", text: "Can't reach the server: " + e.message })); });
+}
+
+// "2026-11-09T19:00" for a datetime-local input, in the server's timezone.
+var fmtParts = new Intl.DateTimeFormat("en-CA", { timeZone: TZ, year: "numeric", month: "2-digit", day: "2-digit",
+  hour: "2-digit", minute: "2-digit", hourCycle: "h23" });
+function localInput(iso) {
+  var p = {};
+  fmtParts.formatToParts(new Date(iso)).forEach(function (x) { p[x.type] = x.value; });
+  return p.year + "-" + p.month + "-" + p.day + "T" + p.hour + ":" + p.minute;
+}
+
+// Edit mode reuses the schedule form. The link is never sent to the page
+// (it holds the passcode), so a blank link means "keep the current one".
+var editing = null;
+function setMode(job) {
+  var f = document.getElementById("form");
+  editing = job ? { id: job.id, start: localInput(job.start), slug: job.slug, name: job.name, hasEmail: job.hasEmail } : null;
+  document.getElementById("formtitle").textContent = job ? "Edit " + job.slug : "Schedule a meeting";
+  document.getElementById("submitbtn").textContent = job ? "Save changes" : "Schedule capture";
+  document.getElementById("editcancel").hidden = !job;
+  f.link.required = !job;
+  f.link.placeholder = job ? "Leave blank to keep meeting " + job.meetingId : "https://us06web.zoom.us/j/123456789?pwd=...";
+  // Like the link, a saved email never comes back to the page.
+  f.email.placeholder = job && job.hasEmail ? "Leave blank to keep the saved email" : "Only used if Zoom asks";
+  document.getElementById("clearemailrow").hidden = !(job && job.hasEmail);
+  f.reset();
+  if (job) { f.start.value = editing.start; f.slug.value = job.slug; f.name.value = job.name; }
+  if (lastJobs) renderJobs(lastJobs);
+}
+function startEdit(j) {
+  setMode(j);
+  var msg = document.getElementById("formmsg"); msg.className = "msg"; msg.textContent = "";
+  document.getElementById("form").scrollIntoView({ behavior: "smooth", block: "start" });
+}
+document.getElementById("editcancel").addEventListener("click", function () {
+  setMode(null); document.getElementById("formmsg").textContent = "";
+});
+
+document.getElementById("form").addEventListener("submit", function (ev) {
+  ev.preventDefault();
+  var f = ev.target, msg = document.getElementById("formmsg");
+  if (editing) {
+    // Send only what changed, so an untouched start isn't re-checked.
+    var ch = {};
+    if (f.link.value.trim()) ch.link = f.link.value;
+    if (f.start.value !== editing.start) ch.start = f.start.value;
+    if (f.slug.value.trim() && f.slug.value.trim() !== editing.slug) ch.slug = f.slug.value;
+    if (f.name.value.trim() && f.name.value.trim() !== editing.name) ch.name = f.name.value;
+    if (f.email.value.trim()) ch.email = f.email.value;
+    else if (f.clearemail.checked) ch.clearEmail = true;
+    if (!Object.keys(ch).length) { msg.className = "msg"; msg.textContent = "Nothing changed."; return; }
+    msg.className = "msg"; msg.textContent = "Saving...";
+    aapi("PATCH", "/api/admin/jobs/" + editing.id, ch).then(function (j) {
+      setMode(null);
+      msg.className = "msg ok";
+      msg.textContent = "Saved " + j.slug + ": starts " + fmt(j.start) + " as “" + j.name + "”.";
+      refresh();
+    }, function (e) { msg.className = "msg err"; msg.textContent = e.message; });
+    return;
+  }
+  var body = { link: f.link.value, start: f.start.value, slug: f.slug.value || undefined, name: f.name.value || undefined,
+    email: f.email.value.trim() || undefined };
+  msg.className = "msg"; msg.textContent = "Scheduling...";
+  aapi("POST", "/api/admin/jobs", body).then(function (j) {
+    msg.className = "msg ok";
+    msg.textContent = "Scheduled " + j.slug + " for " + fmt(j.start) + ". It joins a few minutes early.";
+    f.reset(); refresh();
+  }, function (e) { msg.className = "msg err"; msg.textContent = e.message; });
+});
+
+renderMe(document.getElementById("me"), true);
+aapi("GET", "/api/admin/info").then(function (i) {
+  document.getElementById("tzlabel").textContent = "(" + i.tz + ")";
+  document.getElementById("meta").textContent = "Times in " + i.tz + " · tzdata " + (i.tzdata || "?") +
+    " · joins " + i.leadMinutes + " min early · up to " + i.maxConcurrent + " at once";
+});
+refresh();
+setInterval(function () { if (!document.hidden) refresh(); }, 5000);
+</script>
+</body>
+</html>
+`;
