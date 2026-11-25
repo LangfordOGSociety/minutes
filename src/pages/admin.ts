@@ -35,6 +35,7 @@ form .actions button.primary { flex: 1; }
 label.check { display: flex; align-items: center; gap: 8px; font-weight: normal; }
 label.check input { width: auto; margin: 0; }
 label.check[hidden] { display: none; }
+.hint code { font-size: 12px; }
 .auditf { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 6px; margin-bottom: 10px; }
 @media (max-width: 600px) { .auditf { grid-template-columns: 1fr; } }
 .change { font-size: 13px; overflow-wrap: anywhere; }
@@ -76,6 +77,11 @@ label.check[hidden] { display: none; }
     <section>
       <h2>Captures</h2>
       <div class="list" id="jobs"><div class="empty">Loading...</div></div>
+    </section>
+    <section>
+      <h2>Users</h2>
+      <div class="list" id="users"><div class="empty">Loading...</div></div>
+      <p class="hint">New admins: <code>minutes user add --admin email</code> on the server, or promote a user here.</p>
     </section>
     <section>
       <h2>Audit log</h2>
@@ -312,6 +318,35 @@ document.getElementById("form").addEventListener("submit", function (ev) {
     f.reset(); refresh();
   }, function (e) { msg.className = "msg err"; msg.textContent = e.message; });
 });
+
+// --- users ---
+function renderUsers(users) {
+  var box = document.getElementById("users");
+  fill(box);
+  users.forEach(function (u) {
+    var actions = el("div", { "class": "actions" });
+    if (!u.self) {
+      actions.appendChild(el("button", { text: u.role === "admin" ? "Make user" : "Make admin", on: { click: function () {
+        var role = u.role === "admin" ? "user" : "admin";
+        if (confirm((role === "admin" ? "Make " + u.email + " an admin? Admins can run captures and manage users." : "Remove admin from " + u.email + "?"))) updateUser(u, { role: role });
+      } } }));
+      actions.appendChild(el("button", { "class": u.disabled ? "" : "danger", text: u.disabled ? "Enable" : "Disable", on: { click: function () {
+        if (u.disabled || confirm("Disable " + u.email + "? They're signed out everywhere and can't sign in.")) updateUser(u, { disabled: !u.disabled });
+      } } }));
+    }
+    var sub = [u.name, u.verified ? "email confirmed" : "email not confirmed", u.mustChangePassword ? "one-time password" : null,
+      u.lastLoginAt ? "last sign-in " + fmt(u.lastLoginAt) : "never signed in", u.self ? "you" : null].filter(Boolean).join(" · ");
+    box.appendChild(el("div", { "class": "row" },
+      el("div", { "class": "title" }, u.disabled ? pill("disabled") : el("span", { "class": "pill", text: u.role }), u.email),
+      actions, el("div", { "class": "sub", text: sub })));
+  });
+}
+function loadUsers() { return aapi("GET", "/api/admin/users").then(renderUsers, function () {}); }
+function updateUser(u, ch) {
+  aapi("PATCH", "/api/admin/users/" + u.id, ch).then(function () { loadUsers(); loadAudit(); }, function (e) { alert(e.message); });
+}
+loadUsers();
+setInterval(function () { if (!document.hidden) loadUsers(); }, 30000);
 
 // --- audit log ---
 var auditOlder = false, auditTimer = null;

@@ -21,7 +21,7 @@ describe("http: accounts and permissions", () => {
 
   it("signed out: the public site yes, the admin page and APIs no", async () => {
     const c = new Client(base);
-    assert.deepEqual((await c.get("/api/me")).json, { user: null, setupNeeded: true });
+    assert.deepEqual((await c.get("/api/me")).json, { user: null, setupNeeded: true, signup: false });
     assert.equal((await c.get("/")).status, 200);
     const page = await c.get("/admin");
     assert.equal(page.status, 302);

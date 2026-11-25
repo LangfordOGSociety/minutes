@@ -11,6 +11,7 @@ import type { App } from "../src/serve.js";
 import { tmpDir, type HasAfter } from "./helpers.js";
 import { startApp } from "./server.js";
 import { fixtures } from "./fixtures.js";
+import { MemoryMailer } from "./smtp.js";
 
 function skipReason(): string | false {
   if (existsSync(chromium.executablePath())) return false;
@@ -145,5 +146,81 @@ describe("public page in Chromium", { skip: skipReason() }, () => {
     assert.ok(!requests.some((p) => p.startsWith("/api/admin") || p.startsWith("/admin")), requests.join(" "));
     // Media 206s for the fake 100-byte video show up as errors; ignore those.
     assert.deepEqual(errors.filter((e) => !/media|video|MEDIA_ERR|Failed to load resource/i.test(e)), []);
+  });
+});
+
+describe("sign-up and reset in Chromium", { skip: skipReason() }, () => {
+  let browser: Browser, base: string, app: App;
+  const mailer = new MemoryMailer();
+  const cleanups: (() => unknown)[] = [];
+  before(async () => {
+    const hooks: HasAfter = { after: (fn) => cleanups.push(fn) };
+    ({ app, base } = await startApp(hooks, path.join(tmpDir(hooks), "rec"), { secureCookie: false, mailer }));
+    browser = await chromium.launch();
+  });
+  after(async () => {
+    await browser?.close();
+    for (const f of cleanups.reverse()) await f();
+  });
+
+  it("creates an account with the emailed code, then resets its password", async () => {
+    const page = await (await browser.newContext()).newPage();
+    const errors: string[] = [];
+    page.on("pageerror", (e) => errors.push(e.message));
+
+    await page.goto(base + "/login");
+    await page.click("#tosignup");
+    await page.fill("#su-email", "reader@example.com");
+    await page.fill("#su-name", "Reader");
+    await page.fill("#su-password", "reader password 1");
+    await page.fill("#su-confirm", "reader password 1");
+    await page.click("#signupform button");
+    await page.waitForSelector("#signupcodeform:not([hidden])");
+    assert.match(await page.textContent("#signupsent") ?? "", /reader@example\.com/);
+    await page.fill("#su-code", mailer.code("reader@example.com")!);
+    await page.click("#signupcodeform button");
+    await page.waitForURL(base + "/");
+    await page.waitForSelector("#me a[href='/account']");
+    assert.match(await page.textContent("#me") ?? "", /reader@example\.com/);
+    assert.doesNotMatch(await page.textContent("#me") ?? "", /confirm your email/);
+    assert.equal(app.accounts.byEmail("reader@example.com")?.role, "user");
+
+    await page.click("#me a:has-text('sign out')");
+    await page.waitForSelector("#me a:has-text('Sign in')");   // reloaded, signed out
+    await page.goto(base + "/login");
+    await page.fill("#email", "reader@example.com");
+    await page.click("#toforgot");
+    assert.equal(await page.inputValue("#fg-email"), "reader@example.com");
+    await page.click("#forgotform button");
+    await page.waitForSelector("#resetform:not([hidden])");
+    await page.fill("#rs-code", mailer.code("reader@example.com")!);
+    await page.fill("#rs-new", "reader password 2");
+    await page.fill("#rs-confirm", "reader password 2");
+    await page.click("#resetform button");
+    await page.waitForSelector("#signin:not([hidden]) #loginmsg.ok");
+    await page.fill("#password", "reader password 2");
+    await page.click("#loginform button");
+    await page.waitForURL(base + "/");
+    assert.deepEqual(errors, []);
+  });
+
+  it("the admin's Users list promotes and disables", async () => {
+    await app.accounts.create({ email: "boss@example.com", role: "admin", password: "boss password 1", verified: true });
+    const page = await (await browser.newContext()).newPage();
+    page.on("dialog", (d) => d.accept());
+    await page.goto(base + "/login?next=%2Fadmin");
+    await page.fill("#email", "boss@example.com");
+    await page.fill("#password", "boss password 1");
+    await page.click("#loginform button");
+    await page.waitForURL(base + "/admin");
+    const row = "#users .row:has-text('reader@example.com')";
+    await page.waitForSelector(row);
+    await page.click(`${row} button:has-text('Make admin')`);
+    await page.waitForSelector(`${row} button:has-text('Make user')`);
+    await page.click(`${row} button:has-text('Disable')`);
+    await page.waitForSelector(`${row} button:has-text('Enable')`);
+    assert.ok(app.accounts.byEmail("reader@example.com")?.disabledAt);
+    assert.equal(await page.isVisible("#users .row:has-text('boss@example.com') button"), false);   // not yourself
+    await page.waitForSelector("#audit .row:has-text('user.update')");
   });
 });

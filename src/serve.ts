@@ -15,6 +15,12 @@
  *   POST   /api/login                {email, password}; sets the session cookie
  *   POST   /api/logout
  *   POST   /api/account/password     {current, password}
+ *   POST   /api/signup               {email, password, name?} -> emails a code (only with mail set up)
+ *   POST   /api/signup/verify        {email, code} -> verified and signed in
+ *   POST   /api/account/verify       {code}  (signed in, not yet verified)
+ *   POST   /api/account/verify/resend
+ *   POST   /api/password/forgot      {email} -> emails a reset code (if the account exists)
+ *   POST   /api/password/reset       {email, code, password}
  *
  * Admin (admin.view to read, admin.manage to change). All under /admin and
  * /api/admin, so a proxy can keep them off the internet by path:
@@ -32,6 +38,8 @@
  *   GET    /api/admin/session        saved Zoom login state
  *   POST   /api/admin/session/check  check (and refresh) the saved login now
  *   GET    /api/admin/audit          audit log, newest first (?action, actor, target, before, limit)
+ *   GET    /api/admin/users          accounts
+ *   PATCH  /api/admin/users/:id      {role?, disabled?}
  *
  * Every admin write, and every password change, is recorded in the audit
  * log (audit.ts) with the fields it changed, redacted.
@@ -45,11 +53,12 @@ import { execFile } from "node:child_process";
 import { closeSync, createReadStream, existsSync, openSync, readSync, statSync } from "node:fs";
 import http from "node:http";
 import path from "node:path";
-import { Accounts, AccountError, FailureLimiter, ROLE_CAPS, SESSION_MAX_AGE_S, can, type Capability, type User } from "./accounts.js";
+import { Accounts, AccountError, FailureLimiter, SESSION_MAX_AGE_S, capsFor, checkEmail, checkNewPassword, type Capability, type User } from "./accounts.js";
 import { Audit, type Actor } from "./audit.js";
 import { NightlyBackup, type NightlyOpts } from "./backup.js";
 import { openDb } from "./db.js";
 import { BadRequest, Scheduler, type Job, type SchedulerOpts } from "./jobs.js";
+import type { Mailer } from "./mail.js";
 import { Proxies, SECURITY_HEADERS, pageCsp } from "./net.js";
 import { ADMIN_PAGE } from "./pages/admin.js";
 import { LOGIN_PAGE } from "./pages/login.js";
@@ -70,6 +79,10 @@ export interface ServeOpts extends Omit<SchedulerOpts, "entry"> {
   secureCookie: boolean;
   /** Comma-separated IPs/CIDRs whose X-Forwarded-For/-Proto are believed. */
   trustedProxies?: string;
+  /** Outgoing mail (mail.ts). Without it, sign-up and password reset are off. */
+  mailer?: Mailer | null;
+  /** The site's address, for links in emails. */
+  publicUrl?: string;
   session: Omit<KeeperOpts, "auth" | "out" | "leadMs">;
   /** Nightly backups; null = off. */
   backup: Omit<NightlyOpts, "auth" | "notifyUrl"> | null;
@@ -132,6 +145,20 @@ function adminJob(j: Job) {
   const { link, email, ...rest } = j;
   return { ...rest, meetingId: platformFor(link)?.publicId(link) ?? "?", hasEmail: !!email };
 }
+
+/** A user as the pages see them. */
+function meOf(u: User) {
+  return { email: u.email, name: u.name, role: u.role, mustChangePassword: u.mustChangePassword,
+    verified: !!u.emailVerifiedAt, caps: capsFor(u) };
+}
+
+/** A user as the admin's Users list shows them. */
+function adminUser(u: User) {
+  return { id: u.id, email: u.email, name: u.name, role: u.role, verified: !!u.emailVerifiedAt, disabled: !!u.disabledAt,
+    mustChangePassword: u.mustChangePassword, lastLoginAt: u.lastLoginAt, createdAt: u.createdAt };
+}
+
+const UNVERIFIED_DAYS = 7;
 
 /** What the audit log keeps of a job (redacted on the way in). */
 function jobSnap(j: Job): Record<string, unknown> {
@@ -216,8 +243,29 @@ export function createApp(o: ServeOpts, entry: string): App {
   const cookieAttrs = `Path=/; HttpOnly; SameSite=Lax${o.secureCookie ? "; Secure" : ""}`;
   const failsByIp = new FailureLimiter(30, 15 * 60_000);
   const failsByAccount = new FailureLimiter(10, 15 * 60_000);
-  const pruneTimer = setInterval(() => accounts.pruneSessions(), 3_600_000);
+  // Counted on every attempt, not only failures: these send mail.
+  const signupsByIp = new FailureLimiter(5, 3_600_000);
+  const mailsByIp = new FailureLimiter(10, 3_600_000);
+  const mailsByAccount = new FailureLimiter(3, 3_600_000);
+  const codeFailsByIp = new FailureLimiter(30, 15 * 60_000);
+  const mailer = o.mailer ?? null;
+  const site = (o.publicUrl ?? "").replace(/\/$/, "");
+  const prune = () => {
+    try {
+      accounts.pruneSessions();
+      for (const email of accounts.deleteUnverified(UNVERIFIED_DAYS)) {
+        audit.record({ id: null, label: "system" }, "user.expire", { type: "user", label: email }, { verified: false }, null);
+        log.info(`deleted an account never verified in ${UNVERIFIED_DAYS} days`);
+      }
+    } catch (e) { log.warn("pruning accounts failed", e); }
+  };
+  const pruneTimer = setInterval(prune, 3_600_000);
   pruneTimer.unref();
+  log.info(mailer ? `mail from ${mailer.from}: sign-up and password reset are on` : "no SMTP_URL: sign-up and password reset are off");
+  /** Send without failing the request; mail problems go to the log. */
+  const mail = (to: string, subject: string, text: string) =>
+    mailer!.send({ to, subject, text: text + `\n\n-- \nminutes${site ? " · " + site : ""}\nAn automatic message; replies aren't read.\n` })
+      .catch((e) => log.error("sending mail failed", e));
   if (!accounts.count("admin")) {
     log.warn("no admin account yet: run `minutes user add --admin <email>` on the server to create one");
   }
@@ -262,16 +310,17 @@ export function createApp(o: ServeOpts, entry: string): App {
       const token = cookies(req)[cookieName];
       const sess = accounts.session(token);
       const user: User | null = sess?.user ?? null;
-      const role = user && !user.mustChangePassword ? user.role : null;
+      const caps = capsFor(user);
       const actor: Actor = { id: user?.id ?? null, label: user?.email ?? "anonymous", ip };
       if (sess?.renewed) res.setHeader("Set-Cookie", `${cookieName}=${token}; ${cookieAttrs}; Max-Age=${SESSION_MAX_AGE_S}`);
-      const me = () => user ? {
-        email: user.email, name: user.name, role: user.role, mustChangePassword: user.mustChangePassword,
-        caps: ROLE_CAPS[role ?? "public"],
-      } : null;
+      const signIn = (u: User) => {
+        accounts.endSession(token);
+        const t = accounts.createSession(u.id, { ip, userAgent: req.headers["user-agent"] });
+        return { "Set-Cookie": `${cookieName}=${t}; ${cookieAttrs}; Max-Age=${SESSION_MAX_AGE_S}` };
+      };
       /** False (and the response sent) if this request may not do `cap`. */
       const allow = (cap: Capability, page = false): boolean => {
-        if (can(role, cap)) return true;
+        if (caps.includes(cap)) return true;
         if (page) {
           const to = user ? "/account?denied=1" : "/login?next=" + encodeURIComponent(url.pathname + url.search);
           res.writeHead(302, { Location: to, "Cache-Control": "no-store" }).end();
@@ -328,7 +377,7 @@ export function createApp(o: ServeOpts, entry: string): App {
 
       // --- accounts ---
       if (parts[0] === "api" && parts[1] === "me" && parts.length === 2 && read) {
-        return send(res, 200, { user: me(), setupNeeded: accounts.count("admin") === 0 });
+        return send(res, 200, { user: user && meOf(user), setupNeeded: accounts.count("admin") === 0, signup: !!mailer });
       }
       if (parts[0] === "api" && parts[1] === "login" && parts.length === 2 && method === "POST") {
         const body = await jsonBody();
@@ -347,12 +396,8 @@ export function createApp(o: ServeOpts, entry: string): App {
           return send(res, 401, { error: "wrong email or password" });
         }
         failsByAccount.reset(email);
-        accounts.endSession(token);
-        const t = accounts.createSession(u.id, { ip, userAgent: req.headers["user-agent"] });
         log.info(`${u.email} signed in from ${ip}`);
-        const r = u.mustChangePassword ? null : u.role;
-        return send(res, 200, { user: { email: u.email, name: u.name, role: u.role, mustChangePassword: u.mustChangePassword,
-          caps: ROLE_CAPS[r ?? "public"] } }, { "Set-Cookie": `${cookieName}=${t}; ${cookieAttrs}; Max-Age=${SESSION_MAX_AGE_S}` });
+        return send(res, 200, { user: meOf(u) }, signIn(u));
       }
       if (parts[0] === "api" && parts[1] === "logout" && parts.length === 2 && method === "POST") {
         accounts.endSession(token);
@@ -372,7 +417,117 @@ export function createApp(o: ServeOpts, entry: string): App {
         audit.record(actor, "account.password", { type: "user", id: user.id, label: user.email },
           { mustChangePassword: user.mustChangePassword }, { mustChangePassword: false, otherSessions: "signed out" });
         log.info(`${user.email} changed their password`);
-        return send(res, 200, { user: { ...me(), mustChangePassword: false, caps: ROLE_CAPS[user.role] } });
+        return send(res, 200, { user: meOf(accounts.get(user.id)!) });
+      }
+
+      // --- sign-up, verification, password reset (#32; need mail) ---
+      const mailRoute = parts[0] === "api" && method === "POST" && (
+        (parts[1] === "signup" && (parts.length === 2 || (parts.length === 3 && parts[2] === "verify"))) ||
+        (parts[1] === "account" && parts[2] === "verify" && (parts.length === 3 || (parts.length === 4 && parts[3] === "resend"))) ||
+        (parts[1] === "password" && parts.length === 3 && (parts[2] === "forgot" || parts[2] === "reset")));
+      if (mailRoute && !mailer) return send(res, 404, { error: "email isn't set up on this server, so accounts are made by an admin" });
+      if (mailRoute) {
+        const body = await jsonBody();
+        if (!body) return;
+        const str = (k: string) => typeof body[k] === "string" ? (body[k] as string) : "";
+        const codeWait = () => {
+          const w = codeFailsByIp.blockedFor(ip);
+          return w > 0 ? send(res, 429, { error: `too many wrong codes; try again in ${Math.ceil(w / 60_000)} min` }, { "Retry-After": String(Math.ceil(w / 1000)) }) : null;
+        };
+        const sendVerify = (u: User) => mail(u.email, `Your minutes code: ${accounts.issueCode(u.id, "verify")}`,
+          `Enter this code to confirm your email for minutes${site ? " (" + site + ")" : ""}. It works for 24 hours.\n\n` +
+          "If you didn't sign up, ignore this message: the account is deleted unless it's confirmed within 7 days.");
+
+        if (parts[1] === "signup" && parts.length === 2) {
+          const w = signupsByIp.blockedFor(ip);
+          if (w > 0) return send(res, 429, { error: `too many sign-ups from here; try again in ${Math.ceil(w / 60_000)} min` });
+          signupsByIp.fail(ip);
+          const email = checkEmail(str("email"));
+          checkNewPassword(body.password);
+          const done = () => send(res, 202, { ok: true, email });
+          // A bot filled the field people never see: look the same, do nothing.
+          if (str("website")) { log.warn(`sign-up honeypot from ${ip}`); return done(); }
+          // Same answer whether or not the address has an account; the
+          // owner of an existing one gets a note instead of a code.
+          const existing = accounts.byEmail(email);
+          if (existing) {
+            if (!existing.disabledAt && mailsByAccount.blockedFor(existing.email.toLowerCase()) === 0) {
+              mailsByAccount.fail(existing.email.toLowerCase());
+              void mail(existing.email, "You already have a minutes account",
+                "Someone (hopefully you) tried to sign up for minutes with this email, which already has an account. " +
+                `Sign in${site ? " at " + site + "/login" : ""}; if you've forgotten the password, use "Forgot password?" there.\n\n` +
+                "If it wasn't you, you can ignore this message: nothing changed.");
+            }
+            return done();
+          }
+          const u = await accounts.create({ email, name: str("name"), role: "user", password: str("password") });
+          audit.record(actor, "user.signup", { type: "user", id: u.id, label: u.email }, null, { role: u.role, name: u.name });
+          void sendVerify(u);
+          return done();
+        }
+        if (parts[1] === "signup" && parts[2] === "verify") {
+          if (codeWait()) return;
+          const u = accounts.byEmail(str("email"));
+          if (!u || u.disabledAt || u.emailVerifiedAt || !accounts.useCode(u.id, "verify", body.code)) {
+            codeFailsByIp.fail(ip);
+            return send(res, 400, { error: "that code is wrong or has expired" });
+          }
+          accounts.markVerified(u.id);
+          audit.record({ ...actor, id: u.id, label: u.email }, "user.verify", { type: "user", id: u.id, label: u.email }, { verified: false }, { verified: true });
+          const v = accounts.get(u.id)!;
+          return send(res, 200, { user: meOf(v) }, signIn(v));
+        }
+        if (parts[1] === "account" && parts[2] === "verify") {
+          if (!user) return send(res, 401, { error: "sign in first" });
+          if (user.emailVerifiedAt) return send(res, 200, { user: meOf(user) });
+          if (parts[3] === "resend") {
+            const key = user.email.toLowerCase();
+            const w = mailsByAccount.blockedFor(key);
+            if (w > 0) return send(res, 429, { error: `a code was sent recently; try again in ${Math.ceil(w / 60_000)} min` });
+            mailsByAccount.fail(key);
+            void sendVerify(user);
+            return send(res, 202, { ok: true });
+          }
+          if (codeWait()) return;
+          if (!accounts.useCode(user.id, "verify", body.code)) {
+            codeFailsByIp.fail(ip);
+            return send(res, 400, { error: "that code is wrong or has expired" });
+          }
+          accounts.markVerified(user.id);
+          audit.record(actor, "user.verify", { type: "user", id: user.id, label: user.email }, { verified: false }, { verified: true });
+          return send(res, 200, { user: meOf(accounts.get(user.id)!) });
+        }
+        if (parts[1] === "password" && parts[2] === "forgot") {
+          const email = checkEmail(str("email"));
+          // Always the same answer; mail only goes to an account that exists.
+          const w = mailsByIp.blockedFor(ip);
+          if (w > 0) return send(res, 429, { error: `too many requests from here; try again in ${Math.ceil(w / 60_000)} min` });
+          mailsByIp.fail(ip);
+          const u = accounts.byEmail(email);
+          if (u && !u.disabledAt && mailsByAccount.blockedFor(u.email.toLowerCase()) === 0) {
+            mailsByAccount.fail(u.email.toLowerCase());
+            void mail(u.email, `Your minutes password reset code: ${accounts.issueCode(u.id, "reset")}`,
+              "Enter this code to choose a new password for minutes. It works for 15 minutes, once.\n\n" +
+              "If you didn't ask for this, ignore this message: your password hasn't changed.");
+          }
+          return send(res, 202, { ok: true });
+        }
+        if (parts[1] === "password" && parts[2] === "reset") {
+          if (codeWait()) return;
+          const pw = checkNewPassword(body.password);
+          const u = accounts.byEmail(str("email"));
+          if (!u || u.disabledAt || !accounts.useCode(u.id, "reset", body.code)) {
+            codeFailsByIp.fail(ip);
+            return send(res, 400, { error: "that code is wrong or has expired" });
+          }
+          await accounts.setPassword(u.id, pw, { mustChange: false });
+          accounts.markVerified(u.id);   // they read mail sent to that address
+          failsByAccount.reset(u.email.toLowerCase());
+          audit.record({ ...actor, id: u.id, label: u.email }, "account.reset", { type: "user", id: u.id, label: u.email },
+            null, { password: "reset by emailed code", sessions: "signed out" });
+          log.info(`${u.email} reset their password`);
+          return send(res, 200, { ok: true });
+        }
       }
 
       // --- admin ---
@@ -387,6 +542,26 @@ export function createApp(o: ServeOpts, entry: string): App {
           return send(res, 200, { tz: o.tz, tzdata: process.versions.tz ?? null, leadMinutes: o.leadMs / 60_000, maxConcurrent: o.maxConcurrent });
         }
         if (what === "recordings" && parts.length === 3 && read) return send(res, 200, listRecordings(o.out, sched, o.tz));
+        if (what === "users") {
+          if (parts.length === 3 && read) return send(res, 200, accounts.list().map((u) => ({ ...adminUser(u), self: u.id === user!.id })));
+          if (parts.length === 4 && method === "PATCH") {
+            const u = id ? accounts.get(id) : undefined;
+            if (!u) return send(res, 404, { error: "no such user" });
+            const body = await jsonBody();
+            if (!body) return;
+            if (body.role !== undefined && typeof body.role !== "string") return send(res, 400, { error: "role must be a string" });
+            if (body.disabled !== undefined && typeof body.disabled !== "boolean") return send(res, 400, { error: "disabled must be true or false" });
+            if (u.id === user!.id && (body.disabled === true || (body.role !== undefined && body.role !== u.role))) {
+              return send(res, 409, { error: "you can't disable or demote yourself here; use the CLI or another admin" });
+            }
+            const before = { role: u.role, disabled: !!u.disabledAt };
+            if (typeof body.role === "string") accounts.setRole(u.email, body.role);
+            if (typeof body.disabled === "boolean") accounts.setDisabled(u.email, body.disabled);
+            const after = accounts.get(u.id)!;
+            audit.record(actor, "user.update", { type: "user", id: u.id, label: u.email }, before, { role: after.role, disabled: !!after.disabledAt });
+            return send(res, 200, adminUser(after));
+          }
+        }
         if (what === "audit" && parts.length === 3 && read) {
           const q = url.searchParams;
           const num = (k: string) => { const n = Number(q.get(k)); return Number.isInteger(n) && n > 0 ? n : undefined; };

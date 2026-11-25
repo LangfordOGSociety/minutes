@@ -148,6 +148,27 @@ them on the server:
     minutes user disable|enable <email>
     minutes user list
 
+**Sign-up** (only with mail set up): anyone can create a `user` account
+on `/login`. They get a 6-digit code by email (valid 24 hours, 5 tries)
+and are signed in once it's entered; an account never confirmed is deleted
+after 7 days, and until then it can't have API tokens. "Forgot password?"
+emails a reset code (15 minutes, once) and signs the account out
+everywhere. The answers never say whether an address has an account (an
+existing owner gets a note instead of a code). Limits: 5 sign-ups an hour
+per address, 3 mails an hour per account, 30 wrong codes per 15 min per
+address, and a hidden form field that only bots fill. Admins see every
+account on `/admin` (Users) and can promote, demote and disable them.
+
+Mail goes out over SMTP with implicit TLS:
+
+    SMTP_URL=smtps://api_token@smtp.mx.cloudflare.net:465   # user in the URL
+    SMTP_PASSWORD=<Cloudflare API token with Email Sending>
+    MAIL_FROM="minutes <minutes@emc2.build>"                 # an onboarded domain
+    PUBLIC_URL=https://minutes.emc2.build                    # for the emails
+
+`minutes mail-test you@example.com` sends a test message. Without
+`SMTP_URL`, sign-up and reset are off and admins make accounts.
+
 Every admin change (schedule, edit, cancel, stop, record again, Zoom login
 check), every password change, and every `minutes user` command lands in
 the **audit log** on the admin page: who (the account, or `cli`), from

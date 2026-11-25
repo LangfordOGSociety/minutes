@@ -143,6 +143,7 @@ function renderMe(box, admin) {
     var u = d.user;
     if (!u) { fill(box, el("a", { href: "/login?next=" + encodeURIComponent(location.pathname), text: "Sign in" })); return; }
     var links = [u.email];
+    if (!u.verified && d.signup) links.push(el("a", { href: "/account", text: "confirm your email" }));
     if (admin) links.push(el("a", { href: "/", text: "public site" }));
     else if (u.caps.indexOf("admin.view") >= 0) links.push(el("a", { href: "/admin", text: "admin" }));
     links.push(el("a", { href: "/account", text: "account" }));

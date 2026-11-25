@@ -21,6 +21,12 @@ services:
     # their own higher score, and a dead renderer is just a rejoin.
     oom_score_adj: -500
     environment:
+      # Optional: sign-up and password reset by email. Without SMTP_URL,
+      # admins make accounts (`minutes user add`). Set in .env.
+      SMTP_URL: ${SMTP_URL:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      MAIL_FROM: ${MAIL_FROM:-}
+      PUBLIC_URL: ${PUBLIC_URL:-http://127.0.0.1:8080}
       # Plain http on 127.0.0.1: the session cookie can't be Secure-only.
       COOKIE_SECURE: ${COOKIE_SECURE:-0}
       # Screenshot + every frame's HTML on each state change, in <slug>/debug/.

@@ -97,6 +97,14 @@ spec:
               valueFrom: { secretKeyRef: { name: minutes, key: CAPTURE_NOTIFY_URL, optional: true } }
             - name: CAPTURE_EMAIL
               valueFrom: { secretKeyRef: { name: minutes, key: CAPTURE_EMAIL, optional: true } }
+            # Sign-up and password-reset mail (#32), Cloudflare Email Service.
+            # Off until the secret has SMTP_URL and SMTP_PASSWORD (setup.sh).
+            - name: SMTP_URL
+              valueFrom: { secretKeyRef: { name: minutes, key: SMTP_URL, optional: true } }
+            - name: SMTP_PASSWORD
+              valueFrom: { secretKeyRef: { name: minutes, key: SMTP_PASSWORD, optional: true } }
+            - { name: MAIL_FROM, value: "minutes <minutes@emc2.build>" }
+            - { name: PUBLIC_URL, value: "https://minutes.emc2.build" }
             # Traefik runs in the pod network; only its X-Forwarded-For counts.
             - { name: TRUSTED_PROXIES, value: 10.42.0.0/16 }
             # Nightly after 03:00 local, kept 14 days (BACKUP_KEEP_DAYS).
