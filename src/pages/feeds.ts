@@ -276,8 +276,11 @@ function meetingRow(m, inQueue) {
       });
     } } }));
   }
-  var row = el("div", { "class": "row", id: (inQueue ? "q-" : "m-") + m.id },
-    el("div", { "class": "title" }, pills.length ? pills : null, m.title), actions, el("div", { "class": "sub", text: sub }), hist);
+  // el() takes children one by one, not an array.
+  var title = el("div", { "class": "title" });
+  pills.forEach(function (p) { title.appendChild(p); });
+  title.appendChild(document.createTextNode(m.title));
+  var row = el("div", { "class": "row", id: (inQueue ? "q-" : "m-") + m.id }, title, actions, el("div", { "class": "sub", text: sub }), hist);
   return row;
 }
 function msgFor(m, text) {
@@ -293,7 +296,7 @@ function loadMeetings() {
     d[1].forEach(function (m) { q.appendChild(meetingRow(m, true)); });
     if (!MEETINGS.length) box.appendChild(el("div", { "class": "empty", text: "No upcoming meetings." }));
     MEETINGS.forEach(function (m) { box.appendChild(meetingRow(m, false)); });
-  }, function () {});
+  }).catch(function (e) { fill($("meetings"), el("div", { "class": "msg err", text: "Can't show meetings: " + e.message })); });
 }
 
 function showRuns(f) {
