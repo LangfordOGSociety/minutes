@@ -77,7 +77,7 @@ export class Capture {
 
   constructor(private cfg: Config) {
     const platform = platformFor(cfg.link);
-    if (!platform) throw new Error("no platform handles that link (Zoom links or meeting IDs only for now)");
+    if (!platform) throw new Error("no platform handles that link (see the platforms in src/platforms/registry.ts)");
     this.platform = platform;
     if (!platform.methods.includes(cfg.method)) {
       throw new Error(`${platform.label} can't be captured with method "${cfg.method}" (has: ${platform.methods.join(", ")})`);
@@ -255,14 +255,16 @@ export class Capture {
       if (st === State.BLOCKED) {
         // Retrying won't help; it needs a (fresh) signed-in session.
         this.event("blocked", {
-          hint: cfg.auth
-            ? `Zoom rejected the session in ${cfg.auth}; run "minutes login" again`
-            : "Zoom requires sign-in; run \"minutes login\" and pass --auth",
+          hint: this.platform.id !== "zoom"
+            ? `${this.platform.label} refused the request (a bot check or a sign-in requirement); try again later or use another capture method`
+            : cfg.auth
+              ? `Zoom rejected the session in ${cfg.auth}; run "minutes login" again`
+              : "Zoom requires sign-in; run \"minutes login\" and pass --auth",
         });
         return "blocked";
       }
       if (st === State.INVALID) {
-        this.event("invalid_link", { hint: "Zoom says this meeting link or ID is invalid; check it" });
+        this.event("invalid_link", { hint: `${this.platform.label} says this meeting link or ID is invalid or unavailable; check it` });
         return "invalid_link";
       }
       if (st === State.DEAD) return "interrupted";

@@ -4,9 +4,10 @@
  * arbitrary site.
  */
 import type { Platform } from "./types.js";
+import { youtube } from "./youtube.js";
 import { zoom } from "./zoom.js";
 
-export const PLATFORMS: readonly Platform[] = [zoom];
+export const PLATFORMS: readonly Platform[] = [zoom, youtube];
 
 export function platformFor(link: string): Platform | undefined {
   return PLATFORMS.find((p) => p.match(link));

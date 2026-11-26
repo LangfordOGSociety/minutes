@@ -34,8 +34,11 @@ export type RecorderInput =
   | { kind: "screen"; display: string; sink: string }
   /** `args` are ffmpeg input options ending in `-i <url>` (headers,
    *  reconnect flags, ...). `copy`: remux the first video and audio stream
-   *  as they are (no encode); else encode them with the configured encoder. */
-  | { kind: "stream"; args: string[]; copy: boolean };
+   *  as they are (no encode); else encode them with the configured encoder.
+   *  `map`: the -map options when the streams come from more than one
+   *  input (YouTube serves video and audio as separate playlists); the
+   *  default is the first video and audio of input 0. */
+  | { kind: "stream"; args: string[]; copy: boolean; map?: string[] };
 
 export interface RecorderOpts {
   outdir: string;
@@ -97,7 +100,7 @@ export class Recorder {
       io = [
         ...(input.copy ? [] : pre),
         ...input.args,
-        "-map", "0:v:0?", "-map", "0:a:0?",
+        ...(input.map ?? ["-map", "0:v:0?", "-map", "0:a:0?"]),
         ...(input.copy ? ["-c", "copy"] : [...video, "-g", String(o.fps * 2), ...encodeAudio]),
       ];
     }

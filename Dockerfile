@@ -59,6 +59,22 @@ RUN set -e; \
     useradd -m -u 1000 -s /bin/bash pwuser; \
     mkdir -p /recordings; chown pwuser:pwuser /recordings
 
+# yt-dlp for the YouTube stream method: the official standalone binary
+# (bundles its own Python), pinned and sha256-checked, in its own layer so
+# bumping it is one line. YouTube changes often, so bump this first when
+# YouTube captures start failing. Check the sums against the release's
+# SHA2-256SUMS. The version in use here was run from a residential IP
+# without a JavaScript runtime (Deno); see src/platforms/youtube.ts.
+ARG TARGETARCH
+ARG YT_DLP_VERSION=2026.11.23
+ARG YT_DLP_SHA256_AMD64=249ddb058234276bc449b9cd9492aad9f133bda5923c61a9e39983ae114ef17d
+ARG YT_DLP_SHA256_ARM64=fb847a2e4a9ddc8cf5fcfb4bb7f42ba8969ecf72068def0278074f9d300bd13c
+RUN set -e; \
+    case "$TARGETARCH" in amd64) f=yt-dlp_linux; sum="$YT_DLP_SHA256_AMD64" ;; arm64) f=yt-dlp_linux_aarch64; sum="$YT_DLP_SHA256_ARM64" ;; *) echo "unsupported arch $TARGETARCH"; exit 1 ;; esac; \
+    curl -fsSL -o /usr/local/bin/yt-dlp "https://github.com/yt-dlp/yt-dlp/releases/download/${YT_DLP_VERSION}/$f"; \
+    echo "$sum  /usr/local/bin/yt-dlp" | sha256sum -c -; \
+    chmod 755 /usr/local/bin/yt-dlp
+
 # Timezone data for Node's ICU, pinned. Node 20.18 shipped tzdata 2024a,
 # which predates BC's move to permanent daylight time (2026-11-01, UTC-7),
 # so --start and chapter times came out an hour off. Node 24.22.3 bundles

@@ -26,6 +26,25 @@ captures).
   runner's `State`. `registry.ts`: link -> platform; unclaimed links are
   refused (replaces the old `*.zoom.us` check in jobs.ts). `guard.ts`:
   `mediaGuard()`, first init script of every browser platform.
+- `src/platforms/youtube.ts` (#20) YouTube live streams, method `stream`:
+  yt-dlp (pinned standalone binary in its own Dockerfile layer, `YT_DLP`
+  env, bump it first when YouTube breaks) only DESCRIBES the video
+  (`--dump-single-json`, `-f bv*[height<=?1080]+ba/b`, cap `YOUTUBE_MAX_HEIGHT`):
+  `live_status` -> State (is_upcoming WAITING, is_live IN_MEETING once HLS
+  formats exist, post_live/was_live ENDED; bot check BLOCKED; private/gone
+  INVALID; network hiccups keep the last state) and the HLS playlist URLs
+  become ffmpeg inputs (`RecorderInput.map`: YouTube serves video and audio
+  as separate playlists, and the audio one has acodec null: audio-only
+  means vcodec "none"). No Xvfb, sink or login. First part starts at the
+  playlist start (`-live_start_index 0`) only if the stream was already
+  live >2 min; later parts at the live edge. State polled 20 s waiting /
+  45 s live. NOT built: fetching the archived VOD afterwards. Verified
+  from a residential IP without Deno (2026-11-26: a real 24/7 stream,
+  state in_meeting, two HLS inputs copied into h264 1080p + aac MKV; the
+  from-start part pulled the 6 min DVR window in 14 s); NOT verified from
+  the homelab IP (bot check). Fixtures: test/fixtures/youtube
+  (trimmed real yt-dlp 2026.10.21 output). Zoom wins when an agenda has
+  both a Zoom and a YouTube link (`findLink` order).
 - `src/platforms/zoom.ts` Playwright session + the `zoom` Platform. **All Zoom-specific markers live in `MARKERS`.**
   `pageAgent()` is injected into every frame with `addInitScript`; it must stay
   self-contained (it's serialized, so no references outside the function).
