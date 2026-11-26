@@ -60,6 +60,8 @@ describe("primegov", () => {
     const nov23 = ms.find((m) => m.externalId === "904")!;
     assert.deepEqual(nov23.documents?.at(-1), { title: "Video", type: "Video", url: "https://saanich.ca.granicus.com/MediaPlayer.php?clip_id=1356" });
     assert.ok(ms.every((m) => !m.link && !m.cancelled));
+    assert.equal(nov23.streamUrl, "https://saanich.ca.granicus.com/MediaPlayer.php?clip_id=1356");
+    assert.equal(cotw.streamUrl, undefined);
     // No titles configured: every meeting, whatever its kind.
     assert.equal(toMeetings([...upcoming, ...archived], { baseUrl: SAANICH, tz: TZ, titles: primegov.validate({ baseUrl: SAANICH }).titles }).length, 6);
     // Title filter: contains, case-insensitive.

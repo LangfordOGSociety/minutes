@@ -249,6 +249,13 @@ cancelled; a run that would remove most of a feed's upcoming meetings
 (a broken page, say) changes nothing and notifies you. A meeting already
 known from another feed or scheduled by hand isn't captured twice.
 
+Every meeting on `/admin/feeds` shows whether its **join link** (what
+minutes records from) has been found yet, as the platform and meeting
+number linking to the meeting without its passcode, plus "passcode on
+file" when there is one; and whether its public **stream page** (the
+live or recorded video: Granicus player, eScribe stream, PrimeGov video)
+is known, with the link.
+
 Each meeting's history (History on `/admin/feeds`) shows every change a
 feed made and what it did to the capture: announced (first seen), moved
 to another date or time (old and new, local time), join link published,

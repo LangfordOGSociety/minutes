@@ -644,6 +644,13 @@ export const zoom: Platform = {
     return `https://zoom.us/j/${digits}` + (pc ? `?pwd=${pc[1]}` : "");
   },
 
+  /** https://zoom.us/j/<id>: opens the meeting page, asks for the
+   *  passcode itself. Never the pwd= part. */
+  publicUrl(link) {
+    const id = /(\d{9,12})/.exec(link.replace(/[\s-]/g, ""));
+    return id ? `https://zoom.us/j/${id[1]}` : undefined;
+  },
+
   /** The meeting number. The link itself carries the passcode. */
   publicId(link) {
     const m = /(\d{9,12})/.exec(link.replace(/[\s-]/g, ""));

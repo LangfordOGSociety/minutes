@@ -12,7 +12,7 @@
  *   reinstated       a cancelled meeting is back
  *   removed          missing from the feed: ONLY flagged, never cancels
  *   returned         a removed meeting is back
- *   details_changed  title, body, agenda, page, end: recorded
+ *   details_changed  title, body, agenda, page, stream page, end: recorded
  *   document_added / document_removed / document_changed
  *                    the source posted, pulled or retitled a document
  *                    (agenda, revised agenda, addendum, notice, minutes):
@@ -179,7 +179,7 @@ export class Sync implements Applier {
         changes.push(p);
       }
       const det: [string, unknown, unknown][] = [["title", ex.title, d.title], ["body", ex.body, d.body], ["agendaUrl", ex.agendaUrl, d.agendaUrl],
-        ["pageUrl", ex.pageUrl, d.pageUrl], ["end", ex.endEst, d.end?.toISOString()]];
+        ["pageUrl", ex.pageUrl, d.pageUrl], ["streamUrl", ex.streamUrl, d.streamUrl], ["end", ex.endEst, d.end?.toISOString()]];
       const diff = det.filter(([, a, b]) => b !== undefined && (a ?? null) !== b);
       if (diff.length) {
         changes.push({ kind: "details_changed", meeting: ex, detected: d, action: "none", effect: "recorded",
@@ -250,7 +250,7 @@ export class Sync implements Applier {
           m = this.meetings.create({
             feedId: feed.id, externalId: d.externalId, title: d.title.slice(0, 300), body: d.body?.slice(0, 200),
             platform: platformFor(link)?.id ?? "", link, start: d.start.toISOString(), endEst: d.end?.toISOString(),
-            agendaUrl: d.agendaUrl, pageUrl: d.pageUrl, slug: this.uniqueSlug(`${feed.slugPrefix}-${slugify(d.body || d.title)}-${localDate(d.start, this.tz)}`),
+            agendaUrl: d.agendaUrl, pageUrl: d.pageUrl, streamUrl: d.streamUrl, slug: this.uniqueSlug(`${feed.slugPrefix}-${slugify(d.body || d.title)}-${localDate(d.start, this.tz)}`),
             status: d.cancelled ? "cancelled" : "scheduled", review: p.review, duplicateOf: p.dupOf?.id, lastSeenAt: iso,
             documents: d.documents,
           }, iso);
@@ -266,6 +266,7 @@ export class Sync implements Applier {
             if (d.body !== undefined) cur.body = d.body.slice(0, 200);
             if (d.agendaUrl !== undefined) cur.agendaUrl = d.agendaUrl;
             if (d.pageUrl !== undefined) cur.pageUrl = d.pageUrl;
+            if (d.streamUrl !== undefined) cur.streamUrl = d.streamUrl;
             if (d.end) cur.endEst = d.end.toISOString();
           }
           if (p.kind !== "removed") cur.lastSeenAt = iso;

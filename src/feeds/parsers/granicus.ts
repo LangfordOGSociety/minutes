@@ -59,7 +59,7 @@ export function rowsToMeetings(rows: string[], o: { baseUrl: string; tz: string 
     const title = name.replace(/\s+on \d{4}-\d{2}-\d{2} \d{1,2}:\d{2}\s*[AP]M\b\s*(-\s*)?/i, (m, dash) => (dash ? ": " : "")).trim();
     out.push({
       externalId: createHash("sha1").update(`${name.toLowerCase()}|${start.toISOString()}`).digest("hex").slice(0, 16),
-      title, start, agendaUrl: agenda, pageUrl: watch ?? agenda,
+      title, start, agendaUrl: agenda, pageUrl: watch ?? agenda, streamUrl: watch,
       link: findLink(hrefs.join("\n")),
       cancelled: /\bcancell?ed\b/i.test(name) || undefined,
       documents: agenda ? [{ title: "Agenda", type: "Agenda", url: agenda }] : [],

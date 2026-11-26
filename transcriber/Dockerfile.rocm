@@ -27,7 +27,9 @@ RUN apt-get update \
  && apt-get install -y --no-install-recommends ffmpeg curl unzip ca-certificates \
  && rm -rf /var/lib/apt/lists/*
 
-RUN useradd -m -u 1000 app
+# Owned by app so a fresh named volume inherits writable dirs.
+RUN useradd -m -u 1000 app \
+ && mkdir -p /models/hf /models/torch /models/cache && chown -R app:app /models
 WORKDIR /app
 
 # CTranslate2 finds the ROCm runtime that came with torch (also needed for
@@ -50,9 +52,10 @@ RUN grep -vE '^(torch|torchaudio|torchvision|ctranslate2|torchcodec|triton|nvidi
  && pip install --no-cache-dir --no-deps "torchcodec==$TORCHCODEC" \
  && python -c "import ctranslate2, torch, whisperx, pyannote.audio; print('ok', torch.__version__, ctranslate2.__version__)"
 
-COPY transcribe.py bench.py ./
-COPY vocab/ ./vocab/
-RUN mkdir -p /models/hf /models/torch /models/cache && chown -R app:app /models
+# --link, after every RUN: a code change adds a small layer on top without
+# needing (or pulling) the ~7 GB of ROCm / pip layers below it.
+COPY --link transcribe.py bench.py ./
+COPY --link vocab/ ./vocab/
 USER app
 
 ENV WHISPER_DEVICE=cuda \

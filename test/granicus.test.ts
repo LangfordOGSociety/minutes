@@ -80,6 +80,8 @@ describe("granicus", () => {
         `${base}/MediaPlayer.php?view_id=1&event_id=901`, false],
       ["Committee of the Whole - CANCELLED", "2026-12-15T01:00:00.000Z", null, null, true],
     ]);
+    assert.equal(r.meetings[0].streamUrl, `${base}/MediaPlayer.php?view_id=1&event_id=901`);
+    assert.equal(r.meetings[1].streamUrl, undefined);
     // One agenda read (not the cancelled meeting's; it has none anyway), then a 304.
     assert.deepEqual(hits.map((h) => h.split("?")[0]), ["/ViewPublisher.php", "/AgendaViewer.php"]);
     const again = await granicus.fetch(c, feedContext({ tz: "UTC", label: "t", cache: ctx.cache }));

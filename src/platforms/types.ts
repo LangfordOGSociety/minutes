@@ -78,6 +78,9 @@ export interface Platform {
   normalize(link: string): string;
   /** What may be shown for this link (e.g. the meeting number). */
   publicId(link: string): string;
+  /** The link without its secret parts (e.g. no passcode), safe to show
+   *  admins; undefined if there's no such form. */
+  publicUrl?(link: string): string | undefined;
   /** A join link found in free text (an agenda, a calendar entry), as a
    *  link this platform accepts, or undefined. For feeds. */
   extractLink?(text: string): string | undefined;
