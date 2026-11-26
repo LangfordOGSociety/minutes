@@ -202,6 +202,20 @@ captures).
   only credential-less write, 192-bit token, same-origin only. Alerts are
   made from `/search` (button) or the account page; never show the token
   in the API. Audit: alert.create/delete/stop.
+- Being found: `/robots.txt` (off /admin, /api/ except /api/docs, /login,
+  /account, /embed/, /oembed; Sitemap line) and `/sitemap.xml` (home,
+  search, docs, every visible meeting with lastmod; absolute from
+  PUBLIC_URL else the Host). The meeting page's head has canonical, Open
+  Graph (+ og:image and twitter:card once there's a poster) and
+  schema.org JSON-LD: a VideoObject for a meeting with a video, else an
+  Event (EventCancelled when cancelled). The JSON has `<` escaped; the
+  ld+json block isn't an executable script, so the page CSP is unchanged.
+  `src/thumbs.ts`: a poster frame `<slug>.jpg` (ffmpeg, 5% in, max 60 s,
+  falls back to the first frame when the recorded duration overshoots) for
+  every recording with a video and none yet, made one at a time at
+  startup and every 2 min (`ServeOpts.thumbnails`, off in tests; failures
+  are not retried for an hour). Used as the player's `poster`, og:image,
+  JSON-LD thumbnailUrl, and listed by /api/v1/.../files as `thumbnail`.
 - `src/recordings.ts` recordings on disk, admin view and public view.
   Public = a job made it, its meeting is public and not cancelled, video or
   live. `publicFiles()` is the only list /media serves from (never

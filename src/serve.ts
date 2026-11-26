@@ -119,6 +119,7 @@ import { Tokens, TokenError, activeToken, type ApiToken } from "./tokens.js";
 import { Search } from "./search.js";
 import { Alerts, AlertError, type Alert } from "./alerts.js";
 import { STOP_PAGE } from "./pages/stop.js";
+import { Thumbs } from "./thumbs.js";
 import { SEARCH_PAGE } from "./pages/search.js";
 import { SLUG_RE, logger, notify } from "./util.js";
 
@@ -140,6 +141,8 @@ export interface ServeOpts extends Omit<SchedulerOpts, "entry"> {
   /** Download speed caps in bytes/second (#36; throttle.ts): all API downloads together, and each token. 0 or unset = unlimited. */
   downloadBps?: number;
   tokenDownloadBps?: number;
+  /** Make poster images for recordings that have a video and none yet (thumbs.ts). Default on; tests turn it off. */
+  thumbnails?: boolean;
   /** Who may frame /embed/<meeting> (net.ts embedAncestors): "*" (default), "none", or origins. */
   embedOrigins?: string;
   session: Omit<KeeperOpts, "auth" | "out" | "leadMs">;
@@ -153,6 +156,7 @@ const MEDIA_TYPES: Record<string, string> = {
   ".mp4": "video/mp4",
   ".mkv": "video/x-matroska",
   ".png": "image/png",
+  ".jpg": "image/jpeg",
   ".json": "application/json",
   ".vtt": "text/vtt; charset=utf-8",
   ".srt": "application/x-subrip; charset=utf-8",
@@ -336,6 +340,8 @@ export interface App {
   processAlerts(): Promise<number>;
   /** Re-read transcripts into the search index now (it also runs by itself). */
   syncSearch(force?: boolean): void;
+  /** Make any missing poster images now; resolves with how many were made. */
+  syncThumbs(): Promise<number>;
   /** Stop timers and captures, close the database. */
   close(): Promise<void>;
 }
@@ -458,6 +464,17 @@ export function createApp(o: ServeOpts, entry: string): App {
   const searchTimer = setInterval(() => syncSearch(true), 120_000);
   searchTimer.unref();
   setImmediate(() => syncSearch(true));
+
+  /** Poster images: a frame of each recording's video, made one at a time in the background. */
+  const thumbs = new Thumbs();
+  const syncThumbs = (): Promise<number> => {
+    const todo = listRecordings(o.out, sched, o.tz).filter((r) => r.video && !r.files.thumb)
+      .map((r) => ({ slug: r.slug, video: path.join(o.out, r.slug, r.video!), dest: path.join(o.out, r.slug, `${r.slug}.jpg`), duration: r.duration }));
+    return todo.length ? thumbs.run(todo).catch((e) => { log.warn("making posters failed", e); return 0; }) : Promise.resolve(0);
+  };
+  const thumbTimer = setInterval(() => { if (o.thumbnails !== false) void syncThumbs(); }, 120_000);
+  thumbTimer.unref();
+  if (o.thumbnails !== false) setImmediate(() => void syncThumbs());
 
   /** Every meeting the public may see, with what became of it (see site.ts). */
   const publicSite = (now = Date.now()) => {
@@ -583,7 +600,7 @@ export function createApp(o: ServeOpts, entry: string): App {
           const rec = e?.rec?.public ? toPublic(e.rec) : null;
           if (!e || !e.rec || !rec) return send(res, 404, { error: "no recording for that meeting" });
           const listed = ([["video", rec.video], ["subtitles", rec.files.vtt], ["subtitles-srt", rec.files.srt], ["transcript-text", rec.files.txt],
-            ["transcript-json", rec.files.transcript], ["zoom-captions", rec.files.zoomCaptions]] as [string, string | null | undefined][])
+            ["transcript-json", rec.files.transcript], ["zoom-captions", rec.files.zoomCaptions], ["thumbnail", rec.files.thumb]] as [string, string | null | undefined][])
             .filter((x): x is [string, string] => !!x[1]);
           if (seg.length === 3) {
             return send(res, 200, listed.map(([kind, name]) => ({ name, kind, bytes: statSync(path.join(o.out, e.rec!.slug, name)).size,
@@ -600,6 +617,22 @@ export function createApp(o: ServeOpts, entry: string): App {
           return serveFile(req, res, path.join(o.out, e.rec.slug, name), throttle.buckets(tokenAuth.t.id, tokenAuth.t.limits?.downloadBps));
         }
         if (!((seg[0] === "meetings" && seg.length >= 1 && seg.length <= 3) || (seg[0] === "changes" && seg.length === 1) || (seg[0] === "search" && seg.length === 1))) return send(res, 404, { error: "no such endpoint" });
+      }
+
+      // --- for search engines ---
+      if (read && url.pathname === "/robots.txt") {
+        const b = base();
+        return send(res, 200, ["User-agent: *", "Disallow: /admin", "Disallow: /api/", "Allow: /api/docs", "Disallow: /login", "Disallow: /account", "Disallow: /embed/", "Disallow: /oembed",
+          ...(b ? [`Sitemap: ${b}/sitemap.xml`] : [])].join("\n") + "\n", { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "public, max-age=3600" });
+      }
+      if (read && url.pathname === "/sitemap.xml") {
+        const b = base();
+        if (!b) return send(res, 404, "not found");
+        const urls = [{ loc: `${b}/` }, { loc: `${b}/search` }, { loc: `${b}/api/docs` },
+          ...publicSite().entries.slice(0, 40_000).map((e) => ({ loc: `${b}/m/${encodeURIComponent(e.m.slug)}`, lastmod: e.m.updatedAt }))];
+        const xml = `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n` +
+          urls.map((u) => `<url><loc>${esc(u.loc)}</loc>${"lastmod" in u && u.lastmod ? `<lastmod>${esc(u.lastmod)}</lastmod>` : ""}</url>`).join("\n") + "\n</urlset>\n";
+        return send(res, 200, xml, { "Content-Type": "application/xml; charset=utf-8", "Cache-Control": "public, max-age=3600" });
       }
 
       // --- pages ---
@@ -710,10 +743,23 @@ export function createApp(o: ServeOpts, entry: string): App {
         const when = new Intl.DateTimeFormat("en-CA", { timeZone: o.tz, dateStyle: "long" }).format(new Date(e.m.start));
         const title = `${e.m.title} (${when})`, desc = `${e.m.title}, ${when}: video, transcript and documents.`;
         const b = base(), self = `${b}/m/${encodeURIComponent(e.m.slug)}`;
+        const rec = e.rec?.public ? e.rec : undefined;
+        const img = b && rec?.files.thumb ? `${b}/media/${encodeURIComponent(rec.slug)}/${encodeURIComponent(rec.files.thumb)}` : "";
+        // Structured data (schema.org) so search engines can show the video or the event.
+        const isoDur = (s: number) => `PT${s >= 3600 ? `${Math.floor(s / 3600)}H` : ""}${Math.floor((s % 3600) / 60)}M${s % 60}S`;
+        const ld = !b ? null : e.p.hasVideo && rec?.video
+          ? { "@context": "https://schema.org", "@type": "VideoObject", name: e.m.title, description: desc, uploadDate: e.m.start, inLanguage: "en",
+              ...(rec.duration ? { duration: isoDur(rec.duration) } : {}), embedUrl: `${b}/embed/${encodeURIComponent(e.m.slug)}`,
+              contentUrl: `${b}/media/${encodeURIComponent(rec.slug)}/${encodeURIComponent(rec.video)}`, ...(img ? { thumbnailUrl: img } : {}) }
+          : { "@context": "https://schema.org", "@type": "Event", name: e.m.title, description: desc, startDate: e.m.start, ...(e.m.endEst ? { endDate: e.m.endEst } : {}),
+              eventStatus: e.m.status === "cancelled" ? "https://schema.org/EventCancelled" : "https://schema.org/EventScheduled",
+              eventAttendanceMode: "https://schema.org/OnlineEventAttendanceMode", location: { "@type": "VirtualLocation", url: self }, url: self };
         const head = [
           `<meta property="og:title" content="${esc(title)}">`, `<meta property="og:description" content="${esc(desc)}">`, `<meta property="og:type" content="video.other">`,
+          ...(img ? [`<meta property="og:image" content="${esc(img)}">`, `<meta name="twitter:card" content="summary_large_image">`] : []),
           ...(b ? [`<link rel="canonical" href="${esc(self)}">`, `<meta property="og:url" content="${esc(self)}">`,
             `<link rel="alternate" type="application/json+oembed" href="${esc(`${b}/oembed?format=json&url=${encodeURIComponent(self)}`)}" title="${esc(title)}">`] : []),
+          ...(ld ? [`<script type="application/ld+json">${JSON.stringify(ld).replace(/</g, "\\u003c")}</script>`] : []),
         ].join("\n");
         const body = pages.meeting.body.replace("__TITLE__", () => esc(title)).replace("__DESC__", () => esc(desc)).replace("__HEAD__", () => head);
         return send(res, 200, body, { "Content-Type": "text/html; charset=utf-8", "Content-Security-Policy": pageCsp(body) });
@@ -1207,13 +1253,14 @@ export function createApp(o: ServeOpts, entry: string): App {
   });
 
   return {
-    server, accounts, sched, audit, tokens, search, syncSearch, alerts, processAlerts,
+    server, accounts, sched, audit, tokens, search, syncSearch, syncThumbs, alerts, processAlerts,
     async close() {
       server.close();
       server.closeAllConnections();
       clearInterval(pruneTimer);
       closed = true;
       clearInterval(searchTimer);
+      clearInterval(thumbTimer);
       keeper.stop();
       backups?.stop();
       poller.stop();

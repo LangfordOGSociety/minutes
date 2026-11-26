@@ -92,7 +92,7 @@ export function openApi(server: string): object {
         get: {
           summary: "The files of a meeting's recording", operationId: "listFiles", parameters: [idParam],
           responses: { 200: ok({ type: "array", items: { type: "object", properties: { name: { type: "string" },
-            kind: { type: "string", enum: ["video", "subtitles", "subtitles-srt", "transcript-text", "transcript-json", "zoom-captions"] }, bytes: { type: "integer" }, url: { type: "string" } } } }), 404: err },
+            kind: { type: "string", enum: ["video", "subtitles", "subtitles-srt", "transcript-text", "transcript-json", "zoom-captions", "thumbnail"] }, bytes: { type: "integer" }, url: { type: "string" } } } }), 404: err },
         },
       },
       "/api/v1/meetings/{id}/files/{name}": {
