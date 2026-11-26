@@ -61,6 +61,11 @@ describe("escribe", () => {
     assert.equal(nov24.end?.toISOString(), "2026-11-25T01:30:00.000Z");
     assert.equal(nov24.agendaUrl, "https://pub-langford.escribemeetings.com/Meeting.aspx?Id=b3e00e65-8200-4120-b0bd-ebbdbe192c08&Agenda=Agenda&lang=English");
     assert.equal(nov24.pageUrl, nov24.agendaUrl);
+    // No HTML agenda yet (a notice PDF only): the portal's own meeting page is still the city page.
+    const bare = calendarToMeetings([{ ID: "358d6561-962f-4638-8bd8-2ad3871894bc", MeetingName: "Special Council Meeting", MeetingType: "Special Council Meeting", StartDate: "2026/12/01 17:30:00",
+      MeetingDocumentLink: [{ Type: "AdditionalDocuments", Format: ".pdf", Title: "Dial in Instructions", Url: "/FileStream.ashx?DocumentId=19549" }] }],
+      { baseUrl: "https://pub-langford.escribemeetings.com/", tz: "America/Vancouver", meetingTypes: [] })[0];
+    assert.equal(bare.pageUrl, "https://pub-langford.escribemeetings.com/Meeting.aspx?Id=358d6561-962f-4638-8bd8-2ad3871894bc&lang=English");
     assert.deepEqual(nov24.documents?.map((d) => `${d.type}: ${d.title}`), [
       "AgendaCover: Agenda Cover Page (PDF)", "Agenda: Agenda (PDF)", "Agenda: Agenda (HTML)", "Video: Video",
       "AdditionalDocuments: Postponement Notice of Council Meeting", "AdditionalDocuments: Dial in Instructions"]);
