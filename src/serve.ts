@@ -123,6 +123,7 @@ import { Search } from "./search.js";
 import { NAMES_FILE, NamesError, applyNames, cleanNames, kindOf, labelsOf, namedFile, readNames, writeNames } from "./speakers.js";
 import { Alerts, AlertError, type Alert } from "./alerts.js";
 import { Ops } from "./ops.js";
+import { prepareVocab } from "./agendavocab.js";
 import { STOP_PAGE } from "./pages/stop.js";
 import { Thumbs } from "./thumbs.js";
 import { SEARCH_PAGE } from "./pages/search.js";
@@ -481,7 +482,13 @@ export function createApp(o: ServeOpts, entry: string): App {
     titleOf: (j) => { const m = sched.meetings.get(j.meetingRef); return m && m.title !== j.slug ? m.title : j.slug; },
     platformOf: (j) => platformFor(j.link)?.label ?? "The platform",
   });
-  sched.onEvent = (e) => ops.job(e);
+  /** Leave the agenda's names for the transcriber (agendavocab.ts): when a capture starts (the live draft uses them) and again when it ends (an agenda may have been published late). */
+  const agendaVocab = (j: Job) => {
+    const m = sched.meetings.get(j.meetingRef);
+    if (!m?.agendaUrl) return;
+    prepareVocab({ dir: path.join(o.out, j.slug), agendaUrl: m.agendaUrl }).catch((e) => log.warn(`agenda vocabulary for ${j.slug} failed`, e));
+  };
+  sched.onEvent = (e) => { ops.job(e); if (e.kind === "started" || e.kind === "finished") agendaVocab(e.job); };
   const emailOperator = !!mailer && !!o.operatorEmail;
   if (emailOperator) {
     setOperatorSink((text, opts) => mailer!.send({ to: o.operatorEmail!, subject: `minutes: ${text.split("\n")[0]}`.slice(0, 150),
@@ -1097,6 +1104,10 @@ export function createApp(o: ServeOpts, entry: string): App {
           const st = rec.transcript?.status;
           if (st && st !== "done" && st !== "failed") return send(res, 409, { error: `the transcriber is already working on it (${st})` });
           if (!rec.transcript) return send(res, 409, { error: "it's already waiting for the transcriber" });
+          // The agenda may have been updated since the first pass: take its names again before the transcriber starts.
+          const job = sched.list().filter((j) => j.slug === id).at(-1);
+          const meeting = job && sched.meetings.get(job.meetingRef);
+          if (meeting?.agendaUrl) await prepareVocab({ dir: path.join(o.out, id), agendaUrl: meeting.agendaUrl }).catch(() => false);
           rmSync(path.join(o.out, id, "transcript.status.json"), { force: true });
           audit.record(actor, "transcript.redo", { type: "recording", id, label: id }, { status: st }, { status: "requested" });
           return send(res, 200, { requested: true });
