@@ -21,7 +21,7 @@
  *   ("Council Meeting" keeps "Special Council Meeting and In-camera
  *   Meeting Notice" too).
  */
-import { findLink } from "../../platforms/registry.js";
+import { findLink, isArchive } from "../../platforms/registry.js";
 import { registerParser } from "../registry.js";
 import { localDate, zonedTime } from "../time.js";
 import { ConfigError, cfg, type DetectedMeeting, type FeedParser, type MeetingDocument } from "../types.js";
@@ -127,7 +127,15 @@ export const primegov: FeedParser<Config> = {
       try { m.link = findLink(textOf((await ctx.http(m.agendaHtml)).body)); read++; }
       catch (e) { ctx.log(`agenda for ${m.title}: ${(e as Error).message}`); }
     }
-    ctx.log(`${ms.length} meeting(s), ${read} agenda(s) read`);
+    // A meeting that's over and whose video is published on Granicus: that archived video is what can still be
+    // recorded (imported), so it is the link, in place of a Zoom link that's no use any more.
+    let imports = 0;
+    for (const m of ms) {
+      if (m.cancelled || !m.streamUrl || m.start.getTime() >= ctx.now.getTime() - 3_600_000) continue;
+      const clip = findLink(m.streamUrl);
+      if (clip && isArchive(clip)) { m.link = clip; imports++; }
+    }
+    ctx.log(`${ms.length} meeting(s), ${read} agenda(s) read${imports ? `, ${imports} archived video(s) to import` : ""}`);
     return { meetings: ms.map(({ agendaHtml: _, ...m }) => m) };
   },
 };

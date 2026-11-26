@@ -102,7 +102,7 @@ import { Poller, healthOf } from "./feeds/poller.js";
 import { parserById, parsers } from "./feeds/registry.js";
 import { FeedError, Feeds, type Feed } from "./feeds/store.js";
 import { Sync, shownLink } from "./feeds/sync.js";
-import { platformFor as platformOf } from "./platforms/registry.js";
+import { isArchive, platformFor as platformOf } from "./platforms/registry.js";
 import type { Meeting } from "./meetings.js";
 import { ConfigError } from "./feeds/types.js";
 import { FEEDS_PAGE } from "./pages/feeds.js";
@@ -121,10 +121,11 @@ import { Tokens, TokenError, activeToken, type ApiToken } from "./tokens.js";
 import { Search } from "./search.js";
 import { NAMES_FILE, NamesError, applyNames, cleanNames, kindOf, labelsOf, namedFile, readNames, writeNames } from "./speakers.js";
 import { Alerts, AlertError, type Alert } from "./alerts.js";
+import { Ops } from "./ops.js";
 import { STOP_PAGE } from "./pages/stop.js";
 import { Thumbs } from "./thumbs.js";
 import { SEARCH_PAGE } from "./pages/search.js";
-import { SLUG_RE, logger, notify } from "./util.js";
+import { SLUG_RE, logger, notify, setOperatorSink } from "./util.js";
 
 const log = logger("web");
 
@@ -146,8 +147,13 @@ export interface ServeOpts extends Omit<SchedulerOpts, "entry"> {
   tokenDownloadBps?: number;
   /** Make poster images for recordings that have a video and none yet (thumbs.ts). Default on; tests turn it off. */
   thumbnails?: boolean;
+<<<<<<< HEAD
   /** Searches allowed per minute per client address (default 60; 429 beyond). */
   searchesPerMinute?: number;
+=======
+  /** Also email the operator's messages (captures, transcripts, login, backups, feeds) to this address. Needs mail. */
+  operatorEmail?: string;
+>>>>>>> origin/main
   /** Who may frame /embed/<meeting> (net.ts embedAncestors): "*" (default), "none", or origins. */
   embedOrigins?: string;
   session: Omit<KeeperOpts, "auth" | "out" | "leadMs">;
@@ -341,6 +347,8 @@ export interface App {
   tokens: Tokens;
   search: Search;
   alerts: Alerts;
+  /** Look at transcript status now and tell the operator about new ones (it also runs by itself). */
+  checkTranscripts(): void;
   /** Email alert matches for meetings not handled yet (it also runs after each search index pass). */
   processAlerts(): Promise<number>;
   /** Re-read transcripts into the search index now (it also runs by itself). */
@@ -469,9 +477,26 @@ export function createApp(o: ServeOpts, entry: string): App {
     } catch (e) { log.warn("processing alerts failed", e); return 0; }
     finally { alertsBusy = false; }
   };
-  const searchTimer = setInterval(() => syncSearch(true), 120_000);
+  /** Tell the operator (CAPTURE_NOTIFY_URL) about captures and transcripts (ops.ts). */
+  const ops = new Ops(db, {
+    notify: (text, opts) => notify(o.session.notifyUrl, text, opts), site,
+    titleOf: (j) => { const m = sched.meetings.get(j.meetingRef); return m && m.title !== j.slug ? m.title : j.slug; },
+    platformOf: (j) => platformFor(j.link)?.label ?? "The platform",
+  });
+  sched.onEvent = (e) => ops.job(e);
+  const emailOperator = !!mailer && !!o.operatorEmail;
+  if (emailOperator) {
+    setOperatorSink((text, opts) => mailer!.send({ to: o.operatorEmail!, subject: `minutes: ${text.split("\n")[0]}`.slice(0, 150),
+      text: `${text}\n\n-- \nminutes${site ? " · " + site : ""}${opts.priority === "high" || opts.priority === "urgent" ? "\nThis one needs a look." : ""}\n` }));
+    log.info(`operator messages are also emailed to ${o.operatorEmail}`);
+  }
+  const opsTranscripts = () => {
+    if (closed || (!o.session.notifyUrl && !emailOperator)) return;
+    try { ops.transcripts(listRecordings(o.out, sched, o.tz)); } catch (e) { log.warn("checking transcripts for the operator failed", e); }
+  };
+  const searchTimer = setInterval(() => { syncSearch(true); opsTranscripts(); }, 120_000);
   searchTimer.unref();
-  setImmediate(() => syncSearch(true));
+  setImmediate(() => { syncSearch(true); opsTranscripts(); });
 
   /** Poster images: a frame of each recording's video, made one at a time in the background. */
   const thumbs = new Thumbs();
@@ -1141,7 +1166,8 @@ export function createApp(o: ServeOpts, entry: string): App {
           if (parts.length === 3 && read) {
             const view = url.searchParams.get("view") ?? "upcoming";
             const now = Date.now(), all = sched.meetings.list();
-            const list = view === "review" ? all.filter((m) => m.review === "pending" && m.status !== "cancelled" && Date.parse(m.start) > now - 3_600_000)
+            // The review queue: waiting meetings still ahead of us, and finished videos (archives) that are only waiting to be imported.
+            const list = view === "review" ? all.filter((m) => m.review === "pending" && m.status !== "cancelled" && (Date.parse(m.start) > now - 3_600_000 || isArchive(m.link)))
               : view === "recent" ? all.filter((m) => Date.parse(m.start) <= now).slice(-50).reverse()
               : all.filter((m) => Date.parse(m.start) > now - 3_600_000);
             return send(res, 200, list.map(adminMeeting));
@@ -1295,12 +1321,13 @@ export function createApp(o: ServeOpts, entry: string): App {
   });
 
   return {
-    server, accounts, sched, audit, tokens, search, syncSearch, syncThumbs, alerts, processAlerts,
+    server, accounts, sched, audit, tokens, search, syncSearch, syncThumbs, alerts, processAlerts, checkTranscripts: opsTranscripts,
     async close() {
       server.close();
       server.closeAllConnections();
       clearInterval(pruneTimer);
       closed = true;
+      if (emailOperator) setOperatorSink(null);
       clearInterval(searchTimer);
       clearInterval(thumbTimer);
       keeper.stop();

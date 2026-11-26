@@ -47,6 +47,7 @@ const USAGE = `usage: minutes --link <zoom link or id> --start <ISO datetime> [o
   --rejoin-wait-min <n>    after a drop, waiting room this long = ended, default 10
   --reconnect-grace-s <n>  ride out Zoom's own reconnect, default 45
   --max-hours <n>          hard cap, default 6
+  --archive                the link is a finished video to import (Granicus clip): no start to wait for
   --fps <n>                default 30 (env CAPTURE_FPS)
   --quality <n>            CRF/QP/CQ, default 23 (env CAPTURE_QUALITY)
   --encoder <x264|vaapi|nvenc>  default x264 (env CAPTURE_ENCODER)`;
@@ -71,6 +72,7 @@ function parse(): Config {
       "rejoin-wait-min": { type: "string", default: "10" },
       "reconnect-grace-s": { type: "string", default: "45" },
       "max-hours": { type: "string", default: "6" },
+      archive: { type: "boolean", default: false },
       "poll-s": { type: "string", default: "3" },
       "retry-base-s": { type: "string", default: "5" },
       "retry-max-s": { type: "string", default: "60" },
@@ -127,7 +129,7 @@ function parse(): Config {
     encoder,
     vaapiDevice: env.CAPTURE_VAAPI_DEVICE ?? "/dev/dri/renderD128",
     leadMs: num("lead-min", v["lead-min"]) * 60_000,
-    noShowMs: num("no-show-min", v["no-show-min"]) * 60_000,
+    noShowMs: num("no-show-min", v["no-show-min"]) * 60_000, archive: v.archive,
     rejoinWaitMs: num("rejoin-wait-min", v["rejoin-wait-min"]) * 60_000,
     reconnectGraceMs: num("reconnect-grace-s", v["reconnect-grace-s"]) * 1_000,
     maxDurationMs: num("max-hours", v["max-hours"]) * 3_600_000,
@@ -314,7 +316,7 @@ if (process.argv[2] === "serve") {
   process.exit(await serve({
     host: v.host!, port: n("port", v.port, 1), tz: env.TZ!, secureCookie: env.COOKIE_SECURE !== "0",
     trustedProxies: env.TRUSTED_PROXIES,
-    mailer, publicUrl: env.PUBLIC_URL, embedOrigins: env.EMBED_ORIGINS,
+    mailer, publicUrl: env.PUBLIC_URL, embedOrigins: env.EMBED_ORIGINS, operatorEmail: env.OPERATOR_EMAIL || undefined,
     downloadBps: rate("DOWNLOAD_MAX_BPS"), tokenDownloadBps: rate("DOWNLOAD_TOKEN_BPS"),
     out: v.out!, auth: v.auth ?? null, defaultName: v.name!,
     leadMs: n("lead-min", v["lead-min"]) * 60_000, noShowMs: n("no-show-min", v["no-show-min"]) * 60_000,
