@@ -7,7 +7,10 @@
  *
  * Data: /api/meetings/:slug (detail + history) and /api/meetings/:slug/status
  * (polled). Files from /media. Never join links, the bot's display or logs.
- * The server fills __TITLE__ and __DESC__ per meeting for link previews.
+ * The server fills __TITLE__, __DESC__ and __HEAD__ (canonical, Open Graph,
+ * oEmbed discovery) per meeting. ?t=90 (or 1m30s, 1:30) starts the video
+ * there; the Share section has the permalink, a link at the current time,
+ * and the iframe code for /embed/<slug> (pages/embed.ts).
  *
  * Same String.raw rules as the other pages. __TZ__ is replaced at startup.
  */
@@ -20,6 +23,7 @@ export const MEETING_PAGE = String.raw`<!doctype html>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>__TITLE__</title>
 <meta name="description" content="__DESC__">
+__HEAD__
 <link rel="icon" href="data:,">
 <style>
 ${BASE_CSS}
@@ -37,6 +41,7 @@ ${PUBLIC_CSS}
   <section id="head"><div class="empty">Loading...</div></section>
   <section id="player" hidden></section>
   <section id="livebox" hidden></section>
+  <section id="share" hidden></section>
   <section id="links" hidden></section>
   <section id="history" hidden></section>
 </main>
@@ -48,12 +53,13 @@ ${PLAYER_JS}
 ${PUBLIC_JS}
 var SLUG = decodeURIComponent(location.pathname.split("/")[2] || "");
 var M = null, stopLive = null, untilNode = null, startedNode = null, timer = null;
+var startT = startFrom(location.search), shareKey = "", shareOpts = { transcript: false, chapters: false };
 // el() takes children as arguments, not arrays.
 function wrap(tag, attrs, kids) { return el.apply(null, [tag, attrs].concat(kids)); }
 
 function gone(msg) {
   fill(document.getElementById("head"), el("div", { "class": "empty", text: msg }));
-  ["player", "livebox", "links", "history"].forEach(function (id) { document.getElementById(id).hidden = true; });
+  ["player", "livebox", "share", "links", "history"].forEach(function (id) { document.getElementById(id).hidden = true; });
 }
 
 function cityLinks(m) {
@@ -103,7 +109,7 @@ function renderHead(m) {
 function renderPlayer(m) {
   var box = document.getElementById("player");
   if (!m.hasVideo || !m.recording || !m.recording.video) { box.hidden = true; fill(box); return; }
-  var v = box.querySelector("video"), t = v ? v.currentTime : 0, playing = v ? !v.paused : false;
+  var v = box.querySelector("video"), t = v ? v.currentTime : startT, playing = v ? !v.paused : false;
   play(m.recording, "/media/", box);
   if (t) {
     v = box.querySelector("video");
@@ -120,6 +126,58 @@ function renderLive(m) {
   fill(box, el("h3", { "class": "live-h", text: "Live transcript (draft)" }), list, note);
   box.hidden = false;
   stopLive = followLive(mediaUrl("/media/", m.recording.slug, f.live), list, note);
+}
+
+function copy(text, btn, input) {
+  var was = btn.textContent;
+  function done(ok) {
+    btn.textContent = ok ? "Copied" : "Press Ctrl+C";
+    if (!ok && input) { input.focus(); input.select(); }
+    setTimeout(function () { btn.textContent = was; }, 2000);
+  }
+  if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(text).then(function () { done(true); }, function () { done(false); });
+  else done(false);
+}
+function attr(s) { return String(s).replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;").replace(/>/g, "&gt;"); }
+
+// Permalink, a link at the current time, and the iframe code. Built once per
+// meeting (a poll-driven reload keeps the open details and ticked options).
+function renderShare(m) {
+  var box = document.getElementById("share");
+  var key = m.id + "|" + m.hasVideo;
+  if (key === shareKey) return;
+  shareKey = key;
+  var link = location.origin + "/m/" + encodeURIComponent(m.id);
+  var linkIn = el("input", { type: "text", readonly: "", value: link, "aria-label": "Link to this meeting" });
+  var copyBtn = el("button", { text: "Copy link", on: { click: function () { copy(linkIn.value, copyBtn, linkIn); } } });
+  var atBtn = m.hasVideo ? el("button", { text: "Copy link at current time", on: { click: function () {
+    var v = document.querySelector("#player video"), s = v ? Math.floor(v.currentTime) : 0;
+    linkIn.value = link + (s ? "?t=" + s : "");
+    copy(linkIn.value, atBtn, linkIn);
+  } } }) : null;
+  var code = el("textarea", { readonly: "", rows: "4", "aria-label": "Embed code" });
+  function snippet() {
+    var q = [];
+    if (shareOpts.transcript) q.push("transcript=1");
+    if (shareOpts.chapters) q.push("chapters=1");
+    var src = location.origin + "/embed/" + encodeURIComponent(m.id) + (q.length ? "?" + q.join("&") : "");
+    code.value = '<iframe src="' + attr(src) + '" width="640" height="' + (shareOpts.transcript ? 640 : 360) +
+      '" frameborder="0" allow="fullscreen" allowfullscreen title="' + attr(m.title) + '"></iframe>';
+  }
+  function opt(name, label) {
+    var cb = el("input", { type: "checkbox" });
+    cb.checked = shareOpts[name];
+    cb.addEventListener("change", function () { shareOpts[name] = cb.checked; snippet(); });
+    return el("label", { "class": "opt" }, cb, label);
+  }
+  snippet();
+  var copyCode = el("button", { text: "Copy code", on: { click: function () { copy(code.value, copyCode, code); } } });
+  fill(box, el("h2", { text: "Share" }),
+    el("div", { "class": "share-row" }, linkIn, copyBtn, atBtn),
+    el("details", { "class": "embed" }, el("summary", { text: "Embed on your site" }),
+      el("div", { "class": "hint", text: "Paste into a page to show the video there. It updates by itself, and plays the same captions." }),
+      opt("transcript", "Include the transcript"), opt("chapters", "Include chapters"), code, el("div", {}, copyCode)));
+  box.hidden = false;
 }
 
 function renderLinks(m) {
@@ -146,12 +204,16 @@ function renderHistory(m) {
 
 function render(m) {
   M = m;
-  renderHead(m); renderPlayer(m); renderLive(m); renderLinks(m); renderHistory(m);
+  renderHead(m); renderPlayer(m); renderLive(m); renderShare(m); renderLinks(m); renderHistory(m);
   schedule();
 }
 
 function load() {
-  return api("GET", "/api/meetings/" + encodeURIComponent(SLUG)).then(render, function (e) {
+  return api("GET", "/api/meetings/" + encodeURIComponent(SLUG)).then(function (m) {
+    // The permalink is the meeting's own slug, whatever name the link used.
+    if (m.id !== SLUG) { SLUG = m.id; history.replaceState(null, "", "/m/" + encodeURIComponent(m.id) + location.search); }
+    render(m);
+  }, function (e) {
     gone(/no such/.test(e.message) ? "This meeting isn't available." : "Can't reach the server: " + e.message);
   });
 }

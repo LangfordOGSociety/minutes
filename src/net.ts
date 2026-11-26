@@ -72,7 +72,7 @@ export const SECURITY_HEADERS: Record<string, string> = {
 };
 
 /** CSP for one of our pages: its inline scripts by hash, nothing else. */
-export function pageCsp(html: string): string {
+export function pageCsp(html: string, frameAncestors = "'none'"): string {
   const hashes = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)]
     .map((m) => `'sha256-${createHash("sha256").update(m[1]).digest("base64")}'`);
   return [
@@ -84,6 +84,23 @@ export function pageCsp(html: string): string {
     "connect-src 'self'",
     "base-uri 'none'",
     "form-action 'self'",
-    "frame-ancestors 'none'",
+    `frame-ancestors ${frameAncestors}`,
   ].join("; ");
+}
+
+/**
+ * Who may frame /embed/<meeting> (EMBED_ORIGINS): "*" (the default: it's a
+ * public, read-only page with no sign-in and no actions, so framing it
+ * exposes nothing), "none", or origins separated by spaces or commas:
+ * https://openlangford.ca, https://*.openlangford.ca. Returns a CSP
+ * frame-ancestors value. Every other page stays un-frameable.
+ */
+export function embedAncestors(spec: string | undefined): string {
+  const list = (spec ?? "").split(/[\s,]+/).filter(Boolean);
+  if (!list.length || (list.length === 1 && list[0] === "*")) return "*";
+  if (list.length === 1 && list[0].toLowerCase() === "none") return "'none'";
+  for (const o of list) {
+    if (!/^https?:\/\/(\*\.)?[a-z0-9]([a-z0-9.-]*[a-z0-9])?(:\d{1,5})?$/i.test(o)) throw new Error(`EMBED_ORIGINS: not an origin: ${o}`);
+  }
+  return list.join(" ");
 }

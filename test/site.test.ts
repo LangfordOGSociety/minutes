@@ -9,6 +9,7 @@ import { describe, it, type TestContext } from "node:test";
 import type { Job } from "../src/jobs.js";
 import type { Meeting } from "../src/meetings.js";
 import type { Recording } from "../src/recordings.js";
+import { embedAncestors } from "../src/net.js";
 import { isUpcoming, stageOf, visible, type PublicMeeting } from "../src/site.js";
 import { tmpDir, type HasAfter } from "./helpers.js";
 import { fakeSource, fixtures } from "./fixtures.js";
@@ -208,5 +209,103 @@ describe("public meetings API", () => {
     const mid = app.sched.list().find((j) => j.slug === "council-a")!.meetingRef;
     assert.equal((await admin.post(`/api/admin/meetings/${mid}/hide`)).status, 200);
     assert.equal((await pub.get("/media/council-a/council-a.mp4")).status, 404);
+  });
+});
+
+describe("permalinks, embeds and oEmbed", () => {
+  it("who may frame what: EMBED_ORIGINS", () => {
+    assert.equal(embedAncestors(undefined), "*");
+    assert.equal(embedAncestors("  "), "*");
+    assert.equal(embedAncestors("*"), "*");
+    assert.equal(embedAncestors("none"), "'none'");
+    assert.equal(embedAncestors("https://openlangford.ca, https://*.example.org:8443"), "https://openlangford.ca https://*.example.org:8443");
+    for (const bad of ["openlangford.ca", "https://x.ca/path", "javascript:alert(1)", "https://x.ca; script-src *", "'self'"]) {
+      assert.throws(() => embedAncestors(bad), /EMBED_ORIGINS/, bad);
+    }
+  });
+
+  it("/embed/<slug> may be framed; every other page may not; hidden and unknown 404", async (t) => {
+    const { app, out, admin, pub } = await setup(t);
+    fixtures(app, out);
+    const e = await pub.get("/embed/council-a");
+    assert.equal(e.status, 200);
+    assert.equal(e.headers.get("x-frame-options"), null);
+    assert.match(e.headers.get("content-security-policy") ?? "", /frame-ancestors \*(;|$)/);
+    assert.match(e.headers.get("content-security-policy") ?? "", /script-src 'sha256-[A-Za-z0-9+/=]{44}'(;|$)/);
+    assert.match(e.text, /<title>council-a<\/title>/);
+    assert.match(e.text, /var SLUG = "council-a";/);
+    assert.doesNotMatch(e.text, /api\/admin|renderMe\(document|429539|87093163922/);       // no sign-in, no admin
+    for (const p of ["/", "/m/council-a", "/login", "/admin"]) {
+      const r = await admin.get(p);
+      assert.equal(r.headers.get("x-frame-options"), "DENY", p);
+      assert.match(r.headers.get("content-security-policy") ?? "", /frame-ancestors 'none'/, p);
+    }
+    assert.equal((await pub.get("/embed/hidden-b")).status, 404);
+    assert.equal((await pub.get("/embed/nope")).status, 404);
+    assert.equal((await pub.get("/embed/..%2Fadmin")).status, 404);
+    // Pulled from the public site: the embed goes with it.
+    const mid = app.sched.list().find((j) => j.slug === "council-a")!.meetingRef;
+    await admin.post(`/api/admin/meetings/${mid}/hide`);
+    assert.equal((await pub.get("/embed/council-a")).status, 404);
+  });
+
+  it("EMBED_ORIGINS limits who may frame it", async (t) => {
+    const cleanups: (() => unknown)[] = [];
+    t.after(async () => { for (const f of cleanups.reverse()) await f(); });
+    const hooks: HasAfter = { after: (fn) => cleanups.push(fn) };
+    const out = path.join(tmpDir(hooks), "rec");
+    const { app, base } = await startApp(hooks, out, { embedOrigins: "https://openlangford.ca https://*.example.org" });
+    fixtures(app, out);
+    const r = await new Client(base).get("/embed/council-a");
+    assert.match(r.headers.get("content-security-policy") ?? "", /frame-ancestors https:\/\/openlangford\.ca https:\/\/\*\.example\.org$/);
+    assert.equal(r.headers.get("x-frame-options"), null);
+    const none = await startApp(hooks, path.join(tmpDir(hooks), "rec2"), { embedOrigins: "none" });
+    fixtures(none.app, path.join(tmpDir(hooks), "x"));
+  });
+
+  it("the meeting page's metadata: canonical, previews and oEmbed discovery, escaped", async (t) => {
+    const { app, out, pub, admin, src, mk, run } = await setup(t);
+    fixtures(app, out);
+    // Without PUBLIC_URL: the request's own address; titles are plain text in the head.
+    const p = await pub.get("/m/council-a");
+    assert.match(p.text, /<meta property="og:title" content="council-a \(\w+ \d+, \d{4}\)">/);
+    assert.match(p.text, /<link rel="canonical" href="http:\/\/127\.0\.0\.1:\d+\/m\/council-a">/);
+    assert.match(p.text, /<link rel="alternate" type="application\/json\+oembed" href="http:\/\/127\.0\.0\.1:\d+\/oembed\?format=json&#38;url=http%3A%2F%2F127\.0\.0\.1%3A\d+%2Fm%2Fcouncil-a"/);
+    assert.match(p.text, /Share/);
+    // A hostile title can't break out of any attribute or the page.
+    const feed = await mk("auto");
+    src.state.meetings = [{ id: "x", title: 'Evil "><img src=x onerror=alert(1)><script>alert(2)</script>', start: at(24) }];
+    await run(feed);
+    const m = (await admin.get("/api/admin/meetings")).json.find((x: { title: string }) => x.title.startsWith("Evil"));
+    const e = await pub.get(`/m/${m.slug}`);
+    assert.equal(e.status, 200);
+    assert.doesNotMatch(e.text, /<img src=x|<script>alert\(2\)|"><img/);
+    assert.match(e.text, /&#34;&#62;&#60;img src=x/);
+    const d = (await pub.get(`/oembed?url=${encodeURIComponent("http://x/m/" + m.slug)}`)).json;
+    assert.doesNotMatch(d.html, /<img|"><script/);
+  });
+
+  it("oEmbed, absolute when PUBLIC_URL is set", async (t) => {
+    const cleanups: (() => unknown)[] = [];
+    t.after(async () => { for (const f of cleanups.reverse()) await f(); });
+    const hooks: HasAfter = { after: (fn) => cleanups.push(fn) };
+    const out = path.join(tmpDir(hooks), "rec");
+    const { app, base } = await startApp(hooks, out, { publicUrl: "https://minutes.example.org/" });
+    fixtures(app, out);
+    const c = new Client(base);
+    const r = await c.get(`/oembed?url=${encodeURIComponent("https://minutes.example.org/m/council-a")}&format=json`);
+    assert.equal(r.status, 200);
+    assert.equal(r.headers.get("access-control-allow-origin"), "*");
+    assert.deepEqual([r.json.version, r.json.type, r.json.provider_name, r.json.title, r.json.width, r.json.height],
+      ["1.0", "video", "minutes", "council-a", 640, 360]);
+    assert.equal(r.json.html, '<iframe src="https://minutes.example.org/embed/council-a" width="640" height="360" frameborder="0" allow="fullscreen" allowfullscreen title="council-a"></iframe>');
+    assert.equal((await c.get(`/oembed?url=${encodeURIComponent("/embed/council-a")}&maxwidth=320`)).json.height, 180);
+    assert.equal((await c.get(`/oembed?url=${encodeURIComponent("/m/council-a")}&format=xml`)).status, 501);
+    for (const bad of ["", "/m/nope", "/m/hidden-b", "/admin", "/m/council-a/extra", "javascript:alert(1)"]) {
+      assert.equal((await c.get(`/oembed?url=${encodeURIComponent(bad)}`)).status, 404, bad);
+    }
+    const page = await c.get("/m/council-a");
+    assert.match(page.text, /<link rel="canonical" href="https:\/\/minutes\.example\.org\/m\/council-a">/);
+    assert.doesNotMatch(page.text, /127\.0\.0\.1/);
   });
 });
