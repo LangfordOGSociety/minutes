@@ -10,7 +10,7 @@ import { chromium, type Browser } from "playwright";
 import type { App } from "../src/serve.js";
 import { tmpDir, type HasAfter } from "./helpers.js";
 import { startApp } from "./server.js";
-import { fixtures } from "./fixtures.js";
+import { fakeSource, fixtures } from "./fixtures.js";
 import { MemoryMailer } from "./smtp.js";
 
 function skipReason(): string | false {
@@ -222,5 +222,54 @@ describe("sign-up and reset in Chromium", { skip: skipReason() }, () => {
     assert.ok(app.accounts.byEmail("reader@example.com")?.disabledAt);
     assert.equal(await page.isVisible("#users .row:has-text('boss@example.com') button"), false);   // not yourself
     await page.waitForSelector("#audit .row:has-text('user.update')");
+  });
+});
+
+describe("feeds page in Chromium", { skip: skipReason() }, () => {
+  let browser: Browser, base: string, app: App, src: Awaited<ReturnType<typeof fakeSource>>;
+  const cleanups: (() => unknown)[] = [];
+  before(async () => {
+    const hooks: HasAfter = { after: (fn) => cleanups.push(fn) };
+    src = await fakeSource(hooks);
+    ({ app, base } = await startApp(hooks, path.join(tmpDir(hooks), "rec"), { secureCookie: false, pollFeeds: false }));
+    browser = await chromium.launch();
+  });
+  after(async () => {
+    await browser?.close();
+    for (const f of cleanups.reverse()) await f();
+  });
+
+  it("adds a feed with the generated form, previews it, runs it", async () => {
+    src.state.meetings = [{ id: "m1", title: "Council Meeting", start: "2027-01-12T01:30:00Z", link: "https://zoom.us/j/87093163922?pwd=429539" }];
+    await app.accounts.create({ email: "boss@example.com", role: "admin", password: "boss password 1", verified: true });
+    const page = await (await browser.newContext()).newPage();
+    const errors: string[] = [];
+    page.on("pageerror", (e) => errors.push(e.message));
+    page.on("dialog", (d) => { errors.push("dialog: " + d.message()); void d.dismiss(); });
+    await page.goto(base + "/login?next=%2Fadmin%2Ffeeds");
+    await page.fill("#email", "boss@example.com");
+    await page.fill("#password", "boss password 1");
+    await page.click("#loginform button");
+    await page.waitForURL(base + "/admin/feeds");
+    await page.waitForSelector("#feeds .empty");
+
+    await page.selectOption("#f-parser", "test-json");
+    await page.fill("#f-name", "Langford council");
+    await page.fill("#cfg-url", src.url);
+    await page.fill("#f-prefix", "langford");
+    await page.click("#previewbtn");
+    await page.waitForSelector("#previewbody table");
+    const row = await page.textContent("#previewbody table tr:nth-child(2)") ?? "";
+    assert.match(row, /Council Meeting/);
+    assert.match(row, /Zoom 87093163922/);
+    assert.doesNotMatch(await page.content(), /429539/);
+
+    await page.click("#savebtn");
+    await page.waitForSelector("#feeds .row:has-text('Langford council')");
+    await page.click("#feeds .row:has-text('Langford council') button:has-text('Run now')");
+    await page.waitForSelector("#runsbody table");
+    assert.match(await page.textContent("#runsbody table") ?? "", /ok/);
+    await page.waitForSelector("#feeds .row:has-text('healthy')");
+    assert.deepEqual(errors, []);
   });
 });

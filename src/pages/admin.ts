@@ -46,6 +46,7 @@ label.check[hidden] { display: none; }
 <body>
 <header>
   <h1><a href="/admin">minutes</a> <small class="meta">admin</small></h1>
+  <span class="meta"><a href="/admin/feeds">Feeds</a></span>
   <span class="meta" id="meta"></span>
   <span class="me" id="me"></span>
 </header>
