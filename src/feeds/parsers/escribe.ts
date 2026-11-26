@@ -115,7 +115,7 @@ export function calendarToMeetings(rows: EscribeMeeting[], o: { baseUrl: string;
     out.push({
       externalId: r.ID, title: name || body, body: body || undefined, start, end: localTime(r.EndDate, o.tz),
       agendaUrl: html ? abs(html) : pdf ? abs(pdf) : undefined,
-      pageUrl: html ? abs(html) : undefined,
+      pageUrl: html ? abs(html) : abs(`/Meeting.aspx?Id=${encodeURIComponent(r.ID)}&lang=English`),   // the meeting on the portal, agenda or not
       cancelled: /\bcancell?ed\b/i.test(name) || docs.some((d) => CANCELLED_DOC.test(d.Title ?? "")) || undefined,
       link: findLink(textOf(`${r.Description ?? ""}\n${r.Location ?? ""}`)),
       documents: docsOf(docs, abs),
