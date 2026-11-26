@@ -4,7 +4,22 @@
 
 Records online meetings start to finish without help from the host, and turns
 them into one chaptered video with a speaker-labelled transcript, the same
-night. Built for public council meetings; Zoom today, more platforms next.
+night, and publishes them. Built for public council meetings: Zoom, YouTube
+and Granicus today.
+
+What it does, end to end:
+
+- **Finds meetings** by itself from a municipality's calendar (eScribe,
+  PrimeGov, Granicus, iCal, a web page), tracks every change (moved,
+  cancelled, new documents) and lets you review before anything is recorded.
+- **Records** a Zoom meeting in a browser, a YouTube live stream, or imports a
+  finished Granicus video, and stitches it into one chaptered video.
+- **Transcribes** it on a GPU (WhisperX, speakers separated), with names you
+  can add by hand.
+- **Publishes** it: a page per meeting that fills in as results land,
+  permalinks, an embeddable player, search across every transcript, email
+  alerts, a download API with tokens, and notes to the operator when
+  something needs a look.
 
 Joins a Zoom meeting in headed Chromium on a virtual display, records screen +
 audio with ffmpeg, survives drops, and stitches the parts into one MP4.
@@ -198,6 +213,16 @@ password) is gone.
   going stale. It can't sign in for you: when it says *expired*, run
   `minutes login` again (the bar clears on its own a minute later).
   Set `CAPTURE_NOTIFY_URL` (e.g. an ntfy.sh topic) to get a push alert too.
+  The same address also hears about each capture: "Recording started",
+  "Recording finished: ... 151 min" or "Recording problem: ... blocked / never
+  started / failed" (high priority, with what to check), "Not recording yet"
+  when a capture hasn't started 10 minutes after its meeting did, and
+  "Transcript ready" (with the public link) or "Transcription FAILED". Each
+  once, never a meeting link or passcode.
+  With mail set up, `OPERATOR_EMAIL=you@example.com` also emails every one of
+  these (and the login, backup and feed messages), so you don't need a push
+  service at all: a message is its subject line, the problems say "This one
+  needs a look".
   From the command line: `minutes check-login --auth auth/zoom-auth.json`.
 - **Meetings that ask for an email**: some hosts require an email address
   before Join works. Fill in the form's optional *Email* field for that
@@ -238,6 +263,15 @@ page and get an email when it comes up in a *new* meeting's transcript, with
 a link to the moment. One email per meeting listing every alert that
 matched, up to 10 alerts each, and every email has a link that stops that
 alert without signing in. Existing meetings aren't announced.
+
+**Granicus (Saanich).** A Granicus clip link (an archived meeting,
+`https://<city>.granicus.com/player/clip/<id>`) is imported as a recording:
+schedule it on `/admin` with the meeting's own date as the start and it's
+recorded at once, in minutes, then transcribed like any other. The PrimeGov
+feed does this by itself for finished meetings whose video Granicus has
+published (within 45 days; with the review policy you approve each first).
+Live Granicus events are expected to work the same way as a live stream but
+haven't been tried on a real meeting yet.
 
 **YouTube.** A meeting whose link is a YouTube video or live link
 (`https://www.youtube.com/watch?v=...`, `youtu.be/...`, `/live/...`) is

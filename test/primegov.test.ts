@@ -79,11 +79,12 @@ describe("primegov", () => {
     assert.ok("meetings" in r);
     // Nov 16-on: the Nov 23 archived meeting, and the three upcoming.
     assert.deepEqual(r.meetings.map((m) => [m.externalId, m.link ?? null]), [
-      ["904", null],
+      ["904", "https://saanich.ca.granicus.com/player/clip/1356"],           // over, with its video published on Granicus: the video is what can be recorded now
       ["921", "https://us02web.zoom.us/j/84444444444?pwd=xyz"],
       ["905", "https://zoom.us/j/85512345678?pwd=135790"],
       ["405", null],
     ]);
+    assert.ok(ctx.lines.some((l) => /1 archived video\(s\) to import/.test(l)), ctx.lines.join("\n"));
     assert.ok(hits.includes("/api/v2/PublicPortal/ListArchivedMeetings?year=2026"));
     // Agendas read only for upcoming meetings without a link (905, 405), not the past one.
     assert.deepEqual(hits.filter((h) => h.startsWith("/Portal/")).sort(), ["/Portal/Meeting?meetingTemplateId=2021", "/Portal/Meeting?meetingTemplateId=4481"]);

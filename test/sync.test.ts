@@ -15,6 +15,11 @@ const ZOOM = "https://zoom.us/j/87093163922?pwd=429539";
 const ZOOM2 = "https://zoom.us/j/81234567890?pwd=111222";
 const at = (hoursFromNow: number) => new Date(Math.round((Date.now() + hoursFromNow * 3_600_000) / 60_000) * 60_000).toISOString();
 
+/** An archive import is due at once and launches a capture process: wait for it to end (here, to fail: there is no capture binary) so nothing runs on after the test. */
+async function settle(app: { sched: { list(): { status: string }[] } }) {
+  for (let i = 0; i < 200 && app.sched.list().some((j) => ["scheduled", "queued", "running", "stopping"].includes(j.status)); i++) await new Promise((r) => setTimeout(r, 20));
+}
+
 async function setup(t: TestContext, policy: string) {
   const cleanups: (() => unknown)[] = [];
   t.after(async () => { for (const f of cleanups.reverse()) await f(); });
@@ -266,6 +271,64 @@ describe("feed sync", () => {
     const h = (await admin.get(`/api/admin/meetings/${cttee.id}/changes`)).json;
     assert.deepEqual(h[0].after, { streamUrl: "https://saanich.ca.granicus.com/MediaPlayer.php?view_id=1&event_id=901" });
     assert.doesNotMatch(JSON.stringify((await admin.get("/api/admin/meetings")).json), /429539/);
+  });
+
+  it("archived video: a meeting that's over with its Granicus video published is imported, within 45 days, once, per policy", async (t) => {
+    const CLIP = "https://saanich.ca.granicus.com/MediaPlayer.php?clip_id=1356";
+    const CLIP2 = "https://saanich.ca.granicus.com/MediaPlayer.php?clip_id=1357";
+    const { app, src, run, admin } = await setup(t, "auto");
+    src.state.meetings = [
+      { id: "a", title: "Last week's council", start: at(-24 * 7), link: CLIP },
+      { id: "b", title: "Two months ago", start: at(-24 * 60), link: CLIP2 },                       // too old to import
+      { id: "c", title: "Last week, on Zoom", start: at(-24 * 7), link: ZOOM },                      // over, and no video: listed only
+      { id: "d", title: "Last week, no link yet", start: at(-24 * 6) },
+    ];
+    await run();
+    const jobs = () => app.sched.list().map((j) => j.slug);
+    const meetings = (await admin.get("/api/admin/meetings?view=recent")).json as { id: string; title: string; slug: string; link: string | null; capture: { slug: string } | null }[];
+    const by = (title: string) => meetings.find((m) => m.title === title)!;
+    assert.match(by("Last week's council").capture?.slug ?? "", /^langford-last-week-s-council-/);
+    assert.equal(by("Last week's council").link, "Granicus saanich clip 1356");
+    for (const title of ["Two months ago", "Last week, on Zoom", "Last week, no link yet"]) assert.equal(by(title).capture, null, title);
+    assert.equal(jobs().length, 1);
+    const imported = app.sched.list()[0];
+    assert.equal(imported.link, "https://saanich.ca.granicus.com/player/clip/1356");
+    assert.equal(imported.start, app.sched.meetings.get(imported.meetingRef)!.start);                // the meeting keeps its real date
+    const history = (await admin.get(`/api/admin/meetings/${by("Last week's council").id}/changes`)).json;
+    assert.match(history.find((c: { kind: string }) => c.kind === "added").effect, /capture langford-last-week-s-council-.* scheduled/);
+    // Running again changes nothing; a link that turns up later on a meeting that's over is imported too.
+    await run();
+    assert.equal(jobs().length, 1);
+    src.state.meetings[3] = { ...src.state.meetings[3] as object, link: "https://saanich.ca.granicus.com/MediaPlayer.php?clip_id=1360" } as never;
+    await run();
+    assert.equal(jobs().length, 2);
+    const d = ((await admin.get("/api/admin/meetings?view=recent")).json as typeof meetings).find((m) => m.title === "Last week, no link yet")!;
+    assert.match((await admin.get(`/api/admin/meetings/${d.id}/changes`)).json.find((c: { kind: string }) => c.kind === "link_changed").effect, /capture .* scheduled|capture scheduled/);
+    // Already recorded: a finished capture means no second import, even if the link changes or it's scheduled by hand.
+    await settle(app);
+    const done = app.sched.list().find((j) => j.meetingRef === by("Last week's council").id)!;
+    (app.sched as unknown as { jobs: { id: string; status: string }[] }).jobs.find((j) => j.id === done.id)!.status = "done";
+    assert.throws(() => app.sched.scheduleMeeting(by("Last week's council").id), /already been recorded/);
+    await settle(app);
+  });
+
+  it("archived video under review waits for approval; under list_only it's only listed", async (t) => {
+    const CLIP = "https://saanich.ca.granicus.com/MediaPlayer.php?clip_id=1356";
+    const r = await setup(t, "review");
+    r.src.state.meetings = [{ id: "a", title: "Last week's council", start: at(-24 * 7), link: CLIP }];
+    await r.run();
+    const [m] = (await r.admin.get("/api/admin/meetings?view=review")).json as { id: string; review: string }[];
+    assert.equal(m.review, "pending");
+    assert.equal(r.app.sched.list().length, 0);
+    const ap = await r.admin.post(`/api/admin/meetings/${m.id}/approve`);
+    assert.equal(ap.status, 200);
+    assert.match(ap.json.effect, /capture langford-last-week-s-council-.* scheduled/);
+    assert.equal(r.app.sched.list().length, 1);
+    const l = await setup(t, "list_only");
+    l.src.state.meetings = [{ id: "a", title: "Last week's council", start: at(-24 * 7), link: CLIP }];
+    await l.run();
+    assert.equal(l.app.sched.list().length, 0);
+    await settle(r.app);
   });
 
   it("slugs", () => {
