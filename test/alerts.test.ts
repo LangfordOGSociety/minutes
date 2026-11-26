@@ -99,8 +99,10 @@ describe("a pass", () => {
     assert.equal(await w.run(), 0);
     w.addMeeting("m2", { start: "2026-12-09T01:30:00.000Z", body: "Committee" }, [seg(5, "Harbour dredging.")]);
     assert.equal(await w.run(), 2);                                                                                         // u2 (Committee, and the any-body one)... both alerts in one email
-    assert.equal(w.sent.at(-1)!.to, "u2@example.com");
-    assert.match(w.sent.at(-1)!.subject, /2 of your alerts came up at Meeting m2/);
+    const last2 = w.sent.slice(-2);                                                                                         // (which of the two goes first doesn't matter)
+    assert.deepEqual(last2.map((x) => x.to).sort(), ["u1@example.com", "u2@example.com"]);
+    assert.match(last2.find((x) => x.to === "u2@example.com")!.subject, /2 of your alerts came up at Meeting m2/);
+    assert.match(last2.find((x) => x.to === "u1@example.com")!.subject, /^"harbour" came up at Meeting m2/);
   });
 
   it("a failed email isn't lost or doubled: retry sends only what's missing, then the meeting is done", async (t) => {

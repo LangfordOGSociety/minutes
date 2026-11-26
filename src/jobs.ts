@@ -21,7 +21,7 @@ import { randomUUID } from "node:crypto";
 import { createWriteStream, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { tx, type DB } from "./db.js";
 import { Meetings, type Meeting } from "./meetings.js";
-import { checkLink as checkPlatformLink, platformFor } from "./platforms/registry.js";
+import { checkLink as checkPlatformLink, isArchive, platformFor } from "./platforms/registry.js";
 import type { CaptureMethod } from "./platforms/types.js";
 import path from "node:path";
 import { promisify } from "node:util";
@@ -58,7 +58,13 @@ export interface Job {
   error?: string;
 }
 
+/** What happened to a capture, for whoever wants to tell the operator (ops.ts). */
+export type JobEvent = { kind: "started" | "finished" | "overdue"; job: Job };
+
 export interface NewJob { link?: unknown; start?: unknown; slug?: unknown; name?: unknown; email?: unknown; clearEmail?: unknown }
+
+/** A capture still not started this long after its meeting's start is worth a message. */
+const OVERDUE_MS = 10 * 60_000;
 
 export interface SchedulerOpts {
   out: string;
@@ -105,6 +111,12 @@ export class Scheduler {
   private activeFile: string;
   private timer?: NodeJS.Timeout;
   private ticking = false;
+  /** Called for a capture starting, finishing, or not starting when it should have. Must not throw (errors are logged). */
+  onEvent: (e: JobEvent) => void = () => {};
+  private overdueSeen = new Set<string>();
+  private emit(kind: JobEvent["kind"], j: Job): void {
+    try { this.onEvent({ kind, job: { ...j } }); } catch (e) { log.warn(`job event ${kind} for ${j.slug} failed`, e); }
+  }
 
   constructor(private o: SchedulerOpts, private db: DB) {
     mkdirSync(o.out, { recursive: true });
@@ -164,11 +176,12 @@ export class Scheduler {
     return this.jobs.some((j) => j.slug === slug && ["scheduled", "queued", "running", "stopping"].includes(j.status));
   }
 
-  private parseStart(v: string): Date {
+  /** `archive`: the link is a finished video to import, so the meeting's date may be as old as it likes. */
+  private parseStart(v: string, archive = false): Date {
     // A bare "2026-11-16T19:00" is local time in the server's TZ, same as the CLI.
     const start = new Date(v.trim());
     if (Number.isNaN(start.getTime())) throw new BadRequest(`can't parse start time: ${v}`);
-    if (start.getTime() < Date.now() - this.o.noShowMs) throw new BadRequest("that start time is too far in the past");
+    if (!archive && start.getTime() < Date.now() - this.o.noShowMs) throw new BadRequest("that start time is too far in the past");
     return start;
   }
 
@@ -197,7 +210,7 @@ export class Scheduler {
     if (!Scheduler.given(input.link)) throw new BadRequest("link is required");
     const { platform, link } = checkLink(input.link);
     if (!Scheduler.given(input.start)) throw new BadRequest("start is required");
-    const start = this.parseStart(input.start);
+    const start = this.parseStart(input.start, isArchive(link));
     const slug = this.checkSlug(Scheduler.given(input.slug) ? input.slug.trim() : defaultSlug(start));
     const name = Scheduler.given(input.name) ? Scheduler.cleanName(input.name) || this.o.defaultName : this.o.defaultName;
     const email = Scheduler.given(input.email) ? Scheduler.checkEmail(input.email) : undefined;
@@ -233,7 +246,7 @@ export class Scheduler {
     const newLink = Scheduler.given(input.link) ? checkLink(input.link) : null;
     if (newLink && m0 && newLink.platform !== m0.platform) throw new BadRequest(`that's a ${newLink.platform} link; this meeting is on ${m0.platform}`);
     const link = newLink ? newLink.link : j.link;
-    const start = Scheduler.given(input.start) ? this.parseStart(input.start).toISOString() : j.start;
+    const start = Scheduler.given(input.start) ? this.parseStart(input.start, isArchive(link)).toISOString() : j.start;
     const slug = Scheduler.given(input.slug) && input.slug.trim() !== j.slug ? this.checkSlug(input.slug.trim(), id) : j.slug;
     const name = Scheduler.given(input.name) ? Scheduler.cleanName(input.name) || j.name : j.name;
     // Like the link, the email never reaches the page: blank keeps it,
@@ -327,7 +340,8 @@ export class Scheduler {
     if (m.duplicateOf) throw new BadRequest("this meeting is a duplicate; capture the other one", 409);
     const other = this.activeJobFor(m.id);
     if (other) throw new BadRequest(`${other.slug} is already ${other.status} for this meeting`, 409);
-    if (Date.parse(m.start) < Date.now() - this.o.noShowMs) throw new BadRequest("this meeting started too long ago", 409);
+    if (isArchive(m.link) && this.jobs.some((j) => j.meetingRef === m.id && j.status === "done")) throw new BadRequest("this meeting's video has already been recorded", 409);
+    if (Date.parse(m.start) < Date.now() - this.o.noShowMs && !isArchive(m.link)) throw new BadRequest("this meeting started too long ago", 409);
     const taken = (s: string) => this.jobs.some((j) => j.slug === s) || existsSync(path.join(this.o.out, s));
     let n = 1, slug = m.slug;
     while (taken(slug)) slug = `${m.slug}-${++n}`;
@@ -403,6 +417,7 @@ export class Scheduler {
           new Date(j.start).getTime() - this.o.leadMs - 60_000 <= now)
         .sort((a, b) => a.start.localeCompare(b.start));
       for (const j of due) {
+        if (now > new Date(j.start).getTime() + OVERDUE_MS && !this.overdueSeen.has(j.id)) { this.overdueSeen.add(j.id); this.emit("overdue", j); }
         if (this.running.size >= this.o.maxConcurrent) {
           if (j.status !== "queued") {
             j.status = "queued";
@@ -477,6 +492,7 @@ export class Scheduler {
       this.save(j);
       log.error(`${j.slug}: ${j.error}`);
       capLog.end();
+      this.emit("finished", j);
       return;
     }
 
@@ -484,6 +500,7 @@ export class Scheduler {
       this.o.entry,
       "--link", j.link, "--start", j.start, "--slug", j.slug, "--name", j.name,
       "--out", this.o.out, "--lead-min", String(this.o.leadMs / 60_000), "--method", method,
+      ...(isArchive(j.link) ? ["--archive"] : []),
       ...(this.o.auth ? ["--auth", this.o.auth] : []),
     ];
     const proc = spawn(process.execPath, args, {
@@ -529,6 +546,7 @@ export class Scheduler {
         if (j.status === "failed" && !j.error) j.error = signal ? `capture killed by ${signal}` : `capture exited ${code}`;
         this.save(j);
         log.info(`${j.slug} finished: ${j.status} (outcome ${j.outcome ?? "?"})`);
+        this.emit("finished", j);
         resolve();
         void this.tick(); // a queued job may be waiting for this slot
       });
@@ -540,6 +558,7 @@ export class Scheduler {
     delete j.error;
     this.save(j);
     log.info(screen ? `launched ${j.slug} on display ${display}, sink ${sink}` : `launched ${j.slug} (${method}, no display)`);
+    this.emit("started", j);
   }
 }
 

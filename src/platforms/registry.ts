@@ -4,14 +4,18 @@
  * arbitrary site.
  */
 import type { Platform } from "./types.js";
+import { granicus } from "./granicus.js";
 import { youtube } from "./youtube.js";
 import { zoom } from "./zoom.js";
 
-export const PLATFORMS: readonly Platform[] = [zoom, youtube];
+export const PLATFORMS: readonly Platform[] = [zoom, youtube, granicus];
 
 export function platformFor(link: string): Platform | undefined {
   return PLATFORMS.find((p) => p.match(link));
 }
+
+/** Is this link an archived video to import (captured at once, ends when read)? */
+export function isArchive(link: string): boolean { return platformFor(link)?.isArchive?.(link) === true; }
 
 export function platformById(id: string): Platform | undefined {
   return PLATFORMS.find((p) => p.id === id);

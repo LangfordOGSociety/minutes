@@ -37,8 +37,10 @@ export type RecorderInput =
    *  as they are (no encode); else encode them with the configured encoder.
    *  `map`: the -map options when the streams come from more than one
    *  input (YouTube serves video and audio as separate playlists); the
-   *  default is the first video and audio of input 0. */
-  | { kind: "stream"; args: string[]; copy: boolean; map?: string[] };
+   *  default is the first video and audio of input 0. `once`: a finished
+   *  video (an archive): when ffmpeg reads it to the end the capture is
+   *  complete, not dropped, and a part that fails is discarded and retried. */
+  | { kind: "stream"; args: string[]; copy: boolean; map?: string[]; once?: boolean };
 
 export interface RecorderOpts {
   outdir: string;

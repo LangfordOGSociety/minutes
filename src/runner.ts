@@ -49,6 +49,7 @@ export interface Config {
   vaapiDevice: string;
   leadMs: number;           // join this long before scheduled start
   noShowMs: number;         // give up if nothing starts by start + noShow
+  archive?: boolean;        // importing a finished video: the meeting's date is the past, so there is no start to wait for or miss
   rejoinWaitMs: number;     // rejoined into a waiting room this long => ended
   reconnectGraceMs: number; // tolerate Zoom's own reconnect this long
   maxDurationMs: number;    // hard cap from first frame recorded
@@ -57,7 +58,10 @@ export interface Config {
   retryMaxMs: number;
 }
 
-type SessionResult = "ended" | "interrupted" | "not_started" | "stopped" | "blocked" | "invalid_link" | "email_required";
+type SessionResult = "ended" | "interrupted" | "not_started" | "stopped" | "blocked" | "invalid_link" | "email_required" | "archive_failed";
+
+/** A finished video that fails to read this many times is given up on (not retried forever). */
+const ARCHIVE_TRIES = 3;
 
 export class Capture {
   private dir: string;
@@ -74,6 +78,9 @@ export class Capture {
   private dumpSeq = 0;
   private platform: Platform;
   private lastSpeaker = "";
+  /** Parts reading a finished video (RecorderInput.once): ffmpeg reaching its end completes the capture. */
+  private oncePart = new Set<number>();
+  private archiveFails = 0;
 
   constructor(private cfg: Config) {
     const platform = platformFor(cfg.link);
@@ -186,7 +193,7 @@ export class Capture {
           this.outcome = "ended_after_interruption";
           break;
         }
-      } else if (now > cfg.start.getTime() + cfg.noShowMs) {
+      } else if (!cfg.archive && now > cfg.start.getTime() + cfg.noShowMs) {
         this.outcome = "not_started";
         break;
       }
@@ -282,6 +289,15 @@ export class Capture {
             // lifetime (and the part's end time) is real.
             await this.rec.stop();
             const lived = cur.ended!.getTime() - cur.started.getTime();
+            if (this.oncePart.has(cur.index)) {
+              // A finished video read to its end is the whole capture. A read that failed is dropped
+              // (a second try starts from the top, so keeping it would double the beginning).
+              if (cur.exitCode === 0) { this.event("archive_read", { part: cur.index, livedMs: lived }); return "ended"; }
+              this.parts = this.parts.filter((p) => p !== cur);
+              this.oncePart.delete(cur.index);
+              this.event("archive_retry", { part: cur.index, exitCode: cur.exitCode, livedMs: lived });
+              if (++this.archiveFails >= ARCHIVE_TRIES) { this.event("archive_failed", { tries: this.archiveFails }); return "archive_failed"; }
+            }
             this.ffFastFails = lived < FF_MIN_PART_MS ? this.ffFastFails + 1 : 0;
             const delay = this.ffFastFails
               ? Math.min(FF_MAX_BACKOFF_MS, 1_000 * 2 ** this.ffFastFails) : 0;
@@ -293,7 +309,9 @@ export class Capture {
           }
           if (Date.now() >= this.ffRetryAt) {
             const input = session.input?.() ?? { kind: "screen", display: cfg.display, sink: cfg.sink };
-            this.parts.push(this.rec.start(this.parts.length + 1, input));
+            const part = this.rec.start(this.parts.length + 1, input);
+            this.parts.push(part);
+            if (input.kind === "stream" && input.once) this.oncePart.add(part.index);
             this.writeManifest();
             // Each part starts with whoever was already speaking.
             if (this.lastSpeaker) this.track("speakers", this.lastSpeaker);
@@ -332,7 +350,7 @@ export class Capture {
             this.event("rejoin_timeout");
             return "ended";
           }
-        } else if (now > cfg.start.getTime() + cfg.noShowMs) {
+        } else if (!cfg.archive && now > cfg.start.getTime() + cfg.noShowMs) {
           return "not_started";
         }
       }

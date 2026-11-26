@@ -26,6 +26,27 @@ captures).
   runner's `State`. `registry.ts`: link -> platform; unclaimed links are
   refused (replaces the old `*.zoom.us` check in jobs.ts). `guard.ts`:
   `mediaGuard()`, first init script of every browser platform.
+- `src/platforms/granicus.ts` Granicus MediaManager video, method `stream`:
+  a clip (`/player/clip/<id>`, also `MediaPlayer.php?clip_id=`) or event
+  page on a city's own `<city>.granicus.com`; the page's
+  `video_url="....m3u8"` is the ffmpeg input. A CLIP is an ARCHIVE
+  (`Platform.isArchive`): imported at once whatever the meeting's date
+  (`Scheduler.parseStart(.., archive)`, the child gets `--archive` so
+  there is no start to miss), `RecorderInput.once` ends the capture when
+  ffmpeg reads it to the end (exit 0 -> "ended" after one part; a failed
+  read is discarded and retried, 3 tries then outcome `archive_failed`).
+  VERIFIED on a real Saanich clip (clip 1326, 3 min: 19 s, h264 720p +
+  aac). EVENTS (live) are NOT verified live: assumed a playlist not under
+  /OnDemand/ while live, none before; under /OnDemand/ = archived. The CDN
+  403s tool-like User-Agents (curl, ffmpeg's own) but accepts
+  `Mozilla/5.0 (compatible; minutes/0.2; +url)`, which page fetch and
+  ffmpeg both send; the playlist must be https on granicus.com. Sync:
+  a meeting that's over but has an archive link and no recording is
+  imported if within 45 days (`archiveOk`; per policy: auto schedules,
+  review queues it (the review view lists past archives), list_only only
+  lists); never twice (`scheduleMeeting` refuses if a job is done). The
+  PrimeGov parser makes a finished meeting's published Granicus clip its
+  link. NOT built: reading the Granicus ViewPublisher archive table.
 - `src/platforms/youtube.ts` (#20) YouTube live streams, method `stream`:
   yt-dlp (pinned standalone binary in its own Dockerfile layer, `YT_DLP`
   env, bump it first when YouTube breaks) only DESCRIBES the video
@@ -233,6 +254,23 @@ captures).
   characters, audited) and a Speakers button per recording on /admin.
   The player says some names were added by hand. Searching an apostrophe
   name: O'Brien is two tokens (o, brien), so search "o'brien".
+- `src/ops.ts` messages to the operator (CAPTURE_NOTIFY_URL, ntfy-style;
+  `notify(url, text, {priority, tags})`): `Scheduler.onEvent` emits
+  started / finished / overdue (a capture still not started 10 min after
+  its meeting did) and `Ops` turns them into plain-words messages
+  (`describeOutcome`: ended / not_started / blocked / invalid_link /
+  email_required / ended_after_interruption / stopped / failed + error;
+  problems are priority high and say "Check /admin"); transcripts ready or
+  failed are found by scanning transcript.status.json every 2 min. Each
+  message once, remembered in `ops_notified` (migration 14) across
+  restarts; the first transcript scan ever only records the existing ones.
+  Messages carry titles, outcomes and the PUBLIC page address, never a
+  meeting link, passcode or file. Listener errors never reach the
+  scheduler. Restart recovery ("interrupted") emits nothing.
+  `OPERATOR_EMAIL` (needs mail): `util.setOperatorSink` makes EVERY
+  `notify()` call (login, backups, feeds, ops) also email that address
+  (module-level sink, set by createApp, cleared on close). Production had
+  no CAPTURE_NOTIFY_URL and no push service in the cluster, hence this.
 - `src/recordings.ts` recordings on disk, admin view and public view.
   Public = a job made it, its meeting is public and not cancelled, video or
   live. `publicFiles()` is the only list /media serves from (never
