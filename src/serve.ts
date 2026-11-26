@@ -414,9 +414,9 @@ export function createApp(o: ServeOpts, entry: string): App {
   const publicRecordings = () => listRecordings(o.out, sched, o.tz).filter((r) => r.public).map(toPublic);
 
   /** Bring the transcript search index in step with the files on disk (cheap when nothing changed). */
-  let searchSyncedAt = 0;
+  let searchSyncedAt = 0, closed = false;
   const syncSearch = (force = false) => {
-    if (!force && Date.now() - searchSyncedAt < 30_000) return;
+    if (closed || (!force && Date.now() - searchSyncedAt < 30_000)) return;
     searchSyncedAt = Date.now();
     try {
       const items = sched.list().map((j) => ({ recSlug: j.slug, meetingId: j.meetingRef, file: path.join(o.out, j.slug, `${j.slug}.transcript.json`) }))
@@ -1136,6 +1136,7 @@ export function createApp(o: ServeOpts, entry: string): App {
       server.close();
       server.closeAllConnections();
       clearInterval(pruneTimer);
+      closed = true;
       clearInterval(searchTimer);
       keeper.stop();
       backups?.stop();
