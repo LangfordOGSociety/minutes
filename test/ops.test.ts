@@ -12,6 +12,10 @@ import { openDb } from "../src/db.js";
 import type { Job, JobEvent } from "../src/jobs.js";
 import { Scheduler } from "../src/jobs.js";
 import { Ops, describeOutcome } from "../src/ops.js";
+import { notify } from "../src/util.js";
+import { fixtures } from "./fixtures.js";
+import { startApp } from "./server.js";
+import { MemoryMailer } from "./smtp.js";
 import { tmpDir } from "./helpers.js";
 
 const job = (o: Partial<Job> = {}): Job => ({ id: "j1", meetingRef: "m1", link: "https://zoom.us/j/87093163922?pwd=429539", start: "2026-12-08T01:30:00.000Z", slug: "council", name: "Recorder",
@@ -159,5 +163,50 @@ describe("the scheduler's events", () => {
     (s as unknown as { tick(): Promise<void> }).tick();
     await sleep(100);
     assert.deepEqual(events.map((e) => [e.kind, e.status]), [["overdue", "queued"]]);                              // once
+  });
+});
+
+describe("the operator's email", () => {
+  async function app(t: TestContext, extra: Record<string, unknown>) {
+    const cleanups: (() => unknown)[] = [];
+    t.after(async () => { for (const f of cleanups.reverse()) await f(); });
+    const hooks = { after: (fn: () => unknown) => cleanups.push(fn) };
+    const out = path.join(tmpDir(hooks), "rec");
+    const r = await startApp(hooks, out, extra);
+    fixtures(r.app, out);
+    return { ...r, out };
+  }
+
+  it("with OPERATOR_EMAIL, every operator message also goes by email (login, backups and feeds too), not secret", async (t) => {
+    const mailer = new MemoryMailer();
+    await app(t, { mailer, operatorEmail: "ops@example.com", publicUrl: "https://minutes.example.org" });
+    await notify(null, "Zoom login expired. Run minutes login before the next capture.", { priority: "high" });
+    await notify(null, "minutes backup OK again.");
+    assert.deepEqual(mailer.sent.map((m) => [m.to, m.subject]), [["ops@example.com", "minutes: Zoom login expired. Run minutes login before the next capture."], ["ops@example.com", "minutes: minutes backup OK again."]]);
+    assert.match(mailer.sent[0].text, /\n-- \nminutes · https:\/\/minutes\.example\.org\nThis one needs a look\.\n$/);
+    assert.doesNotMatch(mailer.sent[1].text, /needs a look/);
+  });
+
+  it("a transcript that finishes is emailed; without the setting nothing is sent; a mail failure is only logged", async (t) => {
+    const mailer = new MemoryMailer();
+    const { app: a, out } = await app(t, { mailer, operatorEmail: "ops@example.com", publicUrl: "https://minutes.example.org" });
+    a.checkTranscripts();                                                                                          // the first look: records the existing ones
+    assert.equal(mailer.sent.length, 0);
+    const dir = path.join(out, "failed-d");
+    writeFileSync(path.join(dir, "transcript.status.json"), JSON.stringify({ status: "failed", error: "CUDA out of memory" }));
+    a.checkTranscripts();
+    await sleep(50);
+    assert.deepEqual(mailer.sent.map((m) => m.subject), ["minutes: Transcription FAILED: failed-d: CUDA out of memory. Check the transcriber."]);
+    a.checkTranscripts(); await sleep(50);
+    assert.equal(mailer.sent.length, 1);
+    // No address configured: nothing goes anywhere (and nothing breaks).
+    const quiet = new MemoryMailer();
+    await app(t, { mailer: quiet });
+    await notify(null, "nobody to tell");
+    assert.equal(quiet.sent.length, 0);
+    // A mailer that fails: logged, never thrown.
+    const broken = { from: "x", send: async () => { throw new Error("smtp down"); } };
+    await app(t, { mailer: broken, operatorEmail: "ops@example.com" });
+    await assert.doesNotReject(notify(null, "hello"));
   });
 });

@@ -245,6 +245,10 @@ captures).
   Messages carry titles, outcomes and the PUBLIC page address, never a
   meeting link, passcode or file. Listener errors never reach the
   scheduler. Restart recovery ("interrupted") emits nothing.
+  `OPERATOR_EMAIL` (needs mail): `util.setOperatorSink` makes EVERY
+  `notify()` call (login, backups, feeds, ops) also email that address
+  (module-level sink, set by createApp, cleared on close). Production had
+  no CAPTURE_NOTIFY_URL and no push service in the cluster, hence this.
 - `src/recordings.ts` recordings on disk, admin view and public view.
   Public = a job made it, its meeting is public and not cancelled, video or
   live. `publicFiles()` is the only list /media serves from (never

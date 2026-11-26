@@ -72,8 +72,14 @@ export function defaultSlug(start: Date): string {
 /** Slugs become directory and file names, so keep them boring. */
 export const SLUG_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$/;
 
-/** POST a short text alert (ntfy-style) to url, if set. Never throws. `priority` and `tags` are ntfy's headers (ignored by other receivers). */
-export async function notify(url: string | null, text: string, o: { priority?: "low" | "default" | "high" | "urgent"; tags?: string } = {}): Promise<void> {
+type NotifyOpts = { priority?: "low" | "default" | "high" | "urgent"; tags?: string };
+let operatorSink: ((text: string, o: NotifyOpts) => Promise<void>) | null = null;
+/** Also deliver every operator message here (the server sets it to email, OPERATOR_EMAIL); null to stop. */
+export function setOperatorSink(fn: ((text: string, o: NotifyOpts) => Promise<void>) | null): void { operatorSink = fn; }
+
+/** Tell the operator: POST a short text alert (ntfy-style) to url if set, and send it by email if an operator address is set up. Never throws. `priority` and `tags` are ntfy's headers (ignored by other receivers). */
+export async function notify(url: string | null, text: string, o: NotifyOpts = {}): Promise<void> {
+  if (operatorSink) { try { await operatorSink(text, o); } catch (e) { logger("notify").warn("emailing the operator failed", e); } }
   if (!url) return;
   try {
     await fetch(url, {

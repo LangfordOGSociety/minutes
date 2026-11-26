@@ -204,6 +204,10 @@ password) is gone.
   when a capture hasn't started 10 minutes after its meeting did, and
   "Transcript ready" (with the public link) or "Transcription FAILED". Each
   once, never a meeting link or passcode.
+  With mail set up, `OPERATOR_EMAIL=you@example.com` also emails every one of
+  these (and the login, backup and feed messages), so you don't need a push
+  service at all: a message is its subject line, the problems say "This one
+  needs a look".
   From the command line: `minutes check-login --auth auth/zoom-auth.json`.
 - **Meetings that ask for an email**: some hosts require an email address
   before Join works. Fill in the form's optional *Email* field for that

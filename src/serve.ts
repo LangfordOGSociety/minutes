@@ -125,7 +125,7 @@ import { Ops } from "./ops.js";
 import { STOP_PAGE } from "./pages/stop.js";
 import { Thumbs } from "./thumbs.js";
 import { SEARCH_PAGE } from "./pages/search.js";
-import { SLUG_RE, logger, notify } from "./util.js";
+import { SLUG_RE, logger, notify, setOperatorSink } from "./util.js";
 
 const log = logger("web");
 
@@ -147,6 +147,8 @@ export interface ServeOpts extends Omit<SchedulerOpts, "entry"> {
   tokenDownloadBps?: number;
   /** Make poster images for recordings that have a video and none yet (thumbs.ts). Default on; tests turn it off. */
   thumbnails?: boolean;
+  /** Also email the operator's messages (captures, transcripts, login, backups, feeds) to this address. Needs mail. */
+  operatorEmail?: string;
   /** Who may frame /embed/<meeting> (net.ts embedAncestors): "*" (default), "none", or origins. */
   embedOrigins?: string;
   session: Omit<KeeperOpts, "auth" | "out" | "leadMs">;
@@ -340,6 +342,8 @@ export interface App {
   tokens: Tokens;
   search: Search;
   alerts: Alerts;
+  /** Look at transcript status now and tell the operator about new ones (it also runs by itself). */
+  checkTranscripts(): void;
   /** Email alert matches for meetings not handled yet (it also runs after each search index pass). */
   processAlerts(): Promise<number>;
   /** Re-read transcripts into the search index now (it also runs by itself). */
@@ -473,8 +477,14 @@ export function createApp(o: ServeOpts, entry: string): App {
     platformOf: (j) => platformFor(j.link)?.label ?? "The platform",
   });
   sched.onEvent = (e) => ops.job(e);
+  const emailOperator = !!mailer && !!o.operatorEmail;
+  if (emailOperator) {
+    setOperatorSink((text, opts) => mailer!.send({ to: o.operatorEmail!, subject: `minutes: ${text.split("\n")[0]}`.slice(0, 150),
+      text: `${text}\n\n-- \nminutes${site ? " · " + site : ""}${opts.priority === "high" || opts.priority === "urgent" ? "\nThis one needs a look." : ""}\n` }));
+    log.info(`operator messages are also emailed to ${o.operatorEmail}`);
+  }
   const opsTranscripts = () => {
-    if (closed || !o.session.notifyUrl) return;
+    if (closed || (!o.session.notifyUrl && !emailOperator)) return;
     try { ops.transcripts(listRecordings(o.out, sched, o.tz)); } catch (e) { log.warn("checking transcripts for the operator failed", e); }
   };
   const searchTimer = setInterval(() => { syncSearch(true); opsTranscripts(); }, 120_000);
@@ -1300,12 +1310,13 @@ export function createApp(o: ServeOpts, entry: string): App {
   });
 
   return {
-    server, accounts, sched, audit, tokens, search, syncSearch, syncThumbs, alerts, processAlerts,
+    server, accounts, sched, audit, tokens, search, syncSearch, syncThumbs, alerts, processAlerts, checkTranscripts: opsTranscripts,
     async close() {
       server.close();
       server.closeAllConnections();
       clearInterval(pruneTimer);
       closed = true;
+      if (emailOperator) setOperatorSink(null);
       clearInterval(searchTimer);
       clearInterval(thumbTimer);
       keeper.stop();
