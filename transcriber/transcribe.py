@@ -26,7 +26,9 @@ voice takes the Zoom name only when the two match one-to-one (a council
 chamber on one room mic is one Zoom name for many voices: no names then).
 `label` is what the subtitles and text show. Per-recording speaker counts:
 <slug>/transcribe.json {"min_speakers": 6, "max_speakers": 15} (or
-"num_speakers"); defaults from DIARIZE_MIN / DIARIZE_MAX.
+"num_speakers"); defaults from DIARIZE_MIN / DIARIZE_MAX. The same file's
+"vocab_extra" (names from the meeting's agenda, written by the server) is
+added to the end of Whisper's prompt.
 
 Live mode (LIVE=1, default): while a capture is still recording, each
 growing part_NNN.mkv is transcribed and aligned in chunks of about
@@ -342,8 +344,15 @@ def vocab_for(d: Path) -> tuple[str | None, list[str]]:
                          if f.stem != "common" and d.name.lower().startswith(f.stem.lower())), None)
         if name:
             files.append(VOCAB_DIR / f"{name}.txt")
-    prompt = " ".join(t for t in (read_vocab(f) for f in files) if t)
-    return prompt or None, [f.name for f in files if f.exists()]
+    parts = [t for t in (read_vocab(f) for f in files) if t]
+    used = [f.name for f in files if f.exists()]
+    # The meeting's own names, from its agenda (the server writes vocab_extra, see src/agendavocab.ts).
+    # Last, because Whisper keeps only the end of a long prompt.
+    extra = (read_json(d / "transcribe.json") or {}).get("vocab_extra")
+    if isinstance(extra, str) and extra.strip():
+        parts.append(" ".join(extra.split())[:700])
+        used.append("agenda")
+    return (" ".join(parts) or None), used
 
 
 # ------------------------------------------------------------------- live --
