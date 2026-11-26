@@ -41,6 +41,8 @@ export interface ApiToken {
   expiresAt: string | null;
   revokedAt: string | null;
   lastUsedAt: string | null;
+  /** Per-token overrides (api_tokens.limits JSON): downloadBps caps this token's download speed (#36). */
+  limits: { downloadBps?: number } | null;
 }
 
 export type Verdict = { allow: true } | { allow: false; retryAfterS: number };
@@ -48,7 +50,7 @@ export type Limiter = (token: ApiToken, route: string) => Verdict;
 
 type Row = {
   id: string; user_id: string; prefix: string; hash: string; label: string; scopes: string;
-  created_at: string; expires_at: string | null; revoked_at: string | null; last_used_at: string | null;
+  created_at: string; expires_at: string | null; revoked_at: string | null; last_used_at: string | null; limits: string | null;
 };
 
 const sha256 = (s: string) => createHash("sha256").update(s).digest("hex");
@@ -56,8 +58,13 @@ const sha256 = (s: string) => createHash("sha256").update(s).digest("hex");
 function fromRow(r: Row): ApiToken {
   let scopes: Scope[] = ["read"];
   try { scopes = (JSON.parse(r.scopes) as string[]).filter((s): s is Scope => (SCOPES as readonly string[]).includes(s)); } catch { /* keep read */ }
+  let limits: ApiToken["limits"] = null;
+  try {
+    const l = r.limits ? JSON.parse(r.limits) as { downloadBps?: unknown } : null;
+    if (l && Number.isFinite(l.downloadBps) && (l.downloadBps as number) > 0) limits = { downloadBps: Math.floor(l.downloadBps as number) };
+  } catch { /* ignore a bad value */ }
   return { id: r.id, userId: r.user_id, prefix: r.prefix, label: r.label, scopes, createdAt: r.created_at, expiresAt: r.expires_at,
-    revokedAt: r.revoked_at, lastUsedAt: r.last_used_at };
+    revokedAt: r.revoked_at, lastUsedAt: r.last_used_at, limits };
 }
 
 export const activeToken = (t: ApiToken, now = new Date()) => !t.revokedAt && (!t.expiresAt || Date.parse(t.expiresAt) > now.getTime());
@@ -140,6 +147,17 @@ export class Tokens {
     const t = this.get(id);
     if (!t) return false;
     this.db.prepare("UPDATE api_tokens SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL").run(now.toISOString(), id);
+    return true;
+  }
+
+  /** Set (or with bps 0 / null clear) a token's own download speed cap. False if there's no such token. */
+  setDownloadLimit(id: string, bps: number | null): boolean {
+    const t = this.get(id);
+    if (!t) return false;
+    if (bps !== null && (!Number.isInteger(bps) || bps < 0)) throw new TokenError("downloadBps must be a whole number of bytes per second, or 0 for the default");
+    const limits = { ...(t.limits ?? {}), downloadBps: bps || undefined };
+    const empty = !limits.downloadBps;
+    this.db.prepare("UPDATE api_tokens SET limits = ? WHERE id = ?").run(empty ? null : JSON.stringify(limits), id);
     return true;
   }
 
