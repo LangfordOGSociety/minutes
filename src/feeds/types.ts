@@ -59,6 +59,9 @@ export interface DetectedMeeting {
   link?: string;
   /** The meeting's page on the source site (public). */
   pageUrl?: string;
+  /** Its public stream page, live or recorded (Granicus player, eScribe
+   *  live stream), once the source says there is one. Not a join link. */
+  streamUrl?: string;
   agendaUrl?: string;
   cancelled?: boolean;
   /** Everything the source lists for the meeting (agenda, revised agenda,

@@ -184,6 +184,10 @@ const MIGRATIONS: string[] = [
   // revised agenda, addenda, notices, minutes), to log what's posted or
   // pulled. NULL = never listed (older rows): the first list isn't news.
   `ALTER TABLE meetings ADD COLUMN documents TEXT;`,
+
+  // 9: the meeting's public stream page (live or recorded), separate from
+  // its join link: Granicus player, eScribe live stream, PrimeGov video.
+  `ALTER TABLE meetings ADD COLUMN stream_url TEXT;`,
 ];
 
 export function openDb(file: string): DB {

@@ -65,6 +65,14 @@ describe("escribe", () => {
       "AgendaCover: Agenda Cover Page (PDF)", "Agenda: Agenda (PDF)", "Agenda: Agenda (HTML)", "Video: Video",
       "AdditionalDocuments: Postponement Notice of Council Meeting", "AdditionalDocuments: Dial in Instructions"]);
     assert.equal(nov24.documents?.[0].url, "https://pub-langford.escribemeetings.com/FileStream.ashx?DocumentId=19547");
+    // Stream page: the recorded video for Nov 24; nothing yet for Dec 8 (its
+    // VideoStream link exists, but eScribe doesn't say there's live video).
+    assert.equal(nov24.streamUrl, "https://pub-langford.escribemeetings.com/Players/ISIStandAlonePlayer.aspx?Id=b3e00e65-8200-4120-b0bd-ebbdbe192c08");
+    assert.equal(ms.find((m) => m.start.toISOString() === "2026-12-09T00:30:00.000Z")!.streamUrl, undefined);
+    const live = structuredClone(rows.find((r: { ID: string }) => r.ID === "a9d4b010-6031-4b91-b569-4ff05e542571"));
+    live.HasLiveVideo = true;
+    assert.equal(calendarToMeetings([live], { baseUrl: "https://pub-langford.escribemeetings.com/", tz: TZ, meetingTypes: [] })[0].streamUrl,
+      "https://pub-langford.escribemeetings.com/VideoStream.aspx?MeetingId=a9d4b010-6031-4b91-b569-4ff05e542571");
     // No types configured: every meeting, whatever its type.
     assert.deepEqual(escribe.validate({ baseUrl: "https://pub-langford.escribemeetings.com" }).meetingTypes, []);
     assert.equal(ms.length, 7);

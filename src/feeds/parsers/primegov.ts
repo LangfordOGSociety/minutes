@@ -74,6 +74,7 @@ export function toMeetings(rows: PgMeeting[], o: { baseUrl: string; tz: string; 
       externalId: String(r.id), title, body: title, start, end, link: zoom,
       agendaUrl: agendaHtml ?? docs.find((d) => /agenda/i.test(d.type ?? ""))?.url,
       pageUrl: agendaHtml ?? (r.videoUrl ? abs(r.videoUrl) : undefined),
+      streamUrl: r.videoUrl ? abs(r.videoUrl) : undefined,
       cancelled: /\bcancell?ed\b/i.test(title) || undefined,
       documents: docs, agendaHtml,
     });

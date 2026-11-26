@@ -15,6 +15,10 @@
  *   Langford), or "cancelled" in the meeting's name. A "Postponement
  *   Notice" is not a cancellation (the 2026-11-24 council meeting had one
  *   and went ahead).
+ * - Stream page: the portal's live stream (VideoStream.aspx) while it says
+ *   there's live video, else the recorded video's player once there is
+ *   one. Every meeting carries a VideoStream link, streamed or not, so the
+ *   link alone doesn't count.
  * - Documents: every item the portal lists for the meeting (agenda PDF and
  *   HTML, cover page, revised agendas, addenda, notices, minutes, video),
  *   so the sync can log what's posted or pulled.
@@ -36,6 +40,7 @@ interface EscribeDoc { Type?: string; Format?: string; Title?: string; Url?: str
 interface EscribeMeeting {
   ID: string; MeetingName: string; MeetingType?: string; StartDate: string; EndDate?: string;
   Description?: string; Location?: string; MeetingDocumentLink?: EscribeDoc[];
+  HasLiveVideo?: boolean; HasVideo?: boolean; LiveVideoStandAloneLink?: string;
 }
 
 /** The few entities eScribe puts in names and descriptions. */
@@ -68,6 +73,13 @@ function docsOf(docs: EscribeDoc[], abs: (u: string) => string): { title: string
     if (!out.has(url)) out.set(url, { title: decodeEntities(d.Title ?? "").replace(/\s+/g, " ").trim() || "(untitled)", ...(d.Type ? { type: d.Type } : {}), url });
   }
   return [...out.values()];
+}
+
+function streamOf(r: EscribeMeeting, docs: EscribeDoc[], abs: (u: string) => string): string | undefined {
+  const live = /href=['"]([^'"]*VideoStream\.aspx[^'"]*)['"]/i.exec(r.LiveVideoStandAloneLink ?? "")?.[1];
+  if (r.HasLiveVideo && live) return abs(decodeEntities(live));
+  const rec = docs.find((d) => d.Type === "Video" && d.Url)?.Url;
+  return r.HasVideo && rec ? abs(rec) : undefined;
 }
 
 const CANCELLED_DOC = /\bcancell?ation notice\b|\bnotice of cancell?ation\b|\bmeeting cancell?ed\b/i;
@@ -107,6 +119,7 @@ export function calendarToMeetings(rows: EscribeMeeting[], o: { baseUrl: string;
       cancelled: /\bcancell?ed\b/i.test(name) || docs.some((d) => CANCELLED_DOC.test(d.Title ?? "")) || undefined,
       link: findLink(textOf(`${r.Description ?? ""}\n${r.Location ?? ""}`)),
       documents: docsOf(docs, abs),
+      streamUrl: streamOf(r, docs, abs),
       agendaHtml: html ? abs(html) : undefined,
     });
   }

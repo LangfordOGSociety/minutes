@@ -77,6 +77,7 @@ import { Poller, healthOf } from "./feeds/poller.js";
 import { parserById, parsers } from "./feeds/registry.js";
 import { FeedError, Feeds, type Feed } from "./feeds/store.js";
 import { Sync, shownLink } from "./feeds/sync.js";
+import { platformFor as platformOf } from "./platforms/registry.js";
 import type { Meeting } from "./meetings.js";
 import { ConfigError } from "./feeds/types.js";
 import { FEEDS_PAGE } from "./pages/feeds.js";
@@ -166,6 +167,14 @@ export function safeNext(v: string | null): string {
 function adminJob(j: Job) {
   const { link, email, ...rest } = j;
   return { ...rest, meetingId: platformFor(link)?.publicId(link) ?? "?", hasEmail: !!email };
+}
+
+/** A join link as admins may see it: platform + meeting number, a URL
+ *  without the passcode, and whether a passcode is on file. Null = none. */
+function joinLinkOf(link: string | undefined) {
+  if (!link) return null;
+  const p = platformOf(link);
+  return { label: shownLink(link), url: p?.publicUrl?.(link) ?? null, passcode: /[?&]pwd=/.test(link) };
 }
 
 /** A user as the pages see them. */
@@ -306,7 +315,8 @@ export function createApp(o: ServeOpts, entry: string): App {
     const job = sched.activeJobFor(m.id) ?? sched.list().filter((j) => j.meetingRef === m.id).at(-1);
     const dup = m.duplicateOf ? sched.meetings.get(m.duplicateOf) : undefined;
     return { id: m.id, title: m.title, body: m.body ?? null, start: m.start, slug: m.slug, status: m.status, review: m.review ?? null,
-      removedAt: m.removedAt ?? null, link: shownLink(m.link), agendaUrl: m.agendaUrl ?? null, pageUrl: m.pageUrl ?? null,
+      removedAt: m.removedAt ?? null, link: shownLink(m.link), joinLink: joinLinkOf(m.link), streamUrl: m.streamUrl ?? null,
+      agendaUrl: m.agendaUrl ?? null, pageUrl: m.pageUrl ?? null,
       feedId: m.feedId ?? null, feedName: m.feedId ? feeds.get(m.feedId)?.name ?? "(deleted feed)" : null,
       duplicateOf: dup ? { id: dup.id, title: dup.title, slug: dup.slug, start: dup.start } : null,
       capture: job ? { id: job.id, slug: job.slug, status: job.status } : null };

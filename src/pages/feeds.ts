@@ -30,6 +30,7 @@ table.list { width: 100%; border-collapse: collapse; font-size: 13px; }
 table.list th, table.list td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line); vertical-align: top; overflow-wrap: anywhere; }
 table.list th { color: var(--muted); font-weight: 600; }
 .tag { display: inline-block; font-size: 11px; padding: 1px 6px; border-radius: 999px; border: 1px solid currentColor; }
+.links-line a { overflow-wrap: anywhere; }
 nav.sub { padding: 0 24px; font-size: 13px; color: var(--muted); }
 @media (max-width: 900px) { nav.sub { padding: 0 16px; } }
 #preview[hidden], #runsbox[hidden] { display: none; }
@@ -199,11 +200,13 @@ function preview(parserId, cfg, feed) {
   fill(box, el("div", { "class": "hint", text: "Fetching... (nothing is saved)" }));
   $("preview").scrollIntoView({ behavior: "smooth", block: "start" });
   aapi("POST", "/api/admin/feeds/preview", { parser: parserId, config: cfg, feedId: feed ? feed.id : undefined }).then(function (d) {
-    var t = el("table", { "class": "list" }, el("tr", null, el("th", { text: "Start" }), el("th", { text: "Meeting" }), el("th", { text: "Link" }), el("th", { text: "Notes" })));
+    var t = el("table", { "class": "list" }, el("tr", null, el("th", { text: "Start" }), el("th", { text: "Meeting" }), el("th", { text: "Join link" }),
+      el("th", { text: "Stream" }), el("th", { text: "Notes" })));
     d.meetings.sort(function (a, b) { return a.start.localeCompare(b.start); }).forEach(function (m) {
       var notes = [m.cancelled ? "CANCELLED" : null, m.agendaUrl ? "agenda" : null, m.externalId].filter(Boolean).join(" · ");
       t.appendChild(el("tr", null, cell(fmt(m.start)), el("td", null, m.title, m.body && m.body !== m.title ? el("div", { "class": "hint", text: m.body }) : null),
-        cell(m.link || "none"), cell(notes)));
+        cell(m.link || "not yet"), m.streamUrl ? el("td", null, el("a", { href: m.streamUrl, target: "_blank", rel: "noopener", text: "watch" })) : cell("not yet"),
+        cell(notes)));
     });
     fill(box, el("div", { "class": "hint", text: d.meetings.length + " meeting(s) found. Nothing was saved." }),
       d.meetings.length ? t : null,
@@ -240,7 +243,7 @@ function meetingRow(m, inQueue) {
   else if (m.review === "rejected") pills.push(el("span", { "class": "pill s-stopped", text: "rejected" }));
   if (m.capture && m.capture.status !== "cancelled") pills.push(pill(m.capture.status));
   if (m.removedAt) pills.push(el("span", { "class": "pill s-failed", text: "gone from feed" }));
-  var sub = [fmt(m.start), m.body && m.body !== m.title ? m.body : null, m.feedName, m.link || "no link yet",
+  var sub = [fmt(m.start), m.body && m.body !== m.title ? m.body : null, m.feedName,
     m.capture ? "capture " + m.capture.slug : null,
     m.duplicateOf ? "same as " + m.duplicateOf.title + " (" + m.duplicateOf.slug + ")" : null].filter(Boolean).join(" · ");
   var hist = el("div", { "class": "sub" });
@@ -280,9 +283,26 @@ function meetingRow(m, inQueue) {
   var title = el("div", { "class": "title" });
   pills.forEach(function (p) { title.appendChild(p); });
   title.appendChild(document.createTextNode(m.title));
-  var row = el("div", { "class": "row", id: (inQueue ? "q-" : "m-") + m.id }, title, actions, el("div", { "class": "sub", text: sub }), hist);
+  var row = el("div", { "class": "row", id: (inQueue ? "q-" : "m-") + m.id }, title, actions, el("div", { "class": "sub", text: sub }),
+    linksLine(m), hist);
   return row;
 }
+// Join link (what gets recorded) and stream page (what viewers watch):
+// detected or not, and where. The join link never includes its passcode.
+function linksLine(m) {
+  var j = m.joinLink, line = el("div", { "class": "sub links-line" });
+  line.appendChild(el("span", { "class": "tag " + (j ? "h-ok" : "h-new"), text: j ? "join link" : "no join link yet" }));
+  if (j) {
+    line.appendChild(document.createTextNode(" "));
+    line.appendChild(j.url ? el("a", { href: j.url, target: "_blank", rel: "noopener", text: j.label }) : el("span", { text: j.label }));
+    if (j.passcode) line.appendChild(document.createTextNode(" (passcode on file)"));
+  }
+  line.appendChild(document.createTextNode("  "));
+  line.appendChild(el("span", { "class": "tag " + (m.streamUrl ? "h-ok" : "h-new"), text: m.streamUrl ? "stream" : "no stream page yet" }));
+  if (m.streamUrl) { line.appendChild(document.createTextNode(" ")); line.appendChild(el("a", { href: m.streamUrl, target: "_blank", rel: "noopener", text: m.streamUrl })); }
+  return line;
+}
+
 function msgFor(m, text) {
   var r = document.getElementById("m-" + m.id) || document.getElementById("q-" + m.id);
   if (r) r.appendChild(el("div", { "class": "sub msg ok", text: text }));

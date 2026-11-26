@@ -277,7 +277,11 @@ describe("feeds page in Chromium", { skip: skipReason() }, () => {
     await page.click("#review .row:has-text('Council Meeting') button:has-text('Approve')");
     await page.waitForSelector("#review .empty");
     await page.waitForSelector("#meetings .row:has-text('Council Meeting') .pill.s-scheduled");
-    assert.match(await page.textContent("#meetings .row:has-text('Council Meeting')") ?? "", /Zoom 87093163922 · capture langford-council-meeting-/);
+    const rowText = await page.textContent("#meetings .row:has-text('Council Meeting')") ?? "";
+    assert.match(rowText, /capture langford-council-meeting-/);
+    assert.match(rowText, /join link Zoom 87093163922 \(passcode on file\)\s+no stream page yet/);
+    assert.equal(await page.getAttribute("#meetings .row:has-text('Council Meeting') .links-line a", "href"), "https://zoom.us/j/87093163922");
+    assert.doesNotMatch(await page.content(), /429539/);
     await page.click("#meetings .row:has-text('Council Meeting') button:has-text('History')");
     await page.waitForSelector("#meetings .row:has-text('Council Meeting') table");
     assert.match(await page.textContent("#meetings .row:has-text('Council Meeting') table") ?? "", /approved[\s\S]*added/);

@@ -151,6 +151,12 @@ captures).
   PDF /Public/CompiledDocument?...&compileOutputType=1) + videoUrl; link
   from zoomMeetingLink (isZoomMeeting) or an upcoming HTML agenda.
   Blank types/titles = every meeting, in every parser.
+  streamUrl (migration 9, meetings.stream_url): the public live/recorded
+  stream page, separate from the join link. eScribe: VideoStream.aspx
+  only while HasLiveVideo (every meeting has that link), else the
+  recorded player when HasVideo; Granicus: MediaPlayer; PrimeGov:
+  videoUrl. Admin lists get joinLink {label, url via
+  Platform.publicUrl (zoom.us/j/<id>, never pwd), passcode: bool}.
   `sync.ts` (the Applier, migration 7): diff by externalId into
   meeting_changes (added, date_changed (another local day) vs
   time_changed (same day), both with local times, link changed, cancelled,

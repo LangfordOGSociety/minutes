@@ -32,6 +32,7 @@ export interface Meeting {
   visibility: Visibility;
   slug: string;           // base name for its jobs' folders
   pageUrl?: string;       // the meeting on the source site (public)
+  streamUrl?: string;     // its public stream page (live or recorded), when the source has one
   review?: Review;        // feeds with the review policy; unset = no review needed
   duplicateOf?: string;   // same real meeting as this one (dedup): never captured twice
   removedAt?: string;     // missing from its feed since then (a flag only)
@@ -52,11 +53,11 @@ type Row = {
   platform: string; method: string | null; link: string; start: string; end_est: string | null;
   agenda_url: string | null; status: string; visibility: string; slug: string; created_at: string; updated_at: string;
   page_url: string | null; review: string | null; duplicate_of: string | null; removed_at: string | null; last_seen_at: string | null;
-  documents: string | null;
+  documents: string | null; stream_url: string | null;
 };
 
 const COLS = "id, feed_id, external_id, title, body, platform, method, link, start, end_est, agenda_url, status, visibility, slug, created_at, updated_at, " +
-  "page_url, review, duplicate_of, removed_at, last_seen_at, documents";
+  "page_url, review, duplicate_of, removed_at, last_seen_at, documents, stream_url";
 
 function toRow(m: Meeting): Row {
   return {
@@ -66,7 +67,7 @@ function toRow(m: Meeting): Row {
     created_at: m.createdAt, updated_at: m.updatedAt,
     page_url: m.pageUrl ?? null, review: m.review ?? null, duplicate_of: m.duplicateOf ?? null,
     removed_at: m.removedAt ?? null, last_seen_at: m.lastSeenAt ?? null,
-    documents: m.documents ? JSON.stringify(m.documents) : null,
+    documents: m.documents ? JSON.stringify(m.documents) : null, stream_url: m.streamUrl ?? null,
   };
 }
 
@@ -88,6 +89,7 @@ function fromRow(r: Row): Meeting {
   if (r.removed_at !== null) m.removedAt = r.removed_at;
   if (r.last_seen_at !== null) m.lastSeenAt = r.last_seen_at;
   if (r.documents !== null) { try { m.documents = JSON.parse(r.documents); } catch { /* ignore a bad row */ } }
+  if (r.stream_url !== null) m.streamUrl = r.stream_url;
   return m;
 }
 

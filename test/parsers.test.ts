@@ -42,6 +42,12 @@ describe("join links in text", () => {
     assert.equal(findLink("Call 1-855-703-8985 or 778 907 2071"), undefined);
     assert.equal(findLink("https://teams.microsoft.com/l/meetup-join/x"), undefined);
   });
+
+  it("zoom's public URL drops the passcode", async () => {
+    const { zoom } = await import("../src/platforms/zoom.js");
+    assert.equal(zoom.publicUrl!("https://us06web.zoom.us/j/84342909811?pwd=abc123"), "https://zoom.us/j/84342909811");
+    assert.equal(zoom.publicUrl!("84342909811"), "https://zoom.us/j/84342909811");
+  });
 });
 
 describe("ical", () => {

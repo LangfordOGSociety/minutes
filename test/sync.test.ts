@@ -244,6 +244,26 @@ describe("feed sync", () => {
     assert.equal(app.sched.meetings.get(m.id)!.documents?.length, 2);
   });
 
+  it("join link and stream page: detected or not, shown without the passcode, changes logged", async (t) => {
+    const { src, run, byTitle, admin } = await setup(t, "list_only");
+    src.state.meetings = [
+      { id: "s1", title: "Council", start: at(48), link: ZOOM },
+      { id: "s2", title: "Committee", start: at(72) },
+    ];
+    await run();
+    const council = await byTitle("Council"), cttee = await byTitle("Committee");
+    assert.deepEqual(council.joinLink, { label: "Zoom 87093163922", url: "https://zoom.us/j/87093163922", passcode: true });
+    assert.equal(council.streamUrl, null);
+    assert.equal(cttee.joinLink, null);
+    // The stream page appears later.
+    (src.state.meetings[1] as { streamUrl?: string }).streamUrl = "https://saanich.ca.granicus.com/MediaPlayer.php?view_id=1&event_id=901";
+    await run();
+    assert.equal((await byTitle("Committee")).streamUrl, "https://saanich.ca.granicus.com/MediaPlayer.php?view_id=1&event_id=901");
+    const h = (await admin.get(`/api/admin/meetings/${cttee.id}/changes`)).json;
+    assert.deepEqual(h[0].after, { streamUrl: "https://saanich.ca.granicus.com/MediaPlayer.php?view_id=1&event_id=901" });
+    assert.doesNotMatch(JSON.stringify((await admin.get("/api/admin/meetings")).json), /429539/);
+  });
+
   it("slugs", () => {
     assert.equal(slugify("Parks, Recreation & Culture Committee"), "parks-recreation-and-culture-committee");
     assert.equal(slugify("Séance du conseil"), "seance-du-conseil");
