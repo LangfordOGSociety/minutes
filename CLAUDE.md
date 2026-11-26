@@ -122,6 +122,28 @@ captures).
   Admin override: `POST /api/admin/meetings/:id/hide|show` (page, listing
   and /media all 404 while hidden). Public types have no link/feed fields:
   keep it that way (test/site.test.ts greps the JSON).
+- `src/tokens.ts` API tokens + usage (Phase 4, migration 10).
+  `mnt_<8 hex prefix>_<43 base64url>`, only sha256 stored, shown once,
+  5 active per user, scopes read (always) / download, optional expiry;
+  disabling a user revokes theirs (`Accounts.setDisabled`), and every
+  request re-checks the owner (`capsFor`: verified, not must-change).
+  A token is accepted on `/api/v1/*` ONLY (never as a session: tests
+  assert an admin's token opens nothing under /admin). `/api/v1`: the
+  public meetings/changes endpoints plus `/meetings/:id/files[/:name]`
+  (download = token with `download`, Range, only the public recording's
+  files, never manifest/parts/live), `/me`, `/openapi.json`; `/api/docs`
+  is the human page (`src/apidocs.ts`; a test keeps the OpenAPI paths and
+  the routes in step). Invalid Authorization on /api/v1 = 401 even for
+  public endpoints. Usage: one `api_usage` row per token request (route
+  pattern, status, body bytes actually written via `countBytes`, ip,
+  file), 90 days, plus `api_usage_daily` per token per UTC day (kept);
+  `Tokens.limiter(token, route)` is called for every token request and
+  allows all today (`{allow:false, retryAfterS}` -> 429 + Retry-After; the
+  `limits` column is reserved). CORS `*` on the public reads (/api/v1,
+  /api/meetings, /api/changes, /media, /oembed) incl. OPTIONS preflight
+  for Authorization and Range; never on admin/session routes. Own tokens
+  and usage: `/api/account/tokens|usage` (Account page); all: `/api/admin/
+  tokens|usage` (Admin page). No download speed throttle yet (#36).
 - `src/recordings.ts` recordings on disk, admin view and public view.
   Public = a job made it, its meeting is public and not cancelled, video or
   live. `publicFiles()` is the only list /media serves from (never

@@ -96,6 +96,33 @@ describe("pages in Chromium", { skip: skipReason() }, () => {
     assert.equal(new URL(page.url()).pathname, "/login");
     assert.deepEqual(errors, []);
   });
+  it("account page: create an API token (shown once), see it listed, use it, revoke it", async () => {
+    await app.accounts.create({ email: "dev@example.com", role: "user", password: "developer password", verified: true });
+    const page = await (await browser.newContext()).newPage();
+    const errors: string[] = [];
+    page.on("pageerror", (e) => errors.push(e.message));
+    page.on("dialog", (d) => void d.accept());
+    await page.goto(base + "/login?next=/account");
+    await page.fill("#email", "dev@example.com");
+    await page.fill("#password", "developer password");
+    await page.click("#loginform button");
+    await page.waitForSelector("#tokens:not([hidden])");
+    await page.fill("#tk-label", "archive script");
+    await page.selectOption("#tk-exp", "30");
+    await page.click("#tokform button");
+    await page.waitForSelector("#newtok:not([hidden])");
+    const tok = await page.inputValue("#newtokval");
+    assert.match(tok, /^mnt_[0-9a-f]{8}_[A-Za-z0-9_-]{43}$/);
+    await page.waitForSelector("#toklist .tok:has-text('archive script')");
+    assert.match(await page.textContent("#toklist") ?? "", /can download.*expires/);
+    assert.ok(!(await page.textContent("#toklist") ?? "").includes(tok.slice(13)), "the list never shows the secret");
+    const call = async () => (await fetch(base + "/api/v1/me", { headers: { authorization: `Bearer ${tok}` } })).status;
+    assert.equal(await call(), 200);
+    await page.click("#toklist .tok:has-text('archive script') button");
+    await page.waitForSelector("#toklist .tok.off:has-text('revoked')");
+    assert.equal(await call(), 401);
+    assert.deepEqual(errors, []);
+  });
 });
 
 describe("public page in Chromium", { skip: skipReason() }, () => {

@@ -85,6 +85,11 @@ label.check[hidden] { display: none; }
       <p class="hint">New admins: <code>minutes user add --admin email</code> on the server, or promote a user here.</p>
     </section>
     <section>
+      <h2>API tokens</h2>
+      <div class="list" id="tokens"><div class="empty">Loading...</div></div>
+      <div class="hint" id="tokusage"></div>
+    </section>
+    <section>
       <h2>Audit log</h2>
       <form id="auditf" class="auditf" autocomplete="off">
         <select id="aaction" aria-label="Action"><option value="">All actions</option></select>
@@ -348,6 +353,35 @@ function updateUser(u, ch) {
 }
 loadUsers();
 setInterval(function () { if (!document.hidden) loadUsers(); }, 30000);
+
+// --- API tokens and usage (#16, #18) ---
+function gb(n) { return n < 1048576 ? Math.round(n / 1024) + " KB" : n < 1073741824 ? (n / 1048576).toFixed(1) + " MB" : (n / 1073741824).toFixed(2) + " GB"; }
+function loadTokens() {
+  Promise.all([aapi("GET", "/api/admin/tokens"), aapi("GET", "/api/admin/usage?days=30")]).then(function (r) {
+    var list = r[0], use = r[1], byId = {};
+    use.tokens.forEach(function (t) { byId[t.id] = t; });
+    var box = document.getElementById("tokens");
+    fill(box);
+    if (!list.length) box.appendChild(el("div", { "class": "empty", text: "No API tokens." }));
+    list.forEach(function (t) {
+      var u = byId[t.id] || { requests: 0, bytes: 0 };
+      var state = t.revokedAt ? "revoked" : !t.active ? "expired" : null;
+      var actions = el("div", { "class": "actions" });
+      if (t.active) actions.appendChild(el("button", { "class": "danger", text: "Revoke", on: { click: function () {
+        if (confirm("Revoke " + t.userEmail + "'s token " + t.label + "?")) aapi("DELETE", "/api/admin/tokens/" + t.id).then(loadTokens, function (e) { alert(e.message); });
+      } } }));
+      box.appendChild(el("div", { "class": "row" },
+        el("div", { "class": "title" }, state ? el("span", { "class": "pill s-stopped", text: state }) : null, t.userEmail + " · " + t.label), actions,
+        el("div", { "class": "sub", text: "mnt_" + t.prefix + "_... · " + t.scopes.join(", ") + " · last used " + (t.lastUsedAt ? ago(t.lastUsedAt) : "never") +
+          " · 30 days: " + u.requests + " requests, " + gb(u.bytes) })));
+    });
+    var tu = document.getElementById("tokusage");
+    tu.textContent = use.users.length ? "By user, last 30 days: " + use.users.map(function (x) { return x.email + " " + x.requests + " requests, " + gb(x.bytes); }).join("; ") +
+      (use.files.length ? ". Most downloaded: " + use.files.slice(0, 3).map(function (f) { return f.file + " (" + f.requests + "x)"; }).join(", ") : "") + "." : "No API use in the last 30 days.";
+  }, function () {});
+}
+loadTokens();
+setInterval(function () { if (!document.hidden) loadTokens(); }, 60000);
 
 // --- audit log ---
 var auditOlder = false, auditTimer = null;

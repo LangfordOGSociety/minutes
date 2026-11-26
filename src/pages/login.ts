@@ -49,6 +49,15 @@ button.link { border: 0; background: none; color: var(--accent); padding: 0; tex
 .hp { position: absolute; left: -10000px; width: 1px; height: 1px; overflow: hidden; }
 a { color: var(--accent); }
 code { font-size: 12px; }
+select { width: 100%; padding: 9px 10px; border: 1px solid var(--line); border-radius: 7px; background: var(--bg); color: var(--ink); font: inherit; }
+label.check { display: flex; gap: 8px; align-items: center; font-weight: 400; }
+label.check input { width: auto; }
+.tok { border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; margin-bottom: 8px; overflow-wrap: anywhere; }
+.tok.off { opacity: .55; }
+.tok .t { font-weight: 600; } .tok .s { color: var(--muted); font-size: 13px; }
+.tok button { margin-top: 6px; padding: 4px 10px; font-size: 13px; }
+.newtok { border: 1px solid var(--ok); border-radius: 8px; padding: 10px; margin-top: 12px; }
+.newtok input { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
 </style>
 </head>
 <body>
@@ -129,6 +138,28 @@ code { font-size: 12px; }
     <p><a href="/" id="home">Continue</a></p>
   </section>
 
+  <section id="tokens" hidden>
+    <h2>API tokens</h2>
+    <p class="hint">For scripts that download recordings and transcripts. Listing meetings needs no token. See the <a href="/api/docs">API docs</a>.</p>
+    <div id="toklist"></div>
+    <div class="newtok" id="newtok" hidden>
+      <div class="msg ok">Copy this token now. It won't be shown again.</div>
+      <input id="newtokval" readonly aria-label="Your new token">
+      <button type="button" id="copytok" style="margin-top:8px">Copy</button>
+    </div>
+    <form id="tokform">
+      <label for="tk-label">What is it for?</label>
+      <input id="tk-label" name="label" required maxlength="60" placeholder="e.g. my archive script">
+      <label for="tk-exp">Expires</label>
+      <select id="tk-exp" name="exp"><option value="">Never</option><option value="30">In 30 days</option><option value="90">In 90 days</option><option value="365">In a year</option></select>
+      <label class="check"><input type="checkbox" name="dl" checked> Allow file downloads</label>
+      <button class="primary" type="submit">Create token</button>
+      <div class="msg" id="tokmsg" role="status"></div>
+    </form>
+    <h2 style="margin-top:20px">Your usage, last 30 days</h2>
+    <div class="hint" id="usage">Loading...</div>
+  </section>
+
   <section id="verify" hidden>
     <h2>Confirm your email</h2>
     <p class="hint">Enter the code we emailed you. Until then the account can't have API tokens, and it's deleted after 7 days.</p>
@@ -177,8 +208,64 @@ function api(method, url, body) {
 function $(id) { return document.getElementById(id); }
 function show(id, on) { $(id).hidden = !on; }
 function msg(id, cls, text) { var m = $(id); m.className = "msg" + (cls ? " " + cls : ""); m.textContent = text; }
-var PANES = ["signin", "signup", "forgot", "account", "verify", "change"];
+var PANES = ["signin", "signup", "forgot", "account", "tokens", "verify", "change"];
 function only(ids) { PANES.forEach(function (p) { show(p, ids.indexOf(p) >= 0); }); }
+
+// --- API tokens (#16) and usage (#18) ---
+function h(tag, cls, text) { var e = document.createElement(tag); if (cls) e.className = cls; if (text !== undefined) e.textContent = text; return e; }
+function day(iso) { return iso ? new Date(iso).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" }) : "never"; }
+function size(n) { return n < 1048576 ? Math.round(n / 1024) + " KB" : n < 1073741824 ? (n / 1048576).toFixed(1) + " MB" : (n / 1073741824).toFixed(2) + " GB"; }
+function loadTokens() {
+  api("GET", "/api/account/tokens").then(function (list) {
+    var box = $("toklist");
+    box.replaceChildren();
+    if (!list.length) box.appendChild(h("p", "hint", "No tokens yet."));
+    list.forEach(function (t) {
+      var state = t.revokedAt ? "revoked" : !t.active ? "expired" : "";
+      var row = h("div", "tok" + (t.active ? "" : " off"));
+      row.appendChild(h("div", "t", t.label + (state ? " (" + state + ")" : "")));
+      row.appendChild(h("div", "s", "mnt_" + t.prefix + "_... · " + (t.scopes.indexOf("download") >= 0 ? "can download" : "read only") +
+        " · made " + day(t.createdAt) + " · last used " + day(t.lastUsedAt) + " · expires " + (t.expiresAt ? day(t.expiresAt) : "never")));
+      if (t.active) {
+        var b = h("button", "", "Revoke");
+        b.addEventListener("click", function () {
+          if (!confirm("Revoke " + t.label + "? Anything using it stops working.")) return;
+          api("DELETE", "/api/account/tokens/" + t.id).then(function () { loadTokens(); }, function (e) { msg("tokmsg", "err", e.message); });
+        });
+        row.appendChild(b);
+      }
+      box.appendChild(row);
+    });
+  }, function (e) { msg("tokmsg", "err", e.message); });
+  api("GET", "/api/account/usage?days=30").then(function (u) {
+    var box = $("usage");
+    box.replaceChildren();
+    var req = 0, bytes = 0;
+    u.days.forEach(function (d) { req += d.requests; bytes += d.bytes; });
+    box.appendChild(h("div", "", req ? req + " requests, " + size(bytes) + " sent." : "No API requests yet."));
+    u.files.slice(0, 5).forEach(function (f) { box.appendChild(h("div", "", f.file + " · " + f.requests + "x · " + size(f.bytes))); });
+  }, function () {});
+}
+$("tokform").addEventListener("submit", function (ev) {
+  ev.preventDefault();
+  var f = ev.target;
+  var body = { label: f.label.value, scopes: f.dl.checked ? ["read", "download"] : ["read"] };
+  if (f.exp.value) body.expiresInDays = Number(f.exp.value);
+  msg("tokmsg", "", "Creating...");
+  api("POST", "/api/account/tokens", body).then(function (d) {
+    f.reset(); msg("tokmsg", "", "");
+    $("newtokval").value = d.token;
+    show("newtok", true);
+    $("newtokval").select();
+    loadTokens();
+  }, function (e) { msg("tokmsg", "err", e.message); });
+});
+$("copytok").addEventListener("click", function () {
+  var v = $("newtokval"), b = $("copytok");
+  v.select();
+  if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(v.value).then(function () { b.textContent = "Copied"; }, function () { b.textContent = "Press Ctrl+C"; });
+  else b.textContent = "Press Ctrl+C";
+});
 
 function signedOut(pane) {
   only([pane]);
@@ -195,6 +282,8 @@ function render(user, setupNeeded) {
     return;
   }
   var panes = ["account"];
+  var tokens = onAccount && !user.mustChangePassword && user.caps.indexOf("tokens.own") >= 0;
+  if (tokens) { panes.push("tokens"); loadTokens(); }
   if (!user.verified && !user.mustChangePassword && signupOpen) panes.push("verify");
   if (user.mustChangePassword || onAccount) panes.push("change");
   only(panes);

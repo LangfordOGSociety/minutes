@@ -188,6 +188,47 @@ const MIGRATIONS: string[] = [
   // 9: the meeting's public stream page (live or recorded), separate from
   // its join link: Granicus player, eScribe live stream, PrimeGov video.
   `ALTER TABLE meetings ADD COLUMN stream_url TEXT;`,
+
+  // 10: API tokens (#16) and their usage (#18). Only a sha256 of a token is
+  // stored. api_usage rows are kept 90 days; api_usage_daily (requests and
+  // bytes per token per UTC day) stays. `limits` is for a later per-token
+  // rate limit (JSON, unused).
+  `CREATE TABLE api_tokens (
+     id           TEXT PRIMARY KEY,
+     user_id      TEXT NOT NULL REFERENCES users (id),
+     prefix       TEXT NOT NULL UNIQUE,
+     hash         TEXT NOT NULL,
+     label        TEXT NOT NULL,
+     scopes       TEXT NOT NULL,        -- JSON array: read, download
+     created_at   TEXT NOT NULL,
+     expires_at   TEXT,
+     revoked_at   TEXT,
+     last_used_at TEXT,
+     limits       TEXT
+   );
+   CREATE INDEX api_tokens_user ON api_tokens (user_id);
+   CREATE TABLE api_usage (
+     id       INTEGER PRIMARY KEY AUTOINCREMENT,
+     at       TEXT NOT NULL,
+     token_id TEXT NOT NULL,
+     user_id  TEXT NOT NULL,
+     route    TEXT NOT NULL,
+     file     TEXT,
+     status   INTEGER NOT NULL,
+     bytes    INTEGER NOT NULL,
+     ip       TEXT
+   );
+   CREATE INDEX api_usage_at ON api_usage (at);
+   CREATE INDEX api_usage_token ON api_usage (token_id, at);
+   CREATE TABLE api_usage_daily (
+     day      TEXT NOT NULL,
+     token_id TEXT NOT NULL,
+     user_id  TEXT NOT NULL,
+     requests INTEGER NOT NULL,
+     bytes    INTEGER NOT NULL,
+     PRIMARY KEY (day, token_id)
+   );
+   CREATE INDEX api_usage_daily_user ON api_usage_daily (user_id, day);`,
 ];
 
 export function openDb(file: string): DB {
