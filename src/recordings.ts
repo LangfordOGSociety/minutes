@@ -30,7 +30,7 @@ export interface Recording {
   /** From the transcriber's transcript.status.json, if it has seen this one. */
   transcript: { status: string; stage: string | null; progress: number | null; error: string | null } | null;
   /** Side files that exist: subtitles, transcript, Zoom captions, speakers, live draft. */
-  files: { vtt?: string; srt?: string; txt?: string; transcript?: string; zoomCaptions?: string; speakers?: string; live?: string };
+  files: { vtt?: string; srt?: string; txt?: string; transcript?: string; zoomCaptions?: string; speakers?: string; live?: string; thumb?: string };
 }
 
 export type PublicRecording = Pick<Recording, "slug" | "title" | "scheduledStart" | "active" | "video" | "videoBytes" |
@@ -67,7 +67,7 @@ export function listRecordings(out: string, sched: Scheduler, tz: string): Recor
     const files = {
       vtt: has(`${slug}.vtt`), srt: has(`${slug}.srt`), txt: has(`${slug}.txt`),
       transcript: has(`${slug}.transcript.json`), zoomCaptions: has(`${slug}.zoom-captions.vtt`),
-      speakers: has(`${slug}.speakers.json`), live: active ? has("live.json") : undefined,
+      speakers: has(`${slug}.speakers.json`), live: active ? has("live.json") : undefined, thumb: video ? has(`${slug}.jpg`) : undefined,
     };
     const job = jobs.filter((j) => j.slug === slug).at(-1);
     const meeting = job ? sched.meetings.get(job.meetingRef) : undefined;

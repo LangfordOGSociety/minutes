@@ -7,7 +7,7 @@ export async function startApp(t: HasAfter, out: string, extra: Record<string, u
   const app = createApp({
     host: "127.0.0.1", port: 0, tz: "America/Vancouver", secureCookie: true,
     out, auth: null, defaultName: "Recorder", leadMs: 0, noShowMs: 30 * 60_000, maxConcurrent: 1, width: 1280, height: 720,
-    session: { refreshMs: 86_400_000, preflightMs: 0, notifyUrl: null }, backup: null, ...extra,
+    session: { refreshMs: 86_400_000, preflightMs: 0, notifyUrl: null }, backup: null, thumbnails: false, ...extra,
   }, "/nonexistent/index.js");
   await new Promise<void>((r) => app.server.listen(0, "127.0.0.1", r));
   const base = `http://127.0.0.1:${(app.server.address() as AddressInfo).port}`;

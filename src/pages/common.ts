@@ -178,7 +178,7 @@ function transcriptNote(r) {
 function play(r, base, box, extraLinks, o) {
   o = o || {};
   var src = mediaUrl(base, r.slug, r.video), f = r.files || {};
-  var v = el("video", { controls: "", preload: "metadata", src: src, crossorigin: "anonymous" });
+  var v = el("video", { controls: "", preload: "metadata", src: src, crossorigin: "anonymous", poster: f.thumb ? mediaUrl(base, r.slug, f.thumb) : null });
   // Subtitles: the Whisper transcript on by default; Zoom's own captions as
   // a second, optional track (reference only).
   if (f.vtt) v.appendChild(el("track", { kind: "subtitles", srclang: "en", label: "Transcript", src: mediaUrl(base, r.slug, f.vtt), "default": "" }));
