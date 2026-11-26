@@ -16,7 +16,11 @@
  *   Notice" is not a cancellation (the 2026-11-24 council meeting had one
  *   and went ahead).
  * - Optional meeting types: only those (Langford has ~20: Council Meeting,
- *   Committee of the Whole Meeting, Special Council Meeting, ...).
+ *   Committee of the Whole Meeting, Special Council Meeting, ...). One per
+ *   line; an entry that's no type itself is also read as a comma-separated
+ *   list (types can contain commas: "Parks, Recreation, Culture and
+ *   Beautification Committee"). When the filter leaves nothing, the log
+ *   lists the portal's types.
  */
 import { findLink } from "../../platforms/registry.js";
 import { registerParser } from "../registry.js";
@@ -54,14 +58,28 @@ function localTime(s: string | undefined, tz: string): Date | undefined {
 
 const CANCELLED_DOC = /\bcancell?ation notice\b|\bnotice of cancell?ation\b|\bmeeting cancell?ed\b/i;
 
+const norm = (s: string) => s.trim().replace(/\s+/g, " ").toLowerCase();
+
+/** The wanted types: entries as given, plus the comma-separated parts of
+ *  any entry that isn't itself one of the portal's types. */
+export function typeFilter(entries: string[], portalTypes: string[]): Set<string> {
+  const known = new Set(portalTypes.map(norm));
+  const out = new Set<string>();
+  for (const e of entries) {
+    out.add(norm(e));
+    if (!known.has(norm(e))) for (const part of e.split(",")) if (part.trim()) out.add(norm(part));
+  }
+  return out;
+}
+
 /** Calendar rows -> meetings, before any agenda is read. */
 export function calendarToMeetings(rows: EscribeMeeting[], o: { baseUrl: string; tz: string; meetingTypes: string[] }): (DetectedMeeting & { agendaHtml?: string })[] {
-  const types = new Set(o.meetingTypes.map((t) => t.toLowerCase()));
+  const types = typeFilter(o.meetingTypes, rows.map((r) => decodeEntities(r.MeetingType ?? r.MeetingName ?? "")));
   const abs = (u: string) => new URL(u.replace(/^\.\//, "/"), o.baseUrl).toString();
   const out: (DetectedMeeting & { agendaHtml?: string })[] = [];
   for (const r of rows) {
     const body = decodeEntities(r.MeetingType ?? r.MeetingName ?? "").trim();
-    if (types.size && !types.has(body.toLowerCase())) continue;
+    if (types.size && !types.has(norm(body))) continue;
     const start = localTime(r.StartDate, o.tz);
     if (!r.ID || !start) continue;
     const docs = r.MeetingDocumentLink ?? [];
@@ -112,6 +130,10 @@ export const escribe: FeedParser<Config> = {
     try { rows = (JSON.parse(r.body) as { d: EscribeMeeting[] }).d; } catch { throw new Error("the portal didn't return its calendar JSON"); }
     if (!Array.isArray(rows)) throw new Error("the portal's calendar JSON has no meeting list");
     const ms = calendarToMeetings(rows, { baseUrl: c.baseUrl, tz: ctx.tz, meetingTypes: c.meetingTypes });
+    if (!ms.length && rows.length && c.meetingTypes.length) {
+      const have = [...new Set(rows.map((x) => decodeEntities(x.MeetingType ?? "").trim()).filter(Boolean))].sort();
+      ctx.log(`none of the ${rows.length} meeting(s) in this window are of the chosen types; types here: ${have.join(" | ")}`);
+    }
     // Join links from the agendas of meetings that haven't happened yet.
     let read = 0;
     for (const m of ms) {

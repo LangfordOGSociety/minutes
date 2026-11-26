@@ -11,7 +11,7 @@ import type { AddressInfo } from "node:net";
 import path from "node:path";
 import { describe, it } from "node:test";
 import { feedContext } from "../src/feeds/context.js";
-import { calendarToMeetings, decodeEntities, escribe, textOf } from "../src/feeds/parsers/escribe.js";
+import { calendarToMeetings, decodeEntities, escribe, textOf, typeFilter } from "../src/feeds/parsers/escribe.js";
 import type { HasAfter } from "./helpers.js";
 
 const FIX = path.resolve("test/fixtures/feeds/escribe");
@@ -81,6 +81,28 @@ describe("escribe", () => {
     // Past meetings' and cancelled meetings' agendas aren't read.
     assert.deepEqual(seen.filter((x) => x.method === "GET").map((x) => x.url.split("&")[0]), ["/Meeting.aspx?Id=b3e00e65-8200-4120-b0bd-ebbdbe192c08"]);
     assert.match(ctx.lines.join("\n"), /7 meeting\(s\), 1 agenda\(s\) read/);
+  });
+
+  it("meeting types: one per line, or comma-separated on one line (as first configured on Langford)", () => {
+    const rows = JSON.parse(calendar).d;
+    const opts = { baseUrl: "https://x.escribemeetings.com/", tz: TZ };
+    const oneLine = calendarToMeetings(rows, { ...opts, meetingTypes: ["Council Meeting, Special Council Meeting, Committee of the Whole Meeting"] });
+    const perLine = calendarToMeetings(rows, { ...opts, meetingTypes: ["Council Meeting", "Special Council Meeting", "Committee of the Whole Meeting"] });
+    assert.deepEqual(oneLine.map((m) => m.externalId), perLine.map((m) => m.externalId));
+    assert.deepEqual(perLine.map((m) => m.title), ["Special Council Meeting", "Council Meeting", "Council Meeting"]);
+    // A type with commas in its name stays whole when it's a real type.
+    const parks = "Parks, Recreation, Culture and Beautification Committee";
+    assert.deepEqual([...typeFilter([parks], [parks, "Council Meeting"])], [parks.toLowerCase()]);
+    assert.ok(typeFilter(["Council Meeting,  Board of Variance"], ["Council Meeting"]).has("board of variance"));
+  });
+
+  it("says which types exist when the filter leaves nothing", async (t) => {
+    const { base } = await portal(t);
+    const c = escribe.validate({ baseUrl: base, allowOtherHost: true, meetingTypes: ["Regular Council"], daysBack: 30, daysAhead: 60 });
+    const ctx = feedContext({ tz: TZ, now: new Date("2026-11-24T16:00:00Z"), label: "t" });
+    const r = await escribe.fetch(c, ctx);
+    assert.deepEqual("meetings" in r && r.meetings, []);
+    assert.match(ctx.lines.join("\n"), /none of the 7 meeting\(s\) in this window are of the chosen types; types here: Community Advisory Committee \| Council Meeting \| /);
   });
 
   it("errors and config", async (t) => {
