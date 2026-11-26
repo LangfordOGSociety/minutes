@@ -114,7 +114,7 @@ describe("the YouTube channel parser", () => {
     const code = await feedCommand(["test", "youtube", "--config", '{"channel": "https://www.youtube.com/@NASA"}', ...routes.flatMap((r) => ["--route", r]), "--now", "2026-11-26T07:00:00Z", "--tz", "America/Vancouver", "--strict"], (s) => lines.push(s));
     assert.equal(code, 0, lines.join("\n"));
     const text = lines.join("\n");
-    assert.match(text, /^2026-11-26 03:30  Progress 97 Cargo Ship Docking/m);
+    assert.match(text, /^2026-11-26 04:30  Progress 97 Cargo Ship Docking/m);
     assert.match(text, /join link: YouTube/);
     assert.match(text, /2 meeting\(s\): 2 with a join link, 2 with a stream page/);
   });

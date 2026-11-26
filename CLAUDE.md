@@ -220,6 +220,18 @@ captures).
   2026-11-24 council had one and went ahead), link from upcoming meetings'
   HTML agenda (Langford: "Enter the Meeting ID: 843 4290 9811", webinar,
   no passcode). Fixtures saved from Langford in test/fixtures/feeds/escribe.
+  `youtube` (#21): a channel's /streams tab (`ytInitialData`: current
+  `lockupViewModel` layout, old `videoRenderer` still read) for videos
+  that are live ("N watching") or upcoming ("N waiting", "Scheduled
+  for"), then each candidate's watch page (`ytInitialPlayerResponse`) for
+  the real start (`liveBroadcastDetails.startTimestamp` / offline-slate
+  epoch). The tab's "Scheduled for 11/29/26, 7:25 AM" is in the
+  REQUESTER's timezone: never used for the time. link = watch URL (the
+  YouTube platform takes it), externalId = video id; live streams
+  started over 24 h ago (24/7 loops) are skipped; titleFilter, maxVideos.
+  Fails loudly when YouTube's page data isn't there (consent page, layout
+  change). Fixtures: test/fixtures/feeds/youtube (trimmed real pages,
+  2026-11-26).
   `granicus`: ViewPublisher.php?view_id=N, the Upcoming Events table only,
   rows read by content (name = first cell, date = visible text in the
   config timezone: NOT the hidden epoch span, 3h off on Pittsburgh's
