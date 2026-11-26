@@ -3,7 +3,7 @@
  * password change, the admin page. Needs Playwright's Chromium.
  */
 import assert from "node:assert/strict";
-import { existsSync } from "node:fs";
+import { existsSync, writeFileSync } from "node:fs";
 import http from "node:http";
 import type { AddressInfo } from "node:net";
 import path from "node:path";
@@ -126,13 +126,13 @@ describe("pages in Chromium", { skip: skipReason() }, () => {
 });
 
 describe("public page in Chromium", { skip: skipReason() }, () => {
-  let browser: Browser, base: string;
+  let browser: Browser, base: string, app: App, out: string;
   const cleanups: (() => unknown)[] = [];
   before(async () => {
     const hooks: HasAfter = { after: (fn) => cleanups.push(fn) };
-    const out = path.join(tmpDir(hooks), "rec");
-    let app: App;
-    ({ app, base } = await startApp(hooks, out));
+    out = path.join(tmpDir(hooks), "rec");
+    // Chromium drops __Host- cookies on plain http, so sessions need COOKIE_SECURE=0 here (as in the other describes that sign in).
+    ({ app, base } = await startApp(hooks, out, { secureCookie: false }));
     fixtures(app, out);
     browser = await chromium.launch();
   });
@@ -252,6 +252,31 @@ describe("public page in Chromium", { skip: skipReason() }, () => {
     // A search is a link: it works from a fresh load with the filter in the URL.
     await page.goto(base + "/search?q=order&body=Nope");
     await page.waitForSelector("#hits .empty");
+    assert.deepEqual(errors, []);
+  });
+  it("an admin names a speaker; the public meeting page shows the name", async () => {
+    writeFileSync(path.join(out, "council-a", "council-a.transcript.json"), JSON.stringify({ segments: [{ start: 1, end: 5, text: "Call to order.", label: "Speaker 1" }] }));
+    await app.accounts.create({ email: "chair@example.com", role: "admin", password: "chair password 12", verified: true });
+    const page = await (await browser.newContext()).newPage();
+    const errors: string[] = [];
+    page.on("pageerror", (e) => errors.push(e.message));
+    await page.goto(base + "/login?next=/admin");
+    await page.fill("#email", "chair@example.com");
+    await page.fill("#password", "chair password 12");
+    await page.click("#loginform button");
+    await page.waitForURL(base + "/admin");
+    await page.click("#recs .row:has-text('council-a') button:has-text('Speakers')");
+    await page.waitForSelector("#recs .spk input");
+    assert.match(await page.textContent("#recs .spk") ?? "", /Speaker 1 .*Call to order/);
+    await page.fill("#recs .spk input", "Marie Watmo");
+    await page.click("#recs button:has-text('Save names')");
+    await page.waitForSelector("#recs .msg.ok");
+    const pub = await (await browser.newContext()).newPage();
+    pub.on("pageerror", (e) => errors.push(e.message));
+    await pub.goto(base + "/m/council-a");
+    await pub.waitForSelector("#player .tline .tw");
+    assert.equal(await pub.textContent("#player .tline .tw"), "Marie Watmo");
+    assert.match(await pub.textContent("#player .transcript") ?? "", /Some speaker names were added by hand/);
     assert.deepEqual(errors, []);
   });
 });

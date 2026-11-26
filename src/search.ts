@@ -15,7 +15,9 @@
  * are just words.
  */
 import { existsSync, readFileSync, statSync } from "node:fs";
+import path from "node:path";
 import { tx, type DB } from "./db.js";
+import { nameSegments, readNames } from "./speakers.js";
 import { logger } from "./util.js";
 
 const log = logger("search");
@@ -81,27 +83,28 @@ export class Search {
    * files, drop what's no longer there. `items` are every recording that
    * has a transcript on disk.
    */
-  sync(items: { recSlug: string; meetingId: string; file: string }[], now = new Date()): { indexed: number; removed: number } {
+  sync(items: { recSlug: string; meetingId: string; file: string; namesFile?: string }[], now = new Date()): { indexed: number; removed: number } {
     let indexed = 0, removed = 0;
-    const have = new Map((this.db.prepare("SELECT rec_slug, meeting_id, size, mtime_ms FROM transcript_index").all() as { rec_slug: string; meeting_id: string; size: number; mtime_ms: number }[])
+    const have = new Map((this.db.prepare("SELECT rec_slug, meeting_id, size, mtime_ms, names_mtime_ms FROM transcript_index").all() as { rec_slug: string; meeting_id: string; size: number; mtime_ms: number; names_mtime_ms: number }[])
       .map((r) => [r.rec_slug, r]));
     const live = new Set<string>();
     for (const it of items) {
       if (!existsSync(it.file)) continue;
       live.add(it.recSlug);
       const st = statSync(it.file), was = have.get(it.recSlug);
-      if (was && was.size === st.size && was.mtime_ms === Math.round(st.mtimeMs) && was.meeting_id === it.meetingId) continue;
+      const namesStamp = it.namesFile && existsSync(it.namesFile) ? Math.round(statSync(it.namesFile).mtimeMs) : 0;
+      if (was && was.size === st.size && was.mtime_ms === Math.round(st.mtimeMs) && was.meeting_id === it.meetingId && was.names_mtime_ms === namesStamp) continue;
       let segs: Seg[];
       try { segs = (JSON.parse(readFileSync(it.file, "utf8")) as { segments?: Seg[] }).segments ?? []; }
       catch (e) { log.warn(`can't read ${it.recSlug}'s transcript for the index: ${(e as Error).message}`); continue; }   // half-written: next time
-      const ps = passages(Array.isArray(segs) ? segs : []);
+      const ps = passages(nameSegments(Array.isArray(segs) ? segs : [], it.namesFile ? readNames(path.dirname(it.namesFile)) : {}));
       tx(this.db, () => {
         this.db.prepare("DELETE FROM transcript_search WHERE rec_slug = ?").run(it.recSlug);
         const ins = this.db.prepare("INSERT INTO transcript_search (text, speaker, meeting_id, rec_slug, start) VALUES (?, ?, ?, ?, ?)");
         for (const p of ps) ins.run(p.text, p.speaker, it.meetingId, it.recSlug, p.start);
-        this.db.prepare(`INSERT INTO transcript_index (rec_slug, meeting_id, size, mtime_ms, passages, indexed_at) VALUES (?, ?, ?, ?, ?, ?)
-          ON CONFLICT (rec_slug) DO UPDATE SET meeting_id = excluded.meeting_id, size = excluded.size, mtime_ms = excluded.mtime_ms, passages = excluded.passages, indexed_at = excluded.indexed_at`)
-          .run(it.recSlug, it.meetingId, st.size, Math.round(st.mtimeMs), ps.length, now.toISOString());
+        this.db.prepare(`INSERT INTO transcript_index (rec_slug, meeting_id, size, mtime_ms, passages, indexed_at, names_mtime_ms) VALUES (?, ?, ?, ?, ?, ?, ?)
+          ON CONFLICT (rec_slug) DO UPDATE SET meeting_id = excluded.meeting_id, size = excluded.size, mtime_ms = excluded.mtime_ms, passages = excluded.passages, indexed_at = excluded.indexed_at, names_mtime_ms = excluded.names_mtime_ms`)
+          .run(it.recSlug, it.meetingId, st.size, Math.round(st.mtimeMs), ps.length, now.toISOString(), namesStamp);
       });
       indexed++;
     }

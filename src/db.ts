@@ -271,6 +271,10 @@ const MIGRATIONS: string[] = [
      meeting_id TEXT PRIMARY KEY,
      done_at    TEXT NOT NULL
    );`,
+
+  // 13: the mtime of the speaker-names file a transcript was indexed with
+  // (0 = none), so naming a speaker re-indexes that transcript (speakers.ts).
+  `ALTER TABLE transcript_index ADD COLUMN names_mtime_ms INTEGER NOT NULL DEFAULT 0;`,
 ];
 
 export function openDb(file: string): DB {
