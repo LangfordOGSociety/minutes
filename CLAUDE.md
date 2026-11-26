@@ -144,6 +144,13 @@ captures).
   config timezone: NOT the hidden epoch span, 3h off on Pittsburgh's
   site), externalId = hash(name, start) since event_id links appear only
   later. Saanich streams on Granicus (no capture platform): list_only.
+  `primegov` (Saanich's agendas): api/v2/PublicPortal/ListUpcomingMeetings
+  + ListArchivedMeetings?year= for days back; local dateTime in the config
+  timezone; endDateTime is often before the start, used only if sane;
+  documents from documentList (HTML /Portal/Meeting?meetingTemplateId=,
+  PDF /Public/CompiledDocument?...&compileOutputType=1) + videoUrl; link
+  from zoomMeetingLink (isZoomMeeting) or an upcoming HTML agenda.
+  Blank types/titles = every meeting, in every parser.
   `sync.ts` (the Applier, migration 7): diff by externalId into
   meeting_changes (added, date_changed (another local day) vs
   time_changed (same day), both with local times, link changed, cancelled,
