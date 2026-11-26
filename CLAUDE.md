@@ -181,7 +181,9 @@ captures).
   last word is a prefix; 8 terms max). `/api/search` and `/api/v1/search`
   (`q body from to limit offset`) -> passages with `parts` (hit flags, no
   markup), `t` seconds and `url` = `/m/<slug>?t=<s>`; `/search` page; a
-  search box on `/`. Index sync: at start, every 2 min, and on a search
+  search box on `/`; 60 searches a minute per client (`searchesByIp`,
+  429 + Retry-After; behind the proxy that's the real client via
+  TRUSTED_PROXIES). Index sync: at start, every 2 min, and on a search
   if >30 s old (`App.syncSearch`). node:sqlite FTS5 verified on Node 24.
 - `src/alerts.ts` email alerts (migration 12: alerts, alert_deliveries,
   alert_runs; capability `alerts.own`, confirmed email, needs mail).

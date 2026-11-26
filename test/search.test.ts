@@ -198,3 +198,21 @@ describe("search through the server", () => {
     assert.equal((await new Client(base).req("OPTIONS", "/api/v1/search", undefined, { origin: "https://openlangford.ca", "access-control-request-method": "GET" })).status, 204);
   });
 });
+
+describe("search is rate limited per client", () => {
+  it("60 a minute by default, then 429 with Retry-After; another client is unaffected; other endpoints aren't counted", async (t) => {
+    const cleanups: (() => unknown)[] = [];
+    t.after(async () => { for (const f of cleanups.reverse()) await f(); });
+    const hooks: HasAfter = { after: (fn) => cleanups.push(fn) };
+    const { base } = await startApp(hooks, path.join(tmpDir(hooks), "rec"), { searchesPerMinute: 5, trustedProxies: "127.0.0.1" });
+    const from = (ip: string, p = "/api/search?q=harbour") => new Client(base).req("GET", p, undefined, { "x-forwarded-for": ip });
+    for (let i = 0; i < 5; i++) assert.equal((await from("203.0.113.9")).status, 200);
+    const blocked = await from("203.0.113.9", "/api/v1/search?q=harbour");                                          // the v1 route shares the limit
+    assert.equal(blocked.status, 429);
+    assert.ok(Number(blocked.headers.get("retry-after")) >= 1);
+    assert.equal(blocked.headers.get("access-control-allow-origin"), "*");
+    assert.equal((await from("198.51.100.7")).status, 200);                                                         // someone else
+    assert.equal((await from("203.0.113.9", "/api/meetings")).status, 200);                                         // the rest of the site isn't limited
+    assert.equal((await from("203.0.113.9", "/search?q=x")).status, 200);                                           // nor is the page
+  });
+});
