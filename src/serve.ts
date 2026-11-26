@@ -454,7 +454,7 @@ export function createApp(o: ServeOpts, entry: string): App {
       const meetings = publicSite().entries.filter((e) => e.rec?.public && e.rec.files.transcript)
         .map((e) => ({ id: e.m.id, slug: e.m.slug, title: e.m.title, body: e.m.body ?? null, start: e.m.start }));
       return await alerts.process({
-        meetings, search, site,
+        meetings, search, site, tz: o.tz,
         recipient: (id) => { const u = accounts.get(id); return u && !u.disabledAt && u.emailVerifiedAt && !u.mustChangePassword ? { id: u.id, email: u.email, name: u.name } : null; },
         send: (to, subject, text) => mailer.send({ to: to.email, subject, text: text + `\n\n-- \nminutes${site ? " · " + site : ""}\nAn automatic message; replies aren't read.\n` }),
       });

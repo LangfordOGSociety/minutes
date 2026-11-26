@@ -98,7 +98,7 @@ export class Alerts {
    */
   async process(o: {
     meetings: AlertMeeting[]; search: Search; recipient: (userId: string) => Recipient | null;
-    send: (to: Recipient, subject: string, text: string) => Promise<void>; site: string; now?: Date;
+    send: (to: Recipient, subject: string, text: string) => Promise<void>; site: string; tz?: string; now?: Date;
   }): Promise<number> {
     const now = o.now ?? new Date();
     const done = new Set((this.db.prepare("SELECT meeting_id FROM alert_runs").all() as { meeting_id: string }[]).map((r) => r.meeting_id));
@@ -120,7 +120,7 @@ export class Alerts {
         const to = o.recipient(userId);
         if (!to) { matches.forEach((x) => this.delete(x.alert.id)); continue; }          // gone, disabled or unconfirmed: nobody to tell
         try {
-          await o.send(to, subjectFor(m, matches.map((x) => x.alert.query)), bodyFor(m, matches, o.site));
+          await o.send(to, subjectFor(m, matches.map((x) => x.alert.query), o.tz), bodyFor(m, matches, o.site, o.tz));
           tx(this.db, () => {
             for (const x of matches) {
               this.db.prepare("INSERT OR IGNORE INTO alert_deliveries (alert_id, meeting_id, sent_at) VALUES (?, ?, ?)").run(x.alert.id, m.id, now.toISOString());
@@ -144,26 +144,29 @@ export class Alerts {
   }
 }
 
-const day = (iso: string) => new Intl.DateTimeFormat("en-CA", { dateStyle: "medium" }).format(new Date(iso));
+/** The meeting's local day ("Dec 7, 2026") in the site's timezone, not the server process's. */
+const day = (iso: string, tz: string) => new Intl.DateTimeFormat("en-CA", { dateStyle: "medium", timeZone: tz }).format(new Date(iso));
 const clock = (s: number) => { const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), r = Math.floor(s % 60); return (h ? `${h}:${String(m).padStart(2, "0")}` : String(m)) + `:${String(r).padStart(2, "0")}`; };
 
-export function subjectFor(m: AlertMeeting, queries: string[]): string {
+export function subjectFor(m: AlertMeeting, queries: string[], tz = "America/Vancouver"): string {
   const q = queries.length === 1 ? `"${queries[0]}"` : `${queries.length} of your alerts`;
-  return `${q} came up at ${m.title} (${day(m.start)})`.replace(/[\r\n]+/g, " ").slice(0, 200);
+  return `${q} came up at ${m.title} (${day(m.start, tz)})`.replace(/[\r\n]+/g, " ").slice(0, 200);
 }
 
-export function bodyFor(m: AlertMeeting, matches: { alert: Alert; total: number; hits: Hit[] }[], site: string): string {
-  const link = (p: string) => (site ? `${site}${p}` : "");
-  const lines = [`${m.title}, ${day(m.start)}`, link(`/m/${encodeURIComponent(m.slug)}`), ""];
+/** The email's text. Links only when there's a site address to make them with. */
+export function bodyFor(m: AlertMeeting, matches: { alert: Alert; total: number; hits: Hit[] }[], site: string, tz = "America/Vancouver"): string {
+  const at = (p: string) => `${site}${p}`;
+  const lines = [`${m.title}, ${day(m.start, tz)}`, ...(site ? [at(`/m/${encodeURIComponent(m.slug)}`)] : []), ""];
   for (const x of matches) {
     lines.push(`Your alert "${x.alert.query}": ${x.total} passage${x.total === 1 ? "" : "s"}`);
     for (const h of x.hits) {
       const text = h.parts.map((p) => (p.hit ? `*${p.text}*` : p.text)).join("").replace(/\s+/g, " ").trim();
-      lines.push(`  ${clock(h.start)}${h.speaker ? `  ${h.speaker}` : ""}: ${text}`, `    ${link(`/m/${encodeURIComponent(m.slug)}?t=${Math.floor(h.start)}`)}`.trimEnd());
+      lines.push(`  ${clock(h.start)}${h.speaker ? `  ${h.speaker}` : ""}: ${text}`, ...(site ? [`    ${at(`/m/${encodeURIComponent(m.slug)}?t=${Math.floor(h.start)}`)}`] : []));
     }
-    if (x.total > x.hits.length) lines.push(`  ...and ${x.total - x.hits.length} more: ${link(`/search?q=${encodeURIComponent(x.alert.query)}`)}`.trimEnd());
-    lines.push(`  Stop this alert: ${link(`/alerts/${x.alert.token}/stop`)}`.trimEnd(), "");
+    if (x.total > x.hits.length) lines.push(`  ...and ${x.total - x.hits.length} more${site ? `: ${at(`/search?q=${encodeURIComponent(x.alert.query)}`)}` : ""}`);
+    if (site) lines.push(`  Stop this alert: ${at(`/alerts/${x.alert.token}/stop`)}`);
+    lines.push("");
   }
-  lines.push("Transcripts are machine-made: check the video before quoting.", `Your alerts: ${link("/account")}`.trimEnd());
+  lines.push("Transcripts are machine-made: check the video before quoting.", ...(site ? [`Your alerts: ${at("/account")}`] : []));
   return lines.join("\n");
 }

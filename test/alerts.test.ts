@@ -38,7 +38,7 @@ function world(t: TestContext) {
   const sent: { to: string; subject: string; text: string }[] = [];
   let failFor: string | null = null;
   const run = (o: { now?: Date; site?: string } = {}) => alerts.process({
-    meetings, search, site: o.site ?? "https://m.example.org", now: o.now ?? NOW,
+    meetings, search, site: o.site ?? "https://m.example.org", tz: "America/Vancouver", now: o.now ?? NOW,
     recipient: (id): Recipient | null => (id === "gone" ? null : { id, email: `${id}@example.com`, name: "" }),
     send: async (to, subject, text) => { if (failFor === to.id) throw new Error("smtp down"); sent.push({ to: to.email, subject, text }); },
   });
@@ -89,7 +89,7 @@ describe("a pass", () => {
     assert.match(u1.text, /\.\.\.and 1 more: https:\/\/m\.example\.org\/search\?q=harbour/);                                   // three shown of four
     for (const a of w.alerts.list("u1").filter((x) => x.query !== "casino")) assert.ok(u1.text.includes(`https://m.example.org/alerts/${a.token}/stop`));
     assert.match(u1.text, /Transcripts are machine-made[\s\S]*Your alerts: https:\/\/m\.example\.org\/account/);
-    assert.equal(subjectFor({ id: "m", slug: "m", title: "T", body: null, start: "2026-12-08T01:30:00Z" }, ["x"]), '"x" came up at T (Dec 7, 2026)');
+    assert.equal(subjectFor({ id: "m", slug: "m", title: "T", body: null, start: "2026-12-08T01:30:00Z" }, ["x"], "America/Vancouver"), '"x" came up at T (Dec 7, 2026)');
     assert.equal(w.alerts.list("u1").find((a) => a.query === "harbour")!.lastSentAt, NOW.toISOString());
     assert.equal(w.alerts.list("u1").find((a) => a.query === "casino")!.lastSentAt, null);
     assert.equal(await w.run(), 0);                                                                                         // handled: nothing again
@@ -146,10 +146,12 @@ describe("a pass", () => {
     const m = { id: "m", slug: "m", title: "T", body: null, start: "2026-12-08T01:30:00Z" };
     const text = bodyFor(m, [{ alert: { id: "a", userId: "u", query: "q", body: null, token: "tok".repeat(8), createdAt: "", lastSentAt: null }, total: 1,
       hits: [{ meetingId: "m", recSlug: "m", start: 65, speaker: "", parts: [{ text: "a ", hit: false }, { text: "q", hit: true }] }] }], "");
-    assert.match(text, /^T, Dec 7, 2026\n\n/);
-    assert.match(text, /1:05: a \*q\*\n/);
-    assert.doesNotMatch(text, /https?:/);
+    assert.match(text, /^T, Dec 7, 2026\n\nYour alert "q": 1 passage\n  1:05: a \*q\*\n\n/);
+    assert.doesNotMatch(text, /https?:|Stop this alert|Your alerts:/);
     assert.doesNotMatch(text, / +\n/);
+    // The day is the meeting's local day in the site's timezone, whatever the server process's own is.
+    assert.match(bodyFor(m, [], "", "UTC"), /^T, Dec 8, 2026/);
+    assert.equal(subjectFor(m, ["x"], "UTC"), '"x" came up at T (Dec 8, 2026)');
   });
 });
 
@@ -246,7 +248,7 @@ describe("alerts through the server", () => {
     assert.equal(mailer.sent.length, 1);
     const m = mailer.sent[0];
     assert.equal(m.to, "reader@example.com");
-    assert.equal(m.subject, `"harbour" came up at council-b (${new Intl.DateTimeFormat("en-CA", { dateStyle: "medium" }).format(new Date(Date.now() + 86_400_000))})`);
+    assert.equal(m.subject, `"harbour" came up at council-b (${new Intl.DateTimeFormat("en-CA", { dateStyle: "medium", timeZone: "America/Vancouver" }).format(new Date(Date.now() + 86_400_000))})`);
     assert.match(m.text, /https:\/\/minutes\.example\.org\/m\/council-b\?t=125/);
     assert.match(m.text, /2:05  Mayor Smith: We turn to the \*harbour\* redevelopment\./);
     assert.match(m.text, /Stop this alert: https:\/\/minutes\.example\.org\/alerts\/[A-Za-z0-9_-]{32}\/stop/);
