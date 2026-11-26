@@ -22,14 +22,15 @@ export type Capability =
   | "watch"           // list meetings, watch, read transcripts, live status
   | "tokens.own"      // create/revoke own API tokens, see own usage (#16)
   | "api.download"    // download files via the API with a token (#17)
+  | "alerts.own"      // save searches and get an email when a new meeting matches
   | "admin.view"      // join links (meeting IDs), live screen, logs, Zoom login status
   | "admin.manage";   // change captures, meetings, feeds, users, all tokens
 
 /** "public" is everyone without a session. */
 export const ROLE_CAPS: Record<string, readonly Capability[]> = {
   public: ["watch"],
-  user: ["watch", "tokens.own", "api.download"],
-  admin: ["watch", "tokens.own", "api.download", "admin.view", "admin.manage"],
+  user: ["watch", "tokens.own", "api.download", "alerts.own"],
+  admin: ["watch", "tokens.own", "api.download", "alerts.own", "admin.view", "admin.manage"],
 };
 export const ROLES = Object.keys(ROLE_CAPS).filter((r) => r !== "public");
 
@@ -38,7 +39,7 @@ export function can(role: string | null, cap: Capability): boolean {
 }
 
 /** Need a verified email on top of the role (#32). */
-const NEEDS_VERIFIED: readonly Capability[] = ["tokens.own", "api.download"];
+const NEEDS_VERIFIED: readonly Capability[] = ["tokens.own", "api.download", "alerts.own"];
 
 /** What this signed-in user may do right now: nothing beyond public until
  *  a one-time password is changed; no tokens until the email is verified. */

@@ -330,6 +330,48 @@ describe("sign-up and reset in Chromium", { skip: skipReason() }, () => {
     assert.equal(await page.isVisible("#users .row:has-text('boss@example.com') button"), false);   // not yourself
     await page.waitForSelector("#audit .row:has-text('user.update')");
   });
+  it("alerts: made from a search, listed and deleted on the account page, stopped from the email's link", async () => {
+    await app.accounts.create({ email: "watcher@example.com", role: "user", password: "watcher password 1", verified: true });
+    const page = await (await browser.newContext()).newPage();
+    const errors: string[] = [];
+    page.on("pageerror", (e) => errors.push(e.message));
+    // Signed out: the search offers to sign in.
+    await page.goto(base + "/search?q=harbour");
+    await page.waitForSelector("#alertbox a");
+    assert.match(await page.getAttribute("#alertbox a", "href") ?? "", /^\/login\?next=%2Fsearch%3Fq%3Dharbour$/);
+    await page.click("#alertbox a");
+    await page.fill("#email", "watcher@example.com");
+    await page.fill("#password", "watcher password 1");
+    await page.click("#loginform button");
+    await page.waitForURL(/\/search\?q=harbour/);
+    await page.click("#alertbox button");
+    await page.waitForSelector("#alertbox .msg.ok");
+    assert.match(await page.textContent("#alertbox") ?? "", /Saved/);
+    await page.click("#alertbox button", { force: true }).catch(() => {});    // disabled now: no second alert
+    await page.goto(base + "/account");
+    await page.waitForSelector("#alertlist .tok");
+    assert.match(await page.textContent("#alertlist") ?? "", /harbour.*last email none yet/);
+    await page.fill("#al-q", "zoning");
+    await page.click("#alertform button");
+    await page.waitForSelector("#alertlist .tok:nth-child(2)");
+    await page.click("#alertlist .tok:has-text('zoning') button");
+    await page.waitForSelector("#alertlist .tok:nth-child(2)", { state: "detached" });
+    // The email's link asks first, then stops it, with no sign-in.
+    const u = app.accounts.byEmail("watcher@example.com")!;
+    const token = app.alerts.list(u.id)[0].token;
+    const anon = await (await browser.newContext()).newPage();
+    anon.on("pageerror", (e) => errors.push(e.message));
+    await anon.goto(`${base}/alerts/${token}/stop`);
+    await anon.waitForSelector("#box button");
+    assert.match(await anon.textContent("#box") ?? "", /harbour/);
+    assert.equal(app.alerts.list(u.id).length, 1);                                  // opening the page stopped nothing
+    await anon.click("#box button");
+    await anon.waitForSelector("#box:has-text('Stopped')");
+    assert.equal(app.alerts.list(u.id).length, 0);
+    await anon.goto(`${base}/alerts/${token}/stop`);
+    await anon.waitForSelector("#box:has-text('already stopped')");
+    assert.deepEqual(errors, []);
+  });
 });
 
 describe("feeds page in Chromium", { skip: skipReason() }, () => {

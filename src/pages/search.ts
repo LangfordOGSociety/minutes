@@ -51,6 +51,7 @@ mark { background: color-mix(in srgb, var(--accent) 28%, transparent); color: in
   </section>
   <section id="results" hidden>
     <h2 id="summary"></h2>
+    <div id="alertbox" class="hint" hidden style="margin:-4px 0 12px"></div>
     <div class="list" id="hits"></div>
     <button class="more" id="more" hidden>Show more</button>
   </section>
@@ -89,6 +90,30 @@ function run(more) {
 }
 
 document.getElementById("more").addEventListener("click", function () { run(true); });
+
+// "Email me when this comes up": for signed-in people with a confirmed email, when the server can send mail.
+function offerAlert() {
+  var q = (P.get("q") || "").trim();
+  if (!q) return;
+  api("GET", "/api/me").then(function (d) {
+    if (!d.signup) return;
+    var box = document.getElementById("alertbox");
+    if (!d.user) {
+      fill(box, el("a", { href: "/login?next=" + encodeURIComponent(location.pathname + location.search), text: "Sign in to get an email when this comes up in a new meeting" }));
+    } else if (d.user.caps.indexOf("alerts.own") >= 0) {
+      var msg = el("span", { "class": "msg" });
+      var b = el("button", { text: "Email me when this comes up in a new meeting", on: { click: function () {
+        b.disabled = true;
+        api("POST", "/api/account/alerts", { query: q, body: P.get("body") || "" }).then(function () {
+          msg.className = "msg ok"; msg.textContent = " Saved. Manage your alerts on your account page.";
+        }, function (e) { b.disabled = false; msg.className = "msg err"; msg.textContent = " " + e.message; });
+      } } });
+      fill(box, b, msg);
+    } else return;
+    box.hidden = false;
+  }, function () {});
+}
+offerAlert();
 // The body filter's choices, then restore the chosen one and search.
 api("GET", "/api/meetings?scope=past&limit=1").then(function (d) {
   var sel = document.getElementById("body");
