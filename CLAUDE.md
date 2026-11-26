@@ -126,7 +126,13 @@ captures).
   the run; an Applier (sync, #10/#11) turns results into meetings.
   `/admin/feeds` (pages/feeds.ts): form built from `fields`, Preview (no
   saving; links shown as platform + meeting number), Run now, runs.
-  Parsers register in `parsers/index.ts`.
+  Parsers register in `parsers/index.ts`: `ical` (UID / UID@local-start
+  for recurrences; IANA TZID via Intl, VTIMEZONE ignored on purpose since
+  exports carry pre-2026 BC rules; RRULE daily/weekly/monthly + EXDATE +
+  RECURRENCE-ID), `html` (CSS selectors on the page rendered by
+  ctx.page; loose dates, a row without a time is skipped). Platforms may
+  offer `extractLink(text)`; registry `findLink()` (zoom: a zoom.us URL,
+  or "Meeting ID: ..." + "Passcode: ..." -> zoom.us/j/<id>?pwd=).
   `sync.ts` (the Applier, migration 7): diff by externalId into
   meeting_changes (added, time/link changed, cancelled, reinstated,
   removed, returned, details); `removed` only flags; a run removing more
