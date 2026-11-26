@@ -223,6 +223,38 @@ logs. Every response carries security headers; pages get a CSP that allows
 only their own inline script (by hash). URLs over 2 KB, headers over 16 KB,
 bodies over 16 KB and requests that take over 30s to arrive are refused.
 
+## Feeds: finding meetings automatically
+
+`/admin/feeds` polls a municipality's calendar and keeps its meetings up
+to date: new ones, moved times, join links published late, cancellations.
+
+| Source type | For | Config |
+|---|---|---|
+| eScribe meetings portal | Langford and many others | the portal URL, e.g. `https://pub-langford.escribemeetings.com`; optionally the meeting types to keep |
+| iCalendar (.ics) | any calendar feed | the `.ics` URL |
+| Web page (CSS selectors) | a page that lists meetings | the URL plus selectors for each row, its title, date (and time), link |
+
+For each feed, choose what happens to new meetings: **wait for review**
+(the default: they show in the review queue, Approve schedules the
+capture), **record automatically** once there's a Zoom link, or **list
+only**. Preview shows what a feed returns and what it would change before
+anything is saved. Join links are found in the agenda or calendar entry,
+including agendas that print only "Meeting ID: 843 4290 9811" and a
+passcode.
+
+Safety: a meeting that disappears from a feed is only flagged, never
+cancelled; a run that would remove most of a feed's upcoming meetings
+(a broken page, say) changes nothing and notifies you. A meeting already
+known from another feed or scheduled by hand isn't captured twice. Each
+meeting's history shows every change a feed made and what it did to the
+capture.
+
+Langford, recommended start: eScribe, portal URL as above, meeting types
+`Council Meeting`, `Special Council Meeting`, `Committee of the Whole
+Meeting`, folder prefix `langford` (recordings become
+`langford-council-meeting-2026-12-08`, which also picks the Langford
+transcription vocabulary), policy *wait for review*.
+
 ## Hardware encoding
 
     # Intel/AMD iGPU (VAAPI)

@@ -133,6 +133,12 @@ captures).
   ctx.page; loose dates, a row without a time is skipped). Platforms may
   offer `extractLink(text)`; registry `findLink()` (zoom: a zoom.us URL,
   or "Meeting ID: ..." + "Passcode: ..." -> zoom.us/j/<id>?pwd=).
+  `escribe`: POST MeetingsCalendarView.aspx/GetCalendarMeetings for the
+  window (local "YYYY/MM/DD HH:mm:ss"), body = MeetingType, cancelled by a
+  "... Cancellation Notice" document (NOT "Postponement Notice": the
+  2026-11-24 council had one and went ahead), link from upcoming meetings'
+  HTML agenda (Langford: "Enter the Meeting ID: 843 4290 9811", webinar,
+  no passcode). Fixtures saved from Langford in test/fixtures/feeds/escribe.
   `sync.ts` (the Applier, migration 7): diff by externalId into
   meeting_changes (added, time/link changed, cancelled, reinstated,
   removed, returned, details); `removed` only flags; a run removing more
