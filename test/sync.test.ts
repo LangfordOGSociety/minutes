@@ -55,8 +55,11 @@ describe("feed sync", () => {
     assert.equal(app.sched.list().length, 1);
 
     // Moved an hour later, a new link, and m2 gets its link.
-    // Ten minutes later, not an hour: an hour crosses local midnight at some times of day, which is a date change, not a time change.
-    const later = new Date(Math.round((Date.parse(at(48)) + 10 * 60_000) / 60_000) * 60_000).toISOString();
+    // Ten minutes off, not an hour: an hour crosses local midnight at some times of day, which is a date change, not a time change.
+    // (Ten minutes earlier if later would cross midnight too.)
+    const day = (iso: string) => new Intl.DateTimeFormat("en-CA", { timeZone: "America/Vancouver" }).format(new Date(iso));
+    const base48 = Math.round(Date.parse(at(48)) / 60_000) * 60_000;
+    const later = new Date(day(new Date(base48 + 10 * 60_000).toISOString()) === day(new Date(base48).toISOString()) ? base48 + 10 * 60_000 : base48 - 10 * 60_000).toISOString();
     src.state.meetings[0] = { ...src.state.meetings[0] as object, start: later, link: ZOOM2, title: "Council Meeting (rescheduled)" } as never;
     (src.state.meetings[1] as { link?: string }).link = ZOOM;
     const o2 = await run();
