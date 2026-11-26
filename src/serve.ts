@@ -4,7 +4,11 @@
  * node:http only (no runtime deps beyond playwright). Routes:
  *
  * Public (anyone; capability "watch"):
- *   GET    /                         published recordings, live transcripts (pages/public.ts)
+ *   GET    /                         upcoming and past meetings, recent changes (pages/public.ts)
+ *   GET    /m/:slug                  one meeting: status, video, transcript, history (pages/meeting.ts)
+ *   GET    /api/meetings             ?scope=upcoming|past &body &from &to &q &limit &offset
+ *   GET    /api/meetings/:slug       detail + recording + public history; /status is polled
+ *   GET    /api/changes              recent announcements, moves, cancellations, documents
  *   GET    /api/recordings           published recordings, public fields only
  *   GET    /media/:slug/:file        a published recording's video, subtitles, transcript, live draft
  *   GET    /api/status?within=45     busy: a capture running or due (the deploy guard); counts only
@@ -49,6 +53,7 @@
  *   GET    /api/admin/meetings?view=review|upcoming|recent
  *   POST   /api/admin/meetings/:id/approve | reject   the review queue
  *   POST   /api/admin/meetings/:id/merge {into} | split   dedup by hand
+ *   POST   /api/admin/meetings/:id/hide | show        pull a meeting (and its files) from the public site
  *   GET    /api/admin/meetings/:id/changes            its history
  *   GET    /api/admin/users          accounts
  *   PATCH  /api/admin/users/:id      {role?, disabled?}
@@ -84,6 +89,10 @@ import { FEEDS_PAGE } from "./pages/feeds.js";
 import { ADMIN_PAGE } from "./pages/admin.js";
 import { LOGIN_PAGE } from "./pages/login.js";
 import { PUBLIC_PAGE } from "./pages/public.js";
+import { MEETING_PAGE } from "./pages/meeting.js";
+import { OVER_AFTER_MS, PUBLIC_KINDS, filterMeetings, publicChange, recordingOf, toPublicMeeting, visible, type PublicMeeting } from "./site.js";
+import type { Recording } from "./recordings.js";
+import { zonedTime } from "./feeds/time.js";
 import { platformFor } from "./platforms/registry.js";
 import { FILE_RE, listRecordings, publicFiles, toPublic } from "./recordings.js";
 import { SessionKeeper, type KeeperOpts } from "./session.js";
@@ -315,7 +324,7 @@ export function createApp(o: ServeOpts, entry: string): App {
     const job = sched.activeJobFor(m.id) ?? sched.list().filter((j) => j.meetingRef === m.id).at(-1);
     const dup = m.duplicateOf ? sched.meetings.get(m.duplicateOf) : undefined;
     return { id: m.id, title: m.title, body: m.body ?? null, start: m.start, slug: m.slug, status: m.status, review: m.review ?? null,
-      removedAt: m.removedAt ?? null, link: shownLink(m.link), joinLink: joinLinkOf(m.link), streamUrl: m.streamUrl ?? null,
+      removedAt: m.removedAt ?? null, visibility: m.visibility, link: shownLink(m.link), joinLink: joinLinkOf(m.link), streamUrl: m.streamUrl ?? null,
       agendaUrl: m.agendaUrl ?? null, pageUrl: m.pageUrl ?? null,
       feedId: m.feedId ?? null, feedName: m.feedId ? feeds.get(m.feedId)?.name ?? "(deleted feed)" : null,
       duplicateOf: dup ? { id: dup.id, title: dup.title, slug: dup.slug, start: dup.start } : null,
@@ -335,14 +344,33 @@ export function createApp(o: ServeOpts, entry: string): App {
     log.warn("no BACKUP_DIR: nightly backups are off");
   }
 
-  const pages = Object.fromEntries(Object.entries({ public: PUBLIC_PAGE, admin: ADMIN_PAGE, login: LOGIN_PAGE, feeds: FEEDS_PAGE }).map(([k, html]) => {
+  const pages = Object.fromEntries(Object.entries({ public: PUBLIC_PAGE, admin: ADMIN_PAGE, login: LOGIN_PAGE, feeds: FEEDS_PAGE, meeting: MEETING_PAGE }).map(([k, html]) => {
     const body = html.replace("__TZ__", JSON.stringify(o.tz));
     return [k, { body, csp: pageCsp(body) }];
-  })) as Record<"public" | "admin" | "login" | "feeds", { body: string; csp: string }>;
+  })) as Record<"public" | "admin" | "login" | "feeds" | "meeting", { body: string; csp: string }>;
   const sendPage = (res: http.ServerResponse, p: { body: string; csp: string }) =>
     send(res, 200, p.body, { "Content-Type": "text/html; charset=utf-8", "Content-Security-Policy": p.csp });
 
   const publicRecordings = () => listRecordings(o.out, sched, o.tz).filter((r) => r.public).map(toPublic);
+
+  /** Every meeting the public may see, with what became of it (see site.ts). */
+  const publicSite = (now = Date.now()) => {
+    const recs = new Map<string, Recording>(listRecordings(o.out, sched, o.tz).map((r) => [r.slug, r]));
+    const jobsBy = new Map<string, Job[]>();
+    for (const j of sched.list()) jobsBy.set(j.meetingRef, [...(jobsBy.get(j.meetingRef) ?? []), j]);
+    const entries: { m: Meeting; p: PublicMeeting; rec: Recording | undefined; jobs: Job[] }[] = [];
+    for (const m of sched.meetings.list()) {
+      if (!visible(m)) continue;
+      const jobs = jobsBy.get(m.id) ?? [], rec = recordingOf(jobs, recs);
+      // Gone from its feed before it happened: nothing to show (a recording keeps it).
+      if (m.removedAt && !rec?.video && Date.parse(m.start) > now - OVER_AFTER_MS) continue;
+      entries.push({ m, p: toPublicMeeting(m, jobs, rec, now), rec, jobs });
+    }
+    // A shared link may carry a capture's folder name (slug-2, or an old recording link).
+    const find = (slug: string) => entries.find((e) => e.m.slug === slug)
+      ?? entries.find((e) => e.jobs.some((j) => j.slug === slug));
+    return { entries, find, now };
+  };
 
   const server = http.createServer({ maxHeaderSize: 16 * 1024, requestTimeout: 30_000, headersTimeout: 15_000 }, async (req, res) => {
     for (const [k, v] of Object.entries(SECURITY_HEADERS)) res.setHeader(k, v);
@@ -416,6 +444,64 @@ export function createApp(o: ServeOpts, entry: string): App {
       if (parts[0] === "api" && parts[1] === "recordings" && parts.length === 2 && read) {
         if (!allow("watch")) return;
         return send(res, 200, publicRecordings());
+      }
+      if (parts[0] === "api" && parts[1] === "meetings" && read && parts.length >= 2 && parts.length <= 4) {
+        if (!allow("watch")) return;
+        const site = publicSite();
+        if (parts.length === 2) {
+          const sp = url.searchParams;
+          const day = (s: string | null, plus = 0) => {
+            const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s ?? "");
+            return m ? zonedTime(o.tz, +m[1], +m[2], +m[3] + plus) : undefined;
+          };
+          const int = (s: string | null, d: number, lo: number, hi: number) => Math.min(Math.max(Number.parseInt(s ?? "", 10) || d, lo), hi);
+          const all = site.entries.map((e) => e.p);
+          const r = filterMeetings(all, {
+            scope: sp.get("scope") === "past" ? "past" : "upcoming", body: sp.get("body")?.slice(0, 100) || undefined,
+            from: day(sp.get("from")), to: day(sp.get("to"), 1), q: sp.get("q")?.slice(0, 100) || undefined,
+            limit: int(sp.get("limit"), 50, 1, 200), offset: Math.max(Number.parseInt(sp.get("offset") ?? "", 10) || 0, 0),
+          }, site.now);
+          const bodies = [...new Set(all.map((p) => p.body).filter((b): b is string => !!b))].sort((a, b) => a.localeCompare(b));
+          return send(res, 200, { ...r, bodies });
+        }
+        const e = site.find(parts[2]);
+        if (!e) return send(res, 404, { error: "no such meeting" });
+        if (parts.length === 4) {
+          if (parts[3] !== "status") return send(res, 404, { error: "not found" });
+          // Small, polled while the page waits for something to finish.
+          const t = e.rec?.transcript;
+          return send(res, 200, { stage: e.p.stage, hasVideo: e.p.hasVideo, hasTranscript: e.p.hasTranscript, live: e.p.live,
+            transcript: t ? { status: t.status, stage: t.stage, progress: t.progress } : null });
+        }
+        const live = e.jobs.find((j) => j.status === "running" || j.status === "stopping");
+        const history = sync.changes({ meetingId: e.m.id, kinds: PUBLIC_KINDS, limit: 100 })
+          .flatMap((c) => publicChange(c, e.m) ?? []);
+        return send(res, 200, { ...e.p, recording: e.rec?.public ? toPublic(e.rec) : null, startedAt: live?.launchedAt ?? null, history });
+      }
+      if (parts[0] === "api" && parts[1] === "changes" && parts.length === 2 && read) {
+        // What changed lately across the public meetings: announcements, moves, cancellations, new documents.
+        if (!allow("watch")) return;
+        const site = publicSite();
+        const byId = new Map(site.entries.map((e) => [e.m.id, e.m]));
+        const limit = Math.min(Math.max(Number.parseInt(url.searchParams.get("limit") ?? "", 10) || 30, 1), 100);
+        const list = sync.changes({ kinds: PUBLIC_KINDS, limit: 1000 }).flatMap((c) => {
+          const m = byId.get(c.meetingId);
+          const pc = m && publicChange(c, m);
+          // Meetings listed after the fact (history imports) aren't news.
+          if (!pc || (pc.kind === "added" && Date.parse(pc.to ?? "") < Date.parse(pc.at))) return [];
+          return [pc];
+        });
+        return send(res, 200, list.slice(0, limit));
+      }
+      if (parts[0] === "m" && parts.length === 2 && read) {
+        const e = publicSite().find(parts[1]);
+        if (!e) return send(res, 404, "not found");
+        // The shell is the same for every meeting; the title and description are filled in for link previews.
+        const esc = (s: string) => s.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
+        const when = new Intl.DateTimeFormat("en-CA", { timeZone: o.tz, dateStyle: "long" }).format(new Date(e.m.start));
+        const body = pages.meeting.body.replace("__TITLE__", () => esc(`${e.m.title} (${when})`))
+          .replace("__DESC__", () => esc(`${e.m.title}, ${when}: video, transcript and documents.`));
+        return send(res, 200, body, { "Content-Type": "text/html; charset=utf-8", "Content-Security-Policy": pageCsp(body) });
       }
       if (parts[0] === "api" && parts[1] === "status" && parts.length === 2 && read) {
         // For the deploy guard (scripts/deploy-guard.sh): is a capture
@@ -661,11 +747,19 @@ export function createApp(o: ServeOpts, entry: string): App {
           const m = id ? sched.meetings.get(id) : undefined;
           if (!m) return send(res, 404, { error: "no such meeting" });
           if (parts.length === 5 && sub === "changes" && read) return send(res, 200, sync.changes({ meetingId: m.id }));
-          if (parts.length === 5 && method === "POST" && ["approve", "reject", "merge", "split"].includes(sub)) {
+          if (parts.length === 5 && method === "POST" && ["approve", "reject", "merge", "split", "hide", "show"].includes(sub)) {
             const body = await jsonBody();
             if (!body) return;
             let r: { meeting: Meeting; effect: string };
             try {
+              if (sub === "hide" || sub === "show") {
+                // The admin-only override: a hidden meeting's page, listing and files all 404.
+                const was = m.visibility;
+                m.visibility = sub === "hide" ? "hidden" : "public";
+                sched.meetings.save(m);
+                audit.record(actor, `meeting.${sub}`, { type: "meeting", id: m.id, label: m.slug }, { visibility: was }, { visibility: m.visibility });
+                return send(res, 200, { meeting: adminMeeting(m), effect: sub === "hide" ? "hidden from the public site" : "shown on the public site" });
+              }
               if (sub === "approve" || sub === "reject") r = sync.review(m.id, sub === "approve" ? "approved" : "rejected");
               else if (sub === "merge") r = sync.merge(m.id, String(body.into ?? ""));
               else r = sync.split(m.id, m.feedId ? feeds.get(m.feedId) : undefined);

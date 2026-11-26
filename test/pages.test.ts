@@ -112,7 +112,7 @@ describe("public page in Chromium", { skip: skipReason() }, () => {
     for (const f of cleanups.reverse()) await f();
   });
 
-  it("lists published recordings, plays one with its transcript, follows a live one", async () => {
+  it("home: upcoming, past with filters, recent updates; a meeting's page plays it with its transcript", async () => {
     const page = await (await browser.newContext()).newPage();
     const errors: string[] = [];
     page.on("pageerror", (e) => errors.push(e.message));
@@ -121,30 +121,42 @@ describe("public page in Chromium", { skip: skipReason() }, () => {
     page.on("request", (r) => requests.push(new URL(r.url()).pathname));
 
     await page.goto(base + "/");
-    await page.waitForSelector("#recs .row");
-    const titles = await page.$$eval("#recs .row .title", (els) => els.map((e) => e.textContent));
-    assert.deepEqual(titles.sort(), ["council-a", "livelive-e"]);
+    await page.waitForSelector("#past .mcard");
+    assert.deepEqual((await page.$$eval("#upcoming .mcard .t", (els) => els.map((e) => e.textContent))).sort(), ["upcomingfailed-d", "upcominglive-e"]);
+    assert.deepEqual(await page.$$eval("#past .mcard .t", (els) => els.map((e) => e.textContent)), ["video + transcriptcouncil-a"]);
     assert.equal(await page.textContent("#me"), "Sign in");
+    assert.match(await page.textContent("#updates") ?? "", /Nothing has changed lately|Announced/);
 
-    await page.click("#recs .row:has-text('council-a') button:has-text('Play')");
+    // Filters: a search that matches nothing, then clearing it.
+    await page.fill("#f-q", "zzz");
+    await page.waitForSelector("#past .empty:has-text('No past meetings match')");
+    await page.fill("#f-q", "");
+    await page.waitForSelector("#past .mcard");
+
+    // Open the meeting: its page has the player, the transcript and the title.
+    await page.click("#past .mcard");
     await page.waitForSelector("#player video");
+    assert.equal(new URL(page.url()).pathname, "/m/council-a");
     assert.equal(await page.getAttribute("#player video", "src"), "/media/council-a/council-a.mp4");
     await page.waitForSelector("#player .tline");
     assert.match(await page.textContent("#player .tline") ?? "", /Call to order\./);
-    assert.equal(new URL(page.url()).hash, "#council-a");
+    assert.match(await page.title(), /^council-a \(/);
 
-    await page.click("#recs .row:has-text('live-e') button:has-text('Live transcript')");
-    await page.waitForSelector("#livebox .tline");
-    assert.match(await page.textContent("#livebox") ?? "", /Good evening\./);
+    // An old shared link (/#recording) lands on the meeting's page.
+    const old = await page.context().newPage();
+    await old.goto(base + "/#council-a");
+    await old.waitForURL(base + "/m/council-a");
+    await old.waitForSelector("#player video");
+
+    // An upcoming one: the banner and the countdown, no player.
+    await page.goto(base + "/m/failed-d");
+    await page.waitForSelector("#head .banner");
+    assert.match(await page.textContent("#head .banner") ?? "", /Starts in/);
     assert.equal(await page.isHidden("#player"), true);
-
-    // A shared link (fresh page load) opens the recording.
-    const shared = await page.context().newPage();
-    await shared.goto(base + "/#council-a");
-    await shared.waitForSelector("#player video");
-
+    // Hidden/unknown meetings are a plain 404, and nothing admin was fetched.
+    assert.equal((await page.goto(base + "/m/hidden-b"))?.status(), 404);
     assert.ok(!requests.some((p) => p.startsWith("/api/admin") || p.startsWith("/admin")), requests.join(" "));
-    // Media 206s for the fake 100-byte video show up as errors; ignore those.
+    // Media 206s for the fake 100-byte video show up as errors; ignore those, and the 404 page.
     assert.deepEqual(errors.filter((e) => !/media|video|MEDIA_ERR|Failed to load resource/i.test(e)), []);
   });
 });

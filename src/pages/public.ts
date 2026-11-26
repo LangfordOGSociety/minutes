@@ -1,30 +1,27 @@
 /**
- * / : what anyone may see. Published recordings with their transcripts,
- * and meetings being recorded right now with the live draft transcript.
- * Never join links, meeting IDs, the bot's screen, logs, failed attempts or
- * the Zoom login state: the data comes from /api/recordings, which only
- * has the public fields, and files from /media, which only serves the
- * public ones (serve.ts).
+ * / : what anyone may see. Upcoming meetings, past meetings with filters
+ * (body, dates, search), and recent changes (announced, moved, cancelled,
+ * documents added). Each meeting opens /m/:slug (pages/meeting.ts).
+ *
+ * Never join links, meeting IDs, the bot's display, logs, failed attempts
+ * or the Zoom login state: the data comes from /api/meetings and
+ * /api/changes, which only have the public fields (site.ts).
  *
  * Same String.raw rules as the other pages. __TZ__ is replaced at startup.
  */
-import { BASE_CSS, BASE_JS, PLAYER_JS } from "./common.js";
+import { BASE_CSS, BASE_JS, PUBLIC_CSS, PUBLIC_JS } from "./common.js";
 
 export const PUBLIC_PAGE = String.raw`<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>minutes</title>
-<meta name="description" content="Recordings and transcripts of public meetings.">
+<title>minutes: public meetings</title>
+<meta name="description" content="Upcoming and past public meetings with video, transcripts and a record of every change.">
 <link rel="icon" href="data:,">
 <style>
 ${BASE_CSS}
-main { max-width: 1100px; margin: 0 auto; padding: 12px 24px 40px; }
-@media (max-width: 900px) { main { padding: 12px 16px 32px; } }
-.intro { color: var(--muted); margin: 0 24px 4px; font-size: 14px; max-width: 1100px; }
-@media (min-width: 1148px) { .intro { margin: 0 auto 4px; padding: 0 24px; } }
-#player[hidden], #livebox[hidden] { display: none; }
+${PUBLIC_CSS}
 </style>
 </head>
 <body>
@@ -32,85 +29,94 @@ main { max-width: 1100px; margin: 0 auto; padding: 12px 24px 40px; }
   <h1><a href="/">minutes</a></h1>
   <span class="me" id="me"></span>
 </header>
-<p class="intro">Recordings and transcripts of public meetings, usually the same night. Transcripts are machine-made: check the video before quoting.</p>
+<p class="intro">Public meetings: what's coming up, and video and transcripts of the ones that have happened, usually the same night. Transcripts are machine-made: check the video before quoting.</p>
 <main>
-  <section id="player" hidden></section>
-  <section id="livebox" hidden></section>
   <section>
-    <h2>Recordings</h2>
-    <div class="list" id="recs"><div class="empty">Loading...</div></div>
+    <h2>Upcoming</h2>
+    <div class="list" id="upcoming"><div class="empty">Loading...</div></div>
+  </section>
+  <section>
+    <h2>Past meetings</h2>
+    <div class="filters">
+      <select id="f-body" aria-label="Body"><option value="">All bodies</option></select>
+      <input id="f-from" type="date" aria-label="From date">
+      <input id="f-to" type="date" aria-label="To date">
+      <input id="f-q" class="q" type="search" placeholder="Search by title" aria-label="Search by title">
+    </div>
+    <div class="list" id="past"><div class="empty">Loading...</div></div>
+    <div class="hint" id="pastcount"></div>
+    <button class="more" id="more" hidden>Show more</button>
+  </section>
+  <section>
+    <h2>Recent updates</h2>
+    <div id="updates"><div class="empty">Loading...</div></div>
   </section>
 </main>
 <script>
 "use strict";
 var TZ = __TZ__;
 ${BASE_JS}
-${PLAYER_JS}
-var selected = null, following = null, stopLive = null;
+${PUBLIC_JS}
+// Old shared links were /#<recording>: send them to the meeting's page.
+if (location.hash.length > 1) location.replace("/m/" + encodeURIComponent(decodeURIComponent(location.hash.slice(1))));
 
-function render(recs) {
-  var box = document.getElementById("recs");
-  fill(box);
-  if (!recs.length) { box.appendChild(el("div", { "class": "empty", text: "No recordings yet." })); return; }
-  recs.forEach(function (r) {
-    var sub = fmt(r.scheduledStart) + (r.duration ? " · " + hms(r.duration) : "") +
-      (r.video ? (r.files.transcript ? " · transcript" : transcriptNote(r) ? " · " + transcriptNote(r).toLowerCase() : "") : " · recording now");
-    var actions = el("div", { "class": "actions" },
-      r.video ? el("button", { text: selected === r.slug ? "Playing" : "Play", on: { click: function () { openRec(r); } } }) : null,
-      r.active && r.files.live ? el("button", { text: following === r.slug ? "Following" : "Live transcript", on: { click: function () { live(r); } } }) : null);
-    box.appendChild(el("div", { "class": "row" + (selected === r.slug || following === r.slug ? " selected" : "") },
-      el("div", { "class": "title" }, r.active ? pill("live") : null, r.title || r.slug), actions, el("div", { "class": "sub", text: sub })));
+function offline(box, e) { fill(box, el("div", { "class": "empty", text: "Can't reach the server: " + e.message })); }
+
+function loadUpcoming() {
+  var box = document.getElementById("upcoming");
+  return api("GET", "/api/meetings?scope=upcoming&limit=50").then(function (d) {
+    if (!d.meetings.length) { fill(box, el("div", { "class": "empty", text: "No upcoming meetings listed." })); return; }
+    fill.apply(null, [box].concat(d.meetings.map(meetingCard)));
+  }, function (e) { offline(box, e); });
+}
+
+var shown = 0, haveBodies = false;
+function pastQuery(offset) {
+  var q = "scope=past&limit=25&offset=" + offset;
+  [["body", "f-body"], ["from", "f-from"], ["to", "f-to"], ["q", "f-q"]].forEach(function (p) {
+    var v = document.getElementById(p[1]).value.trim();
+    if (v) q += "&" + p[0] + "=" + encodeURIComponent(v);
   });
+  return q;
 }
-
-function openRec(r) {
-  closeLive();
-  selected = r.slug;
-  var p = document.getElementById("player");
-  play(r, "/media/", p);
-  history.replaceState(null, "", "#" + encodeURIComponent(r.slug));
-  p.scrollIntoView({ behavior: "smooth", block: "start" });
-  refresh();
-}
-
-function live(r) {
-  var p = document.getElementById("player");
-  p.hidden = true; fill(p); selected = null;
-  closeLive();
-  following = r.slug;
-  var box = document.getElementById("livebox");
-  var list = el("div", { "class": "tlist live-t" }), note = el("div", { "class": "hint" });
-  fill(box, el("div", { "class": "player-title" }, el("h3", { text: (r.title || r.slug) + " (live)" }),
-      el("button", { text: "Close", on: { click: function () { closeLive(); refresh(); } } })),
-    el("div", { "class": "hint", text: "Being recorded now. The video appears here once the meeting ends." }),
-    el("h3", { "class": "live-h", text: "Live transcript (draft)" }), list, note);
-  box.hidden = false;
-  stopLive = followLive(mediaUrl("/media/", r.slug, "live.json"), list, note);
-  refresh();
-}
-function closeLive() {
-  if (stopLive) { stopLive(); stopLive = null; }
-  following = null;
-  var box = document.getElementById("livebox"); box.hidden = true; fill(box);
-}
-
-var first = true;
-function refresh() {
-  return api("GET", "/api/recordings").then(function (recs) {
-    render(recs);
-    // A shared link (#slug) opens that recording.
-    if (first) {
-      first = false;
-      var want = decodeURIComponent(location.hash.slice(1));
-      var r = recs.find(function (x) { return x.slug === want; });
-      if (r && r.video) openRec(r);
+function loadPast(more) {
+  var box = document.getElementById("past"), btn = document.getElementById("more");
+  var offset = more ? shown : 0;
+  return api("GET", "/api/meetings?" + pastQuery(offset)).then(function (d) {
+    if (!haveBodies && d.bodies.length) {
+      haveBodies = true;
+      var sel = document.getElementById("f-body");
+      d.bodies.forEach(function (b) { sel.appendChild(el("option", { value: b, text: b })); });
     }
-  }, function (e) { fill(document.getElementById("recs"), el("div", { "class": "empty", text: "Can't reach the server: " + e.message })); });
+    if (!more) fill(box);
+    if (!more && !d.meetings.length) box.appendChild(el("div", { "class": "empty", text: "No past meetings match." }));
+    d.meetings.forEach(function (m) { box.appendChild(meetingCard(m)); });
+    shown = offset + d.meetings.length;
+    document.getElementById("pastcount").textContent = d.total ? "Showing " + shown + " of " + d.total : "";
+    btn.hidden = shown >= d.total;
+  }, function (e) { offline(box, e); });
 }
+
+function loadUpdates() {
+  var box = document.getElementById("updates");
+  return api("GET", "/api/changes?limit=15").then(function (cs) {
+    if (!cs.length) { fill(box, el("div", { "class": "empty", text: "Nothing has changed lately." })); return; }
+    fill.apply(null, [box].concat(cs.map(function (c) {
+      return el("div", { "class": "upd" }, el("span", { "class": "w", text: ago(c.at) }),
+        el("span", {}, el("a", { href: "/m/" + encodeURIComponent(c.meeting.id), text: c.meeting.title }), ": " + changeText(c)));
+    })));
+  }, function (e) { offline(box, e); });
+}
+
+var timer = null;
+function onFilter() { clearTimeout(timer); timer = setTimeout(function () { loadPast(false); }, 250); }
+["f-body", "f-from", "f-to"].forEach(function (id) { document.getElementById(id).addEventListener("change", function () { loadPast(false); }); });
+document.getElementById("f-q").addEventListener("input", onFilter);
+document.getElementById("more").addEventListener("click", function () { loadPast(true); });
 
 renderMe(document.getElementById("me"), false);
-refresh();
-setInterval(function () { if (!document.hidden) refresh(); }, 15000);
+loadUpcoming(); loadPast(false); loadUpdates();
+setInterval(function () { if (!document.hidden) { loadUpcoming(); loadUpdates(); } }, 30000);
 </script>
 </body>
 </html>

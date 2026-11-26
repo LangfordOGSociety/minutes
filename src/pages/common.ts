@@ -266,3 +266,83 @@ function followLive(url, box, note) {
   return function () { clearInterval(timer); };
 }
 `;
+
+/** The public site's own styles (home and meeting pages). */
+export const PUBLIC_CSS = String.raw`
+main { max-width: 1100px; margin: 0 auto; padding: 12px 24px 40px; }
+@media (max-width: 900px) { main { padding: 12px 16px 32px; } }
+.intro { color: var(--muted); margin: 0 auto 4px; font-size: 14px; max-width: 1100px; padding: 0 24px; }
+@media (max-width: 900px) { .intro { padding: 0 16px; } }
+.mcard { display: block; text-decoration: none; color: inherit; border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; }
+.mcard:hover, .mcard:focus-visible { border-color: var(--accent); outline: none; }
+.mcard .t { font-weight: 600; overflow-wrap: anywhere; }
+.mcard .s { color: var(--muted); font-size: 13px; margin-top: 2px; overflow-wrap: anywhere; }
+.s-upcoming { color: var(--accent); } .s-processing { color: var(--warn); } .s-ready { color: var(--ok); }
+.s-nofile { color: var(--muted); }
+.filters { display: grid; grid-template-columns: 1fr 1fr 1fr 2fr; gap: 8px; margin-bottom: 12px; }
+@media (max-width: 700px) { .filters { grid-template-columns: 1fr 1fr; } .filters .q { grid-column: 1 / -1; } }
+.more { margin-top: 10px; width: 100%; }
+.upd { display: grid; grid-template-columns: 9.5em 1fr; gap: 4px 12px; padding: 7px 2px; border-bottom: 1px solid var(--line); font-size: 14px; }
+.upd:last-child { border-bottom: 0; }
+.upd .w { color: var(--muted); font-variant-numeric: tabular-nums; }
+.upd a { overflow-wrap: anywhere; }
+@media (max-width: 600px) { .upd { grid-template-columns: 1fr; gap: 0; } }
+.crumbs { margin: 4px 0 12px; font-size: 14px; }
+.mtitle { font-size: 22px; line-height: 1.25; text-transform: none; letter-spacing: -.01em; color: var(--ink); margin: 0 0 6px; overflow-wrap: anywhere; font-weight: 700; }
+.facts { color: var(--muted); font-size: 14px; display: flex; flex-wrap: wrap; gap: 4px 12px; align-items: center; }
+.banner { border: 1px solid var(--line); border-left: 4px solid var(--accent); border-radius: 8px; padding: 10px 12px; margin-top: 12px; }
+.banner.live { border-left-color: var(--live); } .banner.warn { border-left-color: var(--warn); } .banner.off { border-left-color: var(--muted); }
+.banner b { display: block; }
+.linkrow { display: flex; flex-wrap: wrap; gap: 6px 14px; margin-bottom: 8px; }
+.docs { list-style: none; margin: 0; padding: 0; }
+.docs li { padding: 5px 0; border-bottom: 1px solid var(--line); overflow-wrap: anywhere; }
+.docs li:last-child { border-bottom: 0; }
+.docs .k { color: var(--muted); font-size: 12px; margin-left: 6px; }
+`;
+
+/** Public-site helpers: dates with a year, countdowns, cards, change text. Needs BASE_JS. */
+export const PUBLIC_JS = String.raw`
+var fmtFull = new Intl.DateTimeFormat(undefined, { timeZone: TZ, weekday: "short", year: "numeric", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+function whenOf(iso) { return iso ? fmtFull.format(new Date(iso)) : "?"; }
+function until(iso) {
+  var m = Math.round((new Date(iso).getTime() - Date.now()) / 60000);
+  if (m <= 0) return "now";
+  if (m < 60) return "in " + m + " min";
+  var h = Math.floor(m / 60);
+  if (h < 24) return "in " + h + " h" + (m % 60 ? " " + (m % 60) + " min" : "");
+  var d = Math.round(m / 1440);
+  return "in " + d + (d === 1 ? " day" : " days");
+}
+function safeUrl(u) { return typeof u === "string" && /^https?:[/][/]/i.test(u) ? u : null; }
+function ext(href, text) { return el("a", { href: safeUrl(href) || "#", text: text, target: "_blank", rel: "noopener noreferrer" }); }
+
+// stage -> [label shown, colour class]
+var STAGES = { upcoming: ["upcoming", "upcoming"], live: ["live", "live"], stitching: ["processing", "processing"],
+  video_ready: ["video", "ready"], ready: ["video + transcript", "ready"], failed: ["not recorded", "nofile"],
+  not_recorded: ["not recorded", "nofile"], cancelled: ["cancelled", "cancelled"] };
+function stagePill(stage) {
+  var s = STAGES[stage] || [stage, "nofile"];
+  return el("span", { "class": "pill s-" + s[1], text: s[0] });
+}
+
+function meetingCard(m) {
+  var sub = [whenOf(m.start), m.body && m.body !== m.title ? m.body : null, m.duration ? hms(m.duration) : null].filter(Boolean).join(" · ");
+  return el("a", { "class": "mcard", href: "/m/" + encodeURIComponent(m.id) },
+    el("div", { "class": "t" }, stagePill(m.stage), m.title), el("div", { "class": "s", text: sub }));
+}
+
+function changeText(c) {
+  var d = c.doc ? c.doc.title + (c.doc.type ? " (" + c.doc.type + ")" : "") : "";
+  switch (c.kind) {
+    case "added": return "Announced for " + whenOf(c.to);
+    case "date_changed": return "Moved from " + whenOf(c.from) + " to " + whenOf(c.to);
+    case "time_changed": return "Time changed from " + whenOf(c.from) + " to " + whenOf(c.to);
+    case "cancelled": return "Cancelled";
+    case "reinstated": return "Back on the schedule";
+    case "document_added": return "Added " + d;
+    case "document_changed": return "Updated " + d;
+    case "document_removed": return "Removed " + d;
+  }
+  return c.kind;
+}
+`;
