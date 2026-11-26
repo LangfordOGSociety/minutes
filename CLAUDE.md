@@ -145,8 +145,11 @@ captures).
   site), externalId = hash(name, start) since event_id links appear only
   later. Saanich streams on Granicus (no capture platform): list_only.
   `sync.ts` (the Applier, migration 7): diff by externalId into
-  meeting_changes (added, time/link changed, cancelled, reinstated,
-  removed, returned, details); `removed` only flags; a run removing more
+  meeting_changes (added, date_changed (another local day) vs
+  time_changed (same day), both with local times, link changed, cancelled,
+  reinstated, removed, returned, details, document_added / removed /
+  changed by URL against meetings.documents (migration 8; a meeting's
+  first list, incl. rows from before it, is stored without entries)); `removed` only flags; a run removing more
   than half (and >= 2) of a feed's upcoming meetings is `suspect` and
   applies nothing (hash not saved, so it's re-checked). Policies auto /
   review / list_only; dedup (same link within 12h, or same body within 15

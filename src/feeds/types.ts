@@ -61,6 +61,16 @@ export interface DetectedMeeting {
   pageUrl?: string;
   agendaUrl?: string;
   cancelled?: boolean;
+  /** Everything the source lists for the meeting (agenda, revised agenda,
+   *  addenda, notices, minutes, video). Undefined = this parser doesn't
+   *  report documents (then nothing about documents is logged). */
+  documents?: MeetingDocument[];
+}
+
+export interface MeetingDocument {
+  title: string;
+  type?: string;            // the source's own kind: Agenda, PostMinutes, AdditionalDocuments, ...
+  url: string;              // the identity: same URL = same document
 }
 
 export type FeedResult = { notModified: true } | { meetings: DetectedMeeting[] };

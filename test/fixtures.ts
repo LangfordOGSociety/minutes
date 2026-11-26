@@ -73,9 +73,10 @@ export const testParser: FeedParser<{ url: string }> = {
   async fetch(c, ctx) {
     const r = await ctx.http(c.url, { conditional: true });
     if (r.notModified) return { notModified: true };
-    const rows = JSON.parse(r.body) as { id: string; title: string; start: string; link?: string; body?: string; cancelled?: boolean; agendaUrl?: string }[];
+    const rows = JSON.parse(r.body) as { id: string; title: string; start: string; link?: string; body?: string; cancelled?: boolean; agendaUrl?: string;
+      documents?: { title: string; type?: string; url: string }[] }[];
     return { meetings: rows.map((x) => ({ externalId: x.id, title: x.title, start: new Date(x.start), link: x.link, body: x.body,
-      cancelled: x.cancelled, agendaUrl: x.agendaUrl })) };
+      cancelled: x.cancelled, agendaUrl: x.agendaUrl, documents: x.documents })) };
   },
 };
 registerParser(testParser);

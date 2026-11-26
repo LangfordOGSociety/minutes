@@ -36,6 +36,8 @@ export interface Meeting {
   duplicateOf?: string;   // same real meeting as this one (dedup): never captured twice
   removedAt?: string;     // missing from its feed since then (a flag only)
   lastSeenAt?: string;
+  /** The documents its feed last listed (see DetectedMeeting.documents). */
+  documents?: { title: string; type?: string; url: string }[];
   createdAt: string;
   updatedAt: string;
 }
@@ -50,10 +52,11 @@ type Row = {
   platform: string; method: string | null; link: string; start: string; end_est: string | null;
   agenda_url: string | null; status: string; visibility: string; slug: string; created_at: string; updated_at: string;
   page_url: string | null; review: string | null; duplicate_of: string | null; removed_at: string | null; last_seen_at: string | null;
+  documents: string | null;
 };
 
 const COLS = "id, feed_id, external_id, title, body, platform, method, link, start, end_est, agenda_url, status, visibility, slug, created_at, updated_at, " +
-  "page_url, review, duplicate_of, removed_at, last_seen_at";
+  "page_url, review, duplicate_of, removed_at, last_seen_at, documents";
 
 function toRow(m: Meeting): Row {
   return {
@@ -63,6 +66,7 @@ function toRow(m: Meeting): Row {
     created_at: m.createdAt, updated_at: m.updatedAt,
     page_url: m.pageUrl ?? null, review: m.review ?? null, duplicate_of: m.duplicateOf ?? null,
     removed_at: m.removedAt ?? null, last_seen_at: m.lastSeenAt ?? null,
+    documents: m.documents ? JSON.stringify(m.documents) : null,
   };
 }
 
@@ -83,6 +87,7 @@ function fromRow(r: Row): Meeting {
   if (r.duplicate_of !== null) m.duplicateOf = r.duplicate_of;
   if (r.removed_at !== null) m.removedAt = r.removed_at;
   if (r.last_seen_at !== null) m.lastSeenAt = r.last_seen_at;
+  if (r.documents !== null) { try { m.documents = JSON.parse(r.documents); } catch { /* ignore a bad row */ } }
   return m;
 }
 

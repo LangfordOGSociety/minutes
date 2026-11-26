@@ -61,6 +61,10 @@ describe("escribe", () => {
     assert.equal(nov24.end?.toISOString(), "2026-11-25T01:30:00.000Z");
     assert.equal(nov24.agendaUrl, "https://pub-langford.escribemeetings.com/Meeting.aspx?Id=b3e00e65-8200-4120-b0bd-ebbdbe192c08&Agenda=Agenda&lang=English");
     assert.equal(nov24.pageUrl, nov24.agendaUrl);
+    assert.deepEqual(nov24.documents?.map((d) => `${d.type}: ${d.title}`), [
+      "AgendaCover: Agenda Cover Page (PDF)", "Agenda: Agenda (PDF)", "Agenda: Agenda (HTML)", "Video: Video",
+      "AdditionalDocuments: Postponement Notice of Council Meeting", "AdditionalDocuments: Dial in Instructions"]);
+    assert.equal(nov24.documents?.[0].url, "https://pub-langford.escribemeetings.com/FileStream.ashx?DocumentId=19547");
     // Only the chosen types.
     const council = calendarToMeetings(rows, { baseUrl: "https://x.escribemeetings.com/", tz: TZ, meetingTypes: ["council meeting"] });
     assert.deepEqual(council.map((m) => m.start.toISOString()), ["2026-11-25T00:30:00.000Z", "2026-12-09T00:30:00.000Z"]);

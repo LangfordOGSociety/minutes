@@ -195,6 +195,55 @@ describe("feed sync", () => {
     assert.equal(app.sched.list().length, 0);
   });
 
+  it("history: announcement, date vs time changes in local time, documents posted, retitled, pulled", async (t) => {
+    const { app, src, run, byTitle, admin } = await setup(t, "review");
+    // 2027-01-12 17:30 in Vancouver (UTC-7).
+    const doc = (title: string, n: number, type = "AdditionalDocuments") => ({ title, type, url: `https://example.ca/doc/${n}` });
+    src.state.meetings = [{ id: "h1", title: "Council Meeting", body: "Council Meeting", start: "2027-01-13T00:30:00.000Z",
+      documents: [doc("Dial in Instructions", 1)] }];
+    await run();
+    const m = await byTitle("Council Meeting");
+    const history = async () => ((await admin.get(`/api/admin/meetings/${m.id}/changes`)).json as any[]).reverse();
+    let h = await history();
+    assert.deepEqual(h.map((c) => c.kind), ["added"]);        // the first document list isn't news
+    assert.equal(h[0].after.local, "2027-01-12 17:30");
+    assert.equal(h[0].after.documents, 1);
+
+    // Same day, later; then another day.
+    src.state.meetings[0] = { ...src.state.meetings[0] as object, start: "2027-01-13T01:30:00.000Z" } as never;
+    await run();
+    src.state.meetings[0] = { ...src.state.meetings[0] as object, start: "2027-01-20T01:30:00.000Z" } as never;
+    await run();
+    h = await history();
+    assert.deepEqual(h.slice(1).map((c) => [c.kind, c.before.local, c.after.local]), [
+      ["time_changed", "2027-01-12 17:30", "2027-01-12 18:30"],
+      ["date_changed", "2027-01-12 18:30", "2027-01-19 18:30"],
+    ]);
+
+    // Agenda posted and the notice retitled; then the notice pulled.
+    (src.state.meetings[0] as { documents: unknown[] }).documents = [doc("Dial-in Instructions (updated)", 1), doc("Agenda (PDF)", 2, "Agenda")];
+    await run();
+    (src.state.meetings[0] as { documents: unknown[] }).documents = [doc("Agenda (PDF)", 2, "Agenda")];
+    await run();
+    h = await history();
+    assert.deepEqual(h.slice(3).map((c) => [c.kind, (c.after ?? c.before).title]), [
+      ["document_changed", "Dial-in Instructions (updated)"],
+      ["document_added", "Agenda (PDF)"],
+      ["document_removed", "Dial-in Instructions (updated)"],
+    ]);
+    assert.equal(h[3].before.title, "Dial in Instructions");
+    assert.deepEqual(app.sched.meetings.get(m.id)!.documents, [doc("Agenda (PDF)", 2, "Agenda")]);
+
+    // A meeting stored before documents were tracked: its first list is stored quietly.
+    const stored = app.sched.meetings.get(m.id)!;
+    stored.documents = undefined;
+    app.sched.meetings.save(stored);
+    (src.state.meetings[0] as { documents: unknown[] }).documents = [doc("Agenda (PDF)", 2, "Agenda"), doc("Minutes", 3, "PostMinutes")];
+    await run();
+    assert.equal((await history()).length, 6);
+    assert.equal(app.sched.meetings.get(m.id)!.documents?.length, 2);
+  });
+
   it("slugs", () => {
     assert.equal(slugify("Parks, Recreation & Culture Committee"), "parks-recreation-and-culture-committee");
     assert.equal(slugify("Séance du conseil"), "seance-du-conseil");

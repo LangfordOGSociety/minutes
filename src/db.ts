@@ -179,6 +179,11 @@ const MIGRATIONS: string[] = [
    );
    CREATE INDEX meeting_changes_meeting ON meeting_changes (meeting_id, id);
    CREATE INDEX meeting_changes_feed ON meeting_changes (feed_id, id);`,
+
+  // 8: each meeting's documents as its feed last listed them (agenda,
+  // revised agenda, addenda, notices, minutes), to log what's posted or
+  // pulled. NULL = never listed (older rows): the first list isn't news.
+  `ALTER TABLE meetings ADD COLUMN documents TEXT;`,
 ];
 
 export function openDb(file: string): DB {

@@ -15,6 +15,9 @@
  *   Langford), or "cancelled" in the meeting's name. A "Postponement
  *   Notice" is not a cancellation (the 2026-11-24 council meeting had one
  *   and went ahead).
+ * - Documents: every item the portal lists for the meeting (agenda PDF and
+ *   HTML, cover page, revised agendas, addenda, notices, minutes, video),
+ *   so the sync can log what's posted or pulled.
  * - Optional meeting types: only those (Langford has ~20: Council Meeting,
  *   Committee of the Whole Meeting, Special Council Meeting, ...). One per
  *   line; an entry that's no type itself is also read as a comma-separated
@@ -56,6 +59,17 @@ function localTime(s: string | undefined, tz: string): Date | undefined {
   return m ? zonedTime(tz, +m[1], +m[2], +m[3], +m[4], +m[5], +(m[6] ?? 0)) : undefined;
 }
 
+/** The portal's document list, deduplicated by URL, titles tidied. */
+function docsOf(docs: EscribeDoc[], abs: (u: string) => string): { title: string; type?: string; url: string }[] {
+  const out = new Map<string, { title: string; type?: string; url: string }>();
+  for (const d of docs) {
+    if (!d.Url) continue;
+    const url = abs(d.Url);
+    if (!out.has(url)) out.set(url, { title: decodeEntities(d.Title ?? "").replace(/\s+/g, " ").trim() || "(untitled)", ...(d.Type ? { type: d.Type } : {}), url });
+  }
+  return [...out.values()];
+}
+
 const CANCELLED_DOC = /\bcancell?ation notice\b|\bnotice of cancell?ation\b|\bmeeting cancell?ed\b/i;
 
 const norm = (s: string) => s.trim().replace(/\s+/g, " ").toLowerCase();
@@ -92,6 +106,7 @@ export function calendarToMeetings(rows: EscribeMeeting[], o: { baseUrl: string;
       pageUrl: html ? abs(html) : undefined,
       cancelled: /\bcancell?ed\b/i.test(name) || docs.some((d) => CANCELLED_DOC.test(d.Title ?? "")) || undefined,
       link: findLink(textOf(`${r.Description ?? ""}\n${r.Location ?? ""}`)),
+      documents: docsOf(docs, abs),
       agendaHtml: html ? abs(html) : undefined,
     });
   }
