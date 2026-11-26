@@ -47,6 +47,10 @@
  *   POST   /api/account/tokens       {label, scopes?, expiresInDays?} -> {token (shown once), record}
  *   DELETE /api/account/tokens/:id   revoke
  *   GET    /api/account/usage        your API usage (?days=30)
+ *   GET    /api/account/alerts       your saved searches (alerts.own: confirmed email; needs mail set up)
+ *   POST   /api/account/alerts       {query, body?} -> emails you when a new meeting's transcript matches
+ *   DELETE /api/account/alerts/:id
+ *   GET    /alerts/:token/stop       the email's link: a page that asks (POST /api/alerts/stop {token} stops it)
  *   GET    /api/admin/tokens         everyone's tokens;  DELETE /api/admin/tokens/:id  revoke
  *   PATCH  /api/admin/tokens/:id     {downloadBps}: that token's own download speed cap (0 = the default)
  *   GET    /api/admin/usage          per day, token, user, top files (?days, ?user)
@@ -113,6 +117,8 @@ import { SessionKeeper, type KeeperOpts } from "./session.js";
 import { API_DOCS_PAGE, openApi } from "./apidocs.js";
 import { Tokens, TokenError, activeToken, type ApiToken } from "./tokens.js";
 import { Search } from "./search.js";
+import { Alerts, AlertError, type Alert } from "./alerts.js";
+import { STOP_PAGE } from "./pages/stop.js";
 import { SEARCH_PAGE } from "./pages/search.js";
 import { SLUG_RE, logger, notify } from "./util.js";
 
@@ -171,6 +177,9 @@ function countBytes(res: http.ServerResponse): () => number {
   res.end = ((c?: unknown, ...a: unknown[]) => { n += len(c); return end(c, ...a); }) as typeof res.end;
   return () => n;
 }
+
+/** An alert as its owner sees it: never the token that stops it from an email. */
+const publicAlert = (a: Alert) => ({ id: a.id, query: a.query, body: a.body, createdAt: a.createdAt, lastSentAt: a.lastSentAt });
 
 /** A token as its owner (or an admin) sees it: never its hash. */
 const publicToken = (t: ApiToken) => ({ id: t.id, prefix: t.prefix, label: t.label, scopes: t.scopes, createdAt: t.createdAt, expiresAt: t.expiresAt,
@@ -322,6 +331,9 @@ export interface App {
   audit: Audit;
   tokens: Tokens;
   search: Search;
+  alerts: Alerts;
+  /** Email alert matches for meetings not handled yet (it also runs after each search index pass). */
+  processAlerts(): Promise<number>;
   /** Re-read transcripts into the search index now (it also runs by itself). */
   syncSearch(force?: boolean): void;
   /** Stop timers and captures, close the database. */
@@ -335,6 +347,7 @@ export function createApp(o: ServeOpts, entry: string): App {
   const audit = new Audit(db);
   const tokens = new Tokens(db);
   const search = new Search(db);
+  const alerts = new Alerts(db);
   const throttle = new Throttle({ globalBps: o.downloadBps, tokenBps: o.tokenDownloadBps });
   const proxies = new Proxies(o.trustedProxies);
   const cookieName = o.secureCookie ? "__Host-minutes_session" : "minutes_session";
@@ -404,10 +417,10 @@ export function createApp(o: ServeOpts, entry: string): App {
     log.warn("no BACKUP_DIR: nightly backups are off");
   }
 
-  const pages = Object.fromEntries(Object.entries({ public: PUBLIC_PAGE, admin: ADMIN_PAGE, login: LOGIN_PAGE, feeds: FEEDS_PAGE, meeting: MEETING_PAGE, embed: EMBED_PAGE, search: SEARCH_PAGE }).map(([k, html]) => {
+  const pages = Object.fromEntries(Object.entries({ public: PUBLIC_PAGE, admin: ADMIN_PAGE, login: LOGIN_PAGE, feeds: FEEDS_PAGE, meeting: MEETING_PAGE, embed: EMBED_PAGE, search: SEARCH_PAGE, stop: STOP_PAGE }).map(([k, html]) => {
     const body = html.replace("__TZ__", JSON.stringify(o.tz));
     return [k, { body, csp: pageCsp(body) }];
-  })) as Record<"public" | "admin" | "login" | "feeds" | "meeting" | "embed" | "search", { body: string; csp: string }>;
+  })) as Record<"public" | "admin" | "login" | "feeds" | "meeting" | "embed" | "search" | "stop", { body: string; csp: string }>;
   const sendPage = (res: http.ServerResponse, p: { body: string; csp: string }) =>
     send(res, 200, p.body, { "Content-Type": "text/html; charset=utf-8", "Content-Security-Policy": p.csp });
 
@@ -423,7 +436,24 @@ export function createApp(o: ServeOpts, entry: string): App {
         .filter((i) => existsSync(i.file));
       const r = search.sync(items);
       if (r.indexed || r.removed) log.info(`transcript search: indexed ${r.indexed}, dropped ${r.removed}`);
+      void processAlerts();
     } catch (e) { log.warn("indexing transcripts for search failed", e); }
+  };
+  /** Email people whose alerts match meetings that got transcripts (alerts.ts). Needs mail; harmless without. */
+  let alertsBusy = false;
+  const processAlerts = async (): Promise<number> => {
+    if (!mailer || closed || alertsBusy) return 0;
+    alertsBusy = true;
+    try {
+      const meetings = publicSite().entries.filter((e) => e.rec?.public && e.rec.files.transcript)
+        .map((e) => ({ id: e.m.id, slug: e.m.slug, title: e.m.title, body: e.m.body ?? null, start: e.m.start }));
+      return await alerts.process({
+        meetings, search, site,
+        recipient: (id) => { const u = accounts.get(id); return u && !u.disabledAt && u.emailVerifiedAt && !u.mustChangePassword ? { id: u.id, email: u.email, name: u.name } : null; },
+        send: (to, subject, text) => mailer.send({ to: to.email, subject, text: text + `\n\n-- \nminutes${site ? " · " + site : ""}\nAn automatic message; replies aren't read.\n` }),
+      });
+    } catch (e) { log.warn("processing alerts failed", e); return 0; }
+    finally { alertsBusy = false; }
   };
   const searchTimer = setInterval(() => syncSearch(true), 120_000);
   searchTimer.unref();
@@ -721,6 +751,52 @@ export function createApp(o: ServeOpts, entry: string): App {
         const running = jobs.filter((j) => j.status === "running" || j.status === "stopping" || j.status === "queued").length;
         const due = jobs.filter((j) => j.status === "scheduled" && Date.parse(j.start) - now < within).map((j) => j.start).sort();
         return send(res, 200, { busy: running > 0 || due.length > 0, running, nextStart: due[0] ?? null });
+      }
+
+      // --- alerts: saved searches that email their owner (alerts.ts) ---
+      if (parts[0] === "api" && parts[1] === "account" && parts[2] === "alerts" && parts.length <= 4) {
+        if (!allow("alerts.own")) return;
+        if (!mailer) return send(res, 503, { error: "email isn't set up on this server, so alerts can't be sent" });
+        if (parts.length === 3 && read) return send(res, 200, alerts.list(user!.id).map(publicAlert));
+        if (parts.length === 3 && method === "POST") {
+          const body = await jsonBody();
+          if (!body) return;
+          try {
+            const a = alerts.create(user!.id, body);
+            audit.record(actor, "alert.create", { type: "alert", id: a.id, label: a.query }, null, { query: a.query, body: a.body });
+            return send(res, 201, publicAlert(a));
+          } catch (e) {
+            if (e instanceof AlertError) return send(res, e.status, { error: e.message });
+            throw e;
+          }
+        }
+        if (parts.length === 4 && method === "DELETE") {
+          const a = alerts.get(parts[3]);
+          if (!a || a.userId !== user!.id) return send(res, 404, { error: "no such alert" });
+          alerts.delete(a.id);
+          audit.record(actor, "alert.delete", { type: "alert", id: a.id, label: a.query }, { query: a.query }, null);
+          return send(res, 200, { deleted: true });
+        }
+      }
+      // The link in an alert email: a page that asks, and the token is the only credential (no sign-in).
+      if (parts[0] === "api" && parts[1] === "alerts" && parts.length === 3) {
+        if (parts[2] === "stop" && method === "POST") {
+          const body = await jsonBody();
+          if (!body) return;
+          const a = typeof body.token === "string" ? alerts.byToken(body.token) : undefined;
+          if (!a) return send(res, 404, { error: "that alert is already stopped, or the link isn't right" });
+          alerts.delete(a.id);
+          audit.record({ id: null, label: "email link", ip }, "alert.stop", { type: "alert", id: a.id, label: a.query }, { query: a.query }, null);
+          return send(res, 200, { stopped: true, query: a.query });
+        }
+        if (read && parts[2] !== "stop") {
+          const a = alerts.byToken(parts[2]);
+          return a ? send(res, 200, { query: a.query, body: a.body }) : send(res, 404, { error: "no such alert" });
+        }
+      }
+      if (read && parts[0] === "alerts" && parts.length === 3 && parts[2] === "stop") {
+        const p = pages.stop;
+        return send(res, 200, p.body, { "Content-Type": "text/html; charset=utf-8", "Content-Security-Policy": p.csp, "Referrer-Policy": "no-referrer" });
       }
 
       // --- API tokens and usage: the signed-in user's own (#16, #18) ---
@@ -1131,7 +1207,7 @@ export function createApp(o: ServeOpts, entry: string): App {
   });
 
   return {
-    server, accounts, sched, audit, tokens, search, syncSearch,
+    server, accounts, sched, audit, tokens, search, syncSearch, alerts, processAlerts,
     async close() {
       server.close();
       server.closeAllConnections();

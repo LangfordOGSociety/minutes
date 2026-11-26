@@ -183,6 +183,25 @@ captures).
   markup), `t` seconds and `url` = `/m/<slug>?t=<s>`; `/search` page; a
   search box on `/`. Index sync: at start, every 2 min, and on a search
   if >30 s old (`App.syncSearch`). node:sqlite FTS5 verified on Node 24.
+- `src/alerts.ts` email alerts (migration 12: alerts, alert_deliveries,
+  alert_runs; capability `alerts.own`, confirmed email, needs mail).
+  A saved search (<=10 per person, body optional) whose owner is emailed
+  when a NEW meeting's transcript matches. `processAlerts` runs after every
+  search index pass: for each visible meeting with a transcript not in
+  alert_runs it runs each applicable alert against just that meeting
+  (same query rules/visibility as search) and sends ONE email per person
+  (matches, links at the second, a stop link per alert). Once per
+  (alert, meeting) via alert_deliveries, so a retry after a mail failure
+  only sends what's missing; the meeting is marked handled when every send
+  succeeded or after 8 tries. Meetings that began >30 days ago are never
+  alerted and the first pass after deploy just marks the existing ones
+  handled (an alert made today must not announce the archive). Owners
+  who are gone/disabled/unconfirmed lose their matching alerts. The email's
+  stop link `/alerts/<token>/stop` is a PAGE that asks (mail scanners
+  prefetching links change nothing); `POST /api/alerts/stop {token}` is the
+  only credential-less write, 192-bit token, same-origin only. Alerts are
+  made from `/search` (button) or the account page; never show the token
+  in the API. Audit: alert.create/delete/stop.
 - `src/recordings.ts` recordings on disk, admin view and public view.
   Public = a job made it, its meeting is public and not cancelled, video or
   live. `publicFiles()` is the only list /media serves from (never
