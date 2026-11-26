@@ -232,6 +232,23 @@ captures).
   characters, audited) and a Speakers button per recording on /admin.
   The player says some names were added by hand. Searching an apostrophe
   name: O'Brien is two tokens (o, brien), so search "o'brien".
+- `src/ops.ts` messages to the operator (CAPTURE_NOTIFY_URL, ntfy-style;
+  `notify(url, text, {priority, tags})`): `Scheduler.onEvent` emits
+  started / finished / overdue (a capture still not started 10 min after
+  its meeting did) and `Ops` turns them into plain-words messages
+  (`describeOutcome`: ended / not_started / blocked / invalid_link /
+  email_required / ended_after_interruption / stopped / failed + error;
+  problems are priority high and say "Check /admin"); transcripts ready or
+  failed are found by scanning transcript.status.json every 2 min. Each
+  message once, remembered in `ops_notified` (migration 14) across
+  restarts; the first transcript scan ever only records the existing ones.
+  Messages carry titles, outcomes and the PUBLIC page address, never a
+  meeting link, passcode or file. Listener errors never reach the
+  scheduler. Restart recovery ("interrupted") emits nothing.
+  `OPERATOR_EMAIL` (needs mail): `util.setOperatorSink` makes EVERY
+  `notify()` call (login, backups, feeds, ops) also email that address
+  (module-level sink, set by createApp, cleared on close). Production had
+  no CAPTURE_NOTIFY_URL and no push service in the cluster, hence this.
 - `src/recordings.ts` recordings on disk, admin view and public view.
   Public = a job made it, its meeting is public and not cancelled, video or
   live. `publicFiles()` is the only list /media serves from (never

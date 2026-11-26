@@ -314,7 +314,7 @@ if (process.argv[2] === "serve") {
   process.exit(await serve({
     host: v.host!, port: n("port", v.port, 1), tz: env.TZ!, secureCookie: env.COOKIE_SECURE !== "0",
     trustedProxies: env.TRUSTED_PROXIES,
-    mailer, publicUrl: env.PUBLIC_URL, embedOrigins: env.EMBED_ORIGINS,
+    mailer, publicUrl: env.PUBLIC_URL, embedOrigins: env.EMBED_ORIGINS, operatorEmail: env.OPERATOR_EMAIL || undefined,
     downloadBps: rate("DOWNLOAD_MAX_BPS"), tokenDownloadBps: rate("DOWNLOAD_TOKEN_BPS"),
     out: v.out!, auth: v.auth ?? null, defaultName: v.name!,
     leadMs: n("lead-min", v["lead-min"]) * 60_000, noShowMs: n("no-show-min", v["no-show-min"]) * 60_000,
