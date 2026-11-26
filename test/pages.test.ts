@@ -131,7 +131,8 @@ describe("public page in Chromium", { skip: skipReason() }, () => {
   before(async () => {
     const hooks: HasAfter = { after: (fn) => cleanups.push(fn) };
     out = path.join(tmpDir(hooks), "rec");
-    ({ app, base } = await startApp(hooks, out));
+    // Chromium drops __Host- cookies on plain http, so sessions need COOKIE_SECURE=0 here (as in the other describes that sign in).
+    ({ app, base } = await startApp(hooks, out, { secureCookie: false }));
     fixtures(app, out);
     browser = await chromium.launch();
   });
