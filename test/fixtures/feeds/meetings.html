@@ -1,0 +1,20 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Meetings</title></head>
+<body>
+<h1>Upcoming meetings</h1>
+<table class="meetings">
+  <thead><tr><th>Meeting</th><th>Date</th><th>Time</th><th>Links</th></tr></thead>
+  <tbody>
+    <tr><td>Regular Council</td><td>Dec 8, 2026</td><td>5:30 p.m.</td><td><a href="/meetings/101">Agenda and details</a></td></tr>
+    <tr><td>Committee of the Whole</td><td>15 December 2026</td><td>19:00</td><td><a href="https://zoom.us/j/81234567890?pwd=777888">Join on Zoom</a></td></tr>
+    <tr><td>Board of Variance (CANCELLED)</td><td>01/12/2027</td><td>noon</td><td><a href="/meetings/103">Details</a></td></tr>
+    <tr><td>Parks Committee</td><td>2027-01-20</td><td>TBD</td><td></td></tr>
+  </tbody>
+</table>
+<script>
+  // A row added by script: the parser must see the rendered page.
+  var tr = document.createElement("tr");
+  tr.innerHTML = "<td>Special Council</td><td>January 26, 2027</td><td>6 PM</td><td><a href='/meetings/105'>Details</a></td>";
+  document.querySelector("table.meetings tbody").appendChild(tr);
+</script>
+</body></html>

@@ -630,6 +630,20 @@ export const zoom: Platform = {
     return u.toString();
   },
 
+  /** A zoom.us join link, else "Meeting ID: 843 4290 9811" (+ "Passcode:
+   *  123456" if printed) as https://zoom.us/j/<id>?pwd=<passcode>. Agendas
+   *  often print only the ID and a numeric passcode (CLAUDE.md, Passcodes). */
+  extractLink(text) {
+    const url = /https?:\/\/(?:[\w-]+\.)*zoom\.us\/(?:j|w|wc\/join|wc)\/\d{9,12}(?:\?[^\s"'<>)\]]*)?/i.exec(text);
+    if (url) return url[0].replace(/[.,;:]+$/, "");
+    const id = /\b(?:meeting|webinar)\s*(?:id|number|#)\s*[:#]?\s*((?:\d[\s-]?){8,11}\d)\b/i.exec(text);
+    if (!id) return undefined;
+    const digits = id[1].replace(/\D/g, "");
+    if (digits.length < 9 || digits.length > 12) return undefined;
+    const pc = /\b(?:passcode|password|pass code)\s*[:#]?\s*([A-Za-z0-9@*_.-]{1,10})\b/i.exec(text);
+    return `https://zoom.us/j/${digits}` + (pc ? `?pwd=${pc[1]}` : "");
+  },
+
   /** The meeting number. The link itself carries the passcode. */
   publicId(link) {
     const m = /(\d{9,12})/.exec(link.replace(/[\s-]/g, ""));

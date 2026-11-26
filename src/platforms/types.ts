@@ -78,5 +78,8 @@ export interface Platform {
   normalize(link: string): string;
   /** What may be shown for this link (e.g. the meeting number). */
   publicId(link: string): string;
+  /** A join link found in free text (an agenda, a calendar entry), as a
+   *  link this platform accepts, or undefined. For feeds. */
+  extractLink?(text: string): string | undefined;
   create(link: string, o: SessionOpts): CaptureSession;
 }

@@ -16,6 +16,15 @@ export function platformById(id: string): Platform | undefined {
   return PLATFORMS.find((p) => p.id === id);
 }
 
+/** The first supported join link in free text (feeds), canonical. */
+export function findLink(text: string): string | undefined {
+  for (const p of PLATFORMS) {
+    const l = p.extractLink?.(text);
+    if (l) { try { return p.normalize(l); } catch { /* not valid after all */ } }
+  }
+  return undefined;
+}
+
 /** Validate a link: its platform and canonical form. Throws an Error with a
  *  message fit for the user. */
 export function checkLink(link: string): { platform: Platform; link: string } {
