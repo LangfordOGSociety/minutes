@@ -232,6 +232,13 @@ captures).
   characters, audited) and a Speakers button per recording on /admin.
   The player says some names were added by hand. Searching an apostrophe
   name: O'Brien is two tokens (o, brien), so search "o'brien".
+- Transcribe again: `POST /api/admin/recordings/:slug/retranscribe`
+  (admin) deletes `transcript.status.json`; the transcriber's `pending()`
+  picks up any recording with a video and no up-to-date status, so that
+  is the whole request (old transcript files stay until the new ones
+  replace them, atomically). Refused: no video (404), still being captured
+  (409), already working (409), already waiting (409). Admin page: "Retry
+  transcript" (failed) / "Transcribe again" (done). Audited transcript.redo.
 - `src/recordings.ts` recordings on disk, admin view and public view.
   Public = a job made it, its meeting is public and not cancelled, video or
   live. `publicFiles()` is the only list /media serves from (never

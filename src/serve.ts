@@ -34,6 +34,7 @@
  *   GET    /admin/media/:slug/:file  any recording's files, incl. manifest.json and parts
  *   GET    /api/admin/info           timezone, tzdata, lead time
  *   GET    /api/admin/recordings     every recording, incl. failed attempts
+ *   POST   /api/admin/recordings/:slug/retranscribe  ask the transcriber to do it again (when it failed, or is done)
  *   GET    /api/admin/recordings/:slug/speakers  the transcript's speaker labels (first line, time spoken) and their names
  *   PUT    /api/admin/recordings/:slug/speakers  {names: {"Speaker 4": "Mayor Smith"}}: replaces the set; shown on every transcript view
  *   GET    /api/admin/jobs           scheduled / running / finished captures
@@ -86,7 +87,7 @@
 import { execFile } from "node:child_process";
 import { pipeline } from "node:stream";
 import { Bucket, Throttle, paced } from "./throttle.js";
-import { closeSync, createReadStream, existsSync, openSync, readFileSync, readSync, statSync } from "node:fs";
+import { closeSync, createReadStream, existsSync, openSync, readFileSync, readSync, rmSync, statSync } from "node:fs";
 import http from "node:http";
 import path from "node:path";
 import { Accounts, AccountError, FailureLimiter, SESSION_MAX_AGE_S, capsFor, checkEmail, checkNewPassword, type Capability, type User } from "./accounts.js";
@@ -1057,6 +1058,20 @@ export function createApp(o: ServeOpts, entry: string): App {
           return send(res, 200, { tz: o.tz, tzdata: process.versions.tz ?? null, leadMinutes: o.leadMs / 60_000, maxConcurrent: o.maxConcurrent });
         }
         if (what === "recordings" && parts.length === 3 && read) return send(res, 200, listRecordings(o.out, sched, o.tz));
+        if (what === "recordings" && parts.length === 5 && sub === "retranscribe" && id && SLUG_RE.test(id) && method === "POST") {
+          // Ask the transcriber to do this recording again (after it failed, or the models or vocabulary changed). It watches for
+          // recordings with a video and no up-to-date status, so removing the status is the whole request; the old transcript files
+          // stay in place, and are replaced one by one, atomically, as the new ones are written.
+          const rec = listRecordings(o.out, sched, o.tz).find((r) => r.slug === id);
+          if (!rec?.video) return send(res, 404, { error: "that recording has no video to transcribe" });
+          if (sched.isActive(id)) return send(res, 409, { error: "that recording is still being captured" });
+          const st = rec.transcript?.status;
+          if (st && st !== "done" && st !== "failed") return send(res, 409, { error: `the transcriber is already working on it (${st})` });
+          if (!rec.transcript) return send(res, 409, { error: "it's already waiting for the transcriber" });
+          rmSync(path.join(o.out, id, "transcript.status.json"), { force: true });
+          audit.record(actor, "transcript.redo", { type: "recording", id, label: id }, { status: st }, { status: "requested" });
+          return send(res, 200, { requested: true });
+        }
         if (what === "recordings" && parts.length === 5 && sub === "speakers" && id && SLUG_RE.test(id)) {
           // Who the transcriber's "Speaker N" labels are, added by hand (speakers.ts). Shown to everyone once saved.
           const dir = path.join(o.out, id), tf = path.join(dir, `${id}.transcript.json`);

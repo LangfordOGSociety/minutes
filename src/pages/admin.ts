@@ -173,7 +173,11 @@ function renderRecs(recs) {
     var panel = el("div", { "class": "spk-panel", style: "grid-column: 1 / -1" });
     var actions = el("div", { "class": "actions" },
       r.video ? el("button", { text: selectedRec === r.slug ? "Playing" : "Play", on: { click: function () { playRec(r); } } }) : null,
-      r.files && r.files.transcript ? el("button", { text: "Speakers", on: { click: function () { toggleSpeakers(r, panel); } } }) : null);
+      r.files && r.files.transcript ? el("button", { text: "Speakers", on: { click: function () { toggleSpeakers(r, panel); } } }) : null,
+      r.video && r.transcript && (r.transcript.status === "done" || r.transcript.status === "failed") ? el("button", { text: r.transcript.status === "failed" ? "Retry transcript" : "Transcribe again", on: { click: function () {
+        if (!confirm("Ask the transcriber to do " + r.slug + " again? The current transcript stays until the new one replaces it.")) return;
+        aapi("POST", "/api/admin/recordings/" + encodeURIComponent(r.slug) + "/retranscribe", {}).then(function () { refresh(); }, function (e) { alert(e.message); });
+      } } }) : null);
     box.appendChild(el("div", { "class": "row" + (selectedRec === r.slug ? " selected" : "") },
       el("div", { "class": "title" }, pill(status), r.slug), actions, el("div", { "class": "sub", text: sub }), panel));
   });
