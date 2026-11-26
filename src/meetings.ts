@@ -22,18 +22,25 @@ export interface Meeting {
   externalId?: string;    // the feed's stable id for it
   title: string;
   body?: string;          // "Council", "Committee of the Whole"
-  platform: string;       // "zoom" for now
+  platform: string;       // "zoom"; "" while there's no link
   method?: string;        // capture method, when the platform has several
-  link: string;           // secret: invite link with passcode
+  link: string;           // secret: invite link with passcode; "" = none yet
   start: string;          // ISO UTC
   endEst?: string;        // ISO UTC, estimated end
   agendaUrl?: string;
   status: MeetingStatus;
   visibility: Visibility;
   slug: string;           // base name for its jobs' folders
+  pageUrl?: string;       // the meeting on the source site (public)
+  review?: Review;        // feeds with the review policy; unset = no review needed
+  duplicateOf?: string;   // same real meeting as this one (dedup): never captured twice
+  removedAt?: string;     // missing from its feed since then (a flag only)
+  lastSeenAt?: string;
   createdAt: string;
   updatedAt: string;
 }
+
+export type Review = "pending" | "approved" | "rejected";
 
 export type NewMeeting = Omit<Meeting, "id" | "createdAt" | "updatedAt" | "status" | "visibility"> &
   Partial<Pick<Meeting, "status" | "visibility">>;
@@ -42,9 +49,11 @@ type Row = {
   id: string; feed_id: string | null; external_id: string | null; title: string; body: string | null;
   platform: string; method: string | null; link: string; start: string; end_est: string | null;
   agenda_url: string | null; status: string; visibility: string; slug: string; created_at: string; updated_at: string;
+  page_url: string | null; review: string | null; duplicate_of: string | null; removed_at: string | null; last_seen_at: string | null;
 };
 
-const COLS = "id, feed_id, external_id, title, body, platform, method, link, start, end_est, agenda_url, status, visibility, slug, created_at, updated_at";
+const COLS = "id, feed_id, external_id, title, body, platform, method, link, start, end_est, agenda_url, status, visibility, slug, created_at, updated_at, " +
+  "page_url, review, duplicate_of, removed_at, last_seen_at";
 
 function toRow(m: Meeting): Row {
   return {
@@ -52,6 +61,8 @@ function toRow(m: Meeting): Row {
     platform: m.platform, method: m.method ?? null, link: m.link, start: m.start, end_est: m.endEst ?? null,
     agenda_url: m.agendaUrl ?? null, status: m.status, visibility: m.visibility, slug: m.slug,
     created_at: m.createdAt, updated_at: m.updatedAt,
+    page_url: m.pageUrl ?? null, review: m.review ?? null, duplicate_of: m.duplicateOf ?? null,
+    removed_at: m.removedAt ?? null, last_seen_at: m.lastSeenAt ?? null,
   };
 }
 
@@ -67,6 +78,11 @@ function fromRow(r: Row): Meeting {
   if (r.method !== null) m.method = r.method;
   if (r.end_est !== null) m.endEst = r.end_est;
   if (r.agenda_url !== null) m.agendaUrl = r.agenda_url;
+  if (r.page_url !== null) m.pageUrl = r.page_url;
+  if (r.review !== null) m.review = r.review as Review;
+  if (r.duplicate_of !== null) m.duplicateOf = r.duplicate_of;
+  if (r.removed_at !== null) m.removedAt = r.removed_at;
+  if (r.last_seen_at !== null) m.lastSeenAt = r.last_seen_at;
   return m;
 }
 
@@ -80,6 +96,19 @@ export class Meetings {
 
   list(): Meeting[] {
     return (this.db.prepare(`SELECT ${COLS} FROM meetings ORDER BY start`).all() as Row[]).map(fromRow);
+  }
+
+  byFeed(feedId: string): Meeting[] {
+    return (this.db.prepare(`SELECT ${COLS} FROM meetings WHERE feed_id = ? ORDER BY start`).all(feedId) as Row[]).map(fromRow);
+  }
+
+  /** Meetings starting between two instants (ISO), any source. */
+  between(fromIso: string, toIso: string): Meeting[] {
+    return (this.db.prepare(`SELECT ${COLS} FROM meetings WHERE start >= ? AND start <= ? ORDER BY start`).all(fromIso, toIso) as Row[]).map(fromRow);
+  }
+
+  slugTaken(slug: string): boolean {
+    return !!this.db.prepare("SELECT 1 FROM meetings WHERE slug = ?").get(slug);
   }
 
   create(input: NewMeeting, at = new Date().toISOString()): Meeting {

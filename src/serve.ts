@@ -45,6 +45,11 @@
  *   DELETE /api/admin/feeds/:id
  *   POST   /api/admin/feeds/:id/run  poll now
  *   POST   /api/admin/feeds/preview  {parser, config, feedId?}: fetch + parse (+ diff), nothing saved
+ *   GET    /api/admin/feeds/:id/changes  what its runs changed
+ *   GET    /api/admin/meetings?view=review|upcoming|recent
+ *   POST   /api/admin/meetings/:id/approve | reject   the review queue
+ *   POST   /api/admin/meetings/:id/merge {into} | split   dedup by hand
+ *   GET    /api/admin/meetings/:id/changes            its history
  *   GET    /api/admin/users          accounts
  *   PATCH  /api/admin/users/:id      {role?, disabled?}
  *
@@ -71,6 +76,8 @@ import "./feeds/parsers/index.js";
 import { Poller, healthOf } from "./feeds/poller.js";
 import { parserById, parsers } from "./feeds/registry.js";
 import { FeedError, Feeds, type Feed } from "./feeds/store.js";
+import { Sync, shownLink } from "./feeds/sync.js";
+import type { Meeting } from "./meetings.js";
 import { ConfigError } from "./feeds/types.js";
 import { FEEDS_PAGE } from "./pages/feeds.js";
 import { ADMIN_PAGE } from "./pages/admin.js";
@@ -288,11 +295,22 @@ export function createApp(o: ServeOpts, entry: string): App {
   const sched = new Scheduler({ ...o, entry }, db);
   sched.start();
   const feeds = new Feeds(db);
-  const poller = new Poller(feeds, { tz: o.tz });
+  const sync = new Sync(db, sched, o.tz, o.session.notifyUrl);
+  const poller = new Poller(feeds, { tz: o.tz }, sync);
   if (o.pollFeeds !== false) poller.start();
   /** A feed as the admin page sees it. */
   const adminFeed = (f: Feed) => ({ ...f, httpCache: undefined, health: healthOf(f), running: poller.isRunning(f.id),
     parserLabel: parserById(f.parser)?.label ?? f.parser, runs: feeds.runs(f.id, 10) });
+  /** A meeting as the admin sees it: the link only as platform + number. */
+  const adminMeeting = (m: Meeting) => {
+    const job = sched.activeJobFor(m.id) ?? sched.list().filter((j) => j.meetingRef === m.id).at(-1);
+    const dup = m.duplicateOf ? sched.meetings.get(m.duplicateOf) : undefined;
+    return { id: m.id, title: m.title, body: m.body ?? null, start: m.start, slug: m.slug, status: m.status, review: m.review ?? null,
+      removedAt: m.removedAt ?? null, link: shownLink(m.link), agendaUrl: m.agendaUrl ?? null, pageUrl: m.pageUrl ?? null,
+      feedId: m.feedId ?? null, feedName: m.feedId ? feeds.get(m.feedId)?.name ?? "(deleted feed)" : null,
+      duplicateOf: dup ? { id: dup.id, title: dup.title, slug: dup.slug, start: dup.start } : null,
+      capture: job ? { id: job.id, slug: job.slug, status: job.status } : null };
+  };
   const feedSnap = (f: Feed) => ({ name: f.name, parser: f.parser, config: f.config, slugPrefix: f.slugPrefix, policy: f.policy,
     intervalMin: f.intervalMin, enabled: f.enabled });
   const keeper = new SessionKeeper({ ...o.session, auth: o.auth, out: o.out, leadMs: o.leadMs }, () => sched.list());
@@ -619,6 +637,36 @@ export function createApp(o: ServeOpts, entry: string): App {
             return send(res, 200, { outcome: out, feed: adminFeed(feeds.get(f.id)!) });
           }
           if (parts.length === 5 && sub === "runs" && read) return send(res, 200, feeds.runs(f.id, 50));
+          if (parts.length === 5 && sub === "changes" && read) return send(res, 200, sync.changes({ feedId: f.id, limit: 200 }));
+        }
+        if (what === "meetings") {
+          if (parts.length === 3 && read) {
+            const view = url.searchParams.get("view") ?? "upcoming";
+            const now = Date.now(), all = sched.meetings.list();
+            const list = view === "review" ? all.filter((m) => m.review === "pending" && m.status !== "cancelled" && Date.parse(m.start) > now - 3_600_000)
+              : view === "recent" ? all.filter((m) => Date.parse(m.start) <= now).slice(-50).reverse()
+              : all.filter((m) => Date.parse(m.start) > now - 3_600_000);
+            return send(res, 200, list.map(adminMeeting));
+          }
+          const m = id ? sched.meetings.get(id) : undefined;
+          if (!m) return send(res, 404, { error: "no such meeting" });
+          if (parts.length === 5 && sub === "changes" && read) return send(res, 200, sync.changes({ meetingId: m.id }));
+          if (parts.length === 5 && method === "POST" && ["approve", "reject", "merge", "split"].includes(sub)) {
+            const body = await jsonBody();
+            if (!body) return;
+            let r: { meeting: Meeting; effect: string };
+            try {
+              if (sub === "approve" || sub === "reject") r = sync.review(m.id, sub === "approve" ? "approved" : "rejected");
+              else if (sub === "merge") r = sync.merge(m.id, String(body.into ?? ""));
+              else r = sync.split(m.id, m.feedId ? feeds.get(m.feedId) : undefined);
+            } catch (e) {
+              if (e instanceof BadRequest) throw e;
+              return send(res, 409, { error: (e as Error).message });
+            }
+            audit.record(actor, `meeting.${sub}`, { type: "meeting", id: m.id, label: m.slug }, null, { effect: r.effect,
+              ...(sub === "merge" ? { into: r.meeting.duplicateOf } : {}) });
+            return send(res, 200, { meeting: adminMeeting(r.meeting), effect: r.effect });
+          }
         }
         if (what === "users") {
           if (parts.length === 3 && read) return send(res, 200, accounts.list().map((u) => ({ ...adminUser(u), self: u.id === user!.id })));

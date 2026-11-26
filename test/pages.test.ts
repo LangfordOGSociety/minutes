@@ -270,6 +270,18 @@ describe("feeds page in Chromium", { skip: skipReason() }, () => {
     await page.waitForSelector("#runsbody table");
     assert.match(await page.textContent("#runsbody table") ?? "", /ok/);
     await page.waitForSelector("#feeds .row:has-text('healthy')");
+
+    // Review policy by default: the meeting waits in the queue; Approve schedules it.
+    await page.reload();
+    await page.waitForSelector("#review .row:has-text('Council Meeting') button:has-text('Approve')");
+    await page.click("#review .row:has-text('Council Meeting') button:has-text('Approve')");
+    await page.waitForSelector("#review .empty");
+    await page.waitForSelector("#meetings .row:has-text('Council Meeting') .pill.s-scheduled");
+    assert.match(await page.textContent("#meetings .row:has-text('Council Meeting')") ?? "", /Zoom 87093163922 · capture langford-council-meeting-/);
+    await page.click("#meetings .row:has-text('Council Meeting') button:has-text('History')");
+    await page.waitForSelector("#meetings .row:has-text('Council Meeting') table");
+    assert.match(await page.textContent("#meetings .row:has-text('Council Meeting') table") ?? "", /approved[\s\S]*added/);
+    assert.equal(app.sched.list().length, 1);
     assert.deepEqual(errors, []);
   });
 });
