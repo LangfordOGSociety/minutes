@@ -1,6 +1,7 @@
 /** The FeedContext a parser runs with: careful HTTP, and a headless page when needed. */
 import type { Browser, Page } from "playwright";
 import { logger } from "../util.js";
+import type { Resolver } from "./fixture.js";
 import type { FeedContext, HttpOptions, HttpResponse } from "./types.js";
 
 const log = logger("feeds");
@@ -17,12 +18,22 @@ export interface RunContext extends FeedContext {
 }
 
 export function feedContext(o: { tz: string; now?: Date; cache?: Record<string, { etag?: string; lastModified?: string }>;
-    label: string; fetchImpl?: typeof fetch }): RunContext {
+    label: string; fetchImpl?: typeof fetch;
+    /** Answer every request (and page load) from saved files instead of the network (fixture.ts). */
+    fixtures?: Resolver }): RunContext {
   const cache = { ...(o.cache ?? {}) };
   const lines: string[] = [];
   let browser: Browser | null = null;
   const pages: Page[] = [];
-  const doFetch = o.fetchImpl ?? fetch;
+  const fx = o.fixtures;
+  const missing = (method: string, url: string) => new Error(`no fixture for ${method} ${url} (give --fixture <file> or --route <part of the url>=<file>)`);
+  const doFetch: typeof fetch = fx
+    ? async (url, init) => {
+        const method = init?.method ?? "GET", f = fx(String(url), method);
+        if (!f) throw missing(method, String(url));
+        return new Response(f.body, { status: 200, headers: { "content-type": f.type } });
+      }
+    : o.fetchImpl ?? fetch;
 
   async function http(url: string, h: HttpOptions = {}): Promise<HttpResponse> {
     const u = new URL(url);
@@ -64,6 +75,13 @@ export function feedContext(o: { tz: string; now?: Date; cache?: Record<string, 
     }
     const p = await browser.newPage({ userAgent: USER_AGENT });
     pages.push(p);
+    if (fx) {
+      // Documents come from the fixtures; scripts the page asks for have none, so they're refused.
+      await p.route("**/*", (route) => {
+        const req = route.request(), f = req.resourceType() === "document" ? fx(req.url(), req.method()) : null;
+        return f ? route.fulfill({ body: f.body, contentType: f.type }) : route.abort();
+      });
+    }
     await p.goto(url, { waitUntil: "networkidle", timeout: TIMEOUT_MS });
     return p;
   }
