@@ -2,6 +2,7 @@
 // 7pm local, not 7pm wherever the container thinks it is.
 process.env.TZ ??= "America/Vancouver";
 
+import { parseRate } from "./throttle.js";
 import { existsSync } from "node:fs";
 import { parseArgs } from "node:util";
 import { fileURLToPath } from "node:url";
@@ -303,6 +304,7 @@ if (process.argv[2] === "serve") {
     if (!Number.isFinite(r) || r < min) fail(`--${k} must be a number >= ${min}`);
     return r;
   };
+  const rate = (name: string) => { try { return parseRate(env[name]); } catch (e) { return fail(`${name}: ${(e as Error).message}`); } };
   if (v.auth && !existsSync(v.auth)) fail(`--auth file not found: ${v.auth}`);
   if (!v.auth) console.error("warning: no --auth session; Zoom blocks anonymous web-client joins (see `minutes login`)");
   let mailer: import("./mail.js").Mailer | null = null;
@@ -313,6 +315,7 @@ if (process.argv[2] === "serve") {
     host: v.host!, port: n("port", v.port, 1), tz: env.TZ!, secureCookie: env.COOKIE_SECURE !== "0",
     trustedProxies: env.TRUSTED_PROXIES,
     mailer, publicUrl: env.PUBLIC_URL, embedOrigins: env.EMBED_ORIGINS,
+    downloadBps: rate("DOWNLOAD_MAX_BPS"), tokenDownloadBps: rate("DOWNLOAD_TOKEN_BPS"),
     out: v.out!, auth: v.auth ?? null, defaultName: v.name!,
     leadMs: n("lead-min", v["lead-min"]) * 60_000, noShowMs: n("no-show-min", v["no-show-min"]) * 60_000,
     maxConcurrent: n("max-jobs", v["max-jobs"], 1),

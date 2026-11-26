@@ -143,7 +143,13 @@ captures).
   /api/meetings, /api/changes, /media, /oembed) incl. OPTIONS preflight
   for Authorization and Range; never on admin/session routes. Own tokens
   and usage: `/api/account/tokens|usage` (Account page); all: `/api/admin/
-  tokens|usage` (Admin page). No download speed throttle yet (#36).
+  tokens|usage` (Admin page). Download speed caps (`src/throttle.ts`,
+  #36, OFF by default): DOWNLOAD_MAX_BPS (all API downloads together) and
+  DOWNLOAD_TOKEN_BPS (each token), plain bytes/s or k/m/g (x1000); a
+  token's own `limits.downloadBps` (admin `PATCH /api/admin/tokens/:id`)
+  overrides the per-token one. Token buckets paced through a Transform in
+  `serveFile`, so Range works and usage counts what was written; /media
+  (playback) is never throttled.
 - `src/recordings.ts` recordings on disk, admin view and public view.
   Public = a job made it, its meeting is public and not cancelled, video or
   live. `publicFiles()` is the only list /media serves from (never
