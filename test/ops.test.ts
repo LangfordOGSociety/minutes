@@ -33,7 +33,7 @@ describe("outcomes in words", () => {
   it("what happened, and whether it needs a look", () => {
     const d = (o: Partial<Job>) => describeOutcome({ status: "done", ...o }, "Zoom");
     assert.deepEqual(d({ outcome: "ended" }), { text: "the meeting ended and was stitched into one video", bad: false });
-    for (const [outcome, re] of [["not_started", /never started/], ["blocked", /Zoom refused it \(a bot check/], ["invalid_link", /isn't a meeting/], ["email_required", /wants an email/], ["ended_after_interruption", /interruption/]] as const) {
+    for (const [outcome, re] of [["not_started", /never started/], ["blocked", /Zoom refused it \(a bot check/], ["invalid_link", /isn't a meeting/], ["email_required", /wants an email/], ["ended_after_interruption", /interruption/], ["archive_failed", /archived video couldn't be read/]] as const) {
       const r = d({ outcome });
       assert.deepEqual([r.bad, re.test(r.text)], [true, true], outcome);
     }
