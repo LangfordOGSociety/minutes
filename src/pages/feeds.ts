@@ -1,7 +1,9 @@
 /**
- * /admin/feeds: where meetings are found (#8, #9). List feeds with their
+ * /admin/feeds: where meetings are found (#8-#11). List feeds with their
  * health and runs, add or edit one (the form is built from the parser's
- * `fields`), preview what a feed returns without saving, run one now.
+ * `fields`), preview what a feed returns and would change without saving,
+ * run one now; the review queue; upcoming meetings with their history,
+ * and "same as" / split for duplicates.
  *
  * Same rules as the other pages: String.raw, so no backticks or dollar-brace
  * in the script; data only via textContent; listeners in the script (CSP).
@@ -74,6 +76,14 @@ nav.sub { padding: 0 24px; font-size: 13px; color: var(--muted); }
     <section>
       <h2>Feeds</h2>
       <div class="list" id="feeds"><div class="empty">Loading...</div></div>
+    </section>
+    <section>
+      <h2>Review queue</h2>
+      <div class="list" id="review"><div class="empty">Loading...</div></div>
+    </section>
+    <section>
+      <h2>Upcoming meetings</h2>
+      <div class="list" id="meetings"><div class="empty">Loading...</div></div>
     </section>
     <section id="preview" hidden>
       <div class="player-title"><h3 id="previewtitle">Preview</h3><button type="button" id="previewclose">Close</button></div>
@@ -176,6 +186,7 @@ function runNow(f, btn) {
     var o = d.outcome;
     load();
     showRuns(d.feed);
+    if (o.status === "suspect") alert(f.name + ": suspect run, nothing applied. " + o.note);
     if (o.status === "error") alert(f.name + ": " + o.error);
   }, function (e) { alert(e.message); load(); });
 }
@@ -196,9 +207,93 @@ function preview(parserId, cfg, feed) {
     });
     fill(box, el("div", { "class": "hint", text: d.meetings.length + " meeting(s) found. Nothing was saved." }),
       d.meetings.length ? t : null,
-      d.changes ? el("pre", { text: JSON.stringify(d.changes, null, 1) }) : null,
+      d.changes ? changeTable(d.changes) : null,
       d.log && d.log.length ? el("pre", { text: d.log.join("\n") }) : null);
   }, function (e) { fill(box, el("div", { "class": "msg err", text: e.message })); });
+}
+
+function show(v) { return v === null || v === undefined ? "none" : typeof v === "string" ? v : JSON.stringify(v); }
+function delta(c) {
+  var keys = Object.keys(c.after || c.before || {});
+  return keys.map(function (k) {
+    return k + ": " + (c.before && c.after ? show(c.before[k]) + " → " + show(c.after[k]) : show((c.after || c.before)[k]));
+  }).join("; ");
+}
+// What a run would do (preview) or did (history).
+function changeTable(d) {
+  var list = d.changes || d;
+  var t = el("table", { "class": "list" }, el("tr", null, el("th", { text: "Change" }), el("th", { text: "Meeting" }), el("th", { text: "What" }), el("th", { text: "Effect" })));
+  list.forEach(function (c) {
+    t.appendChild(el("tr", null, cell(c.kind.replace("_", " ")), cell((c.title || "") + (c.start ? " · " + fmt(c.start) : "")), cell(delta(c)), cell(c.effect)));
+  });
+  return el("div", null,
+    d.suspect ? el("div", { "class": "msg err", text: "Suspect: " + d.note } ) : null,
+    el("h4", { text: list.length ? "Would change:" : "No changes." }), list.length ? t : null);
+}
+
+var MEETINGS = [];
+function meetingRow(m, inQueue) {
+  var pills = [];
+  if (m.status === "cancelled") pills.push(pill("cancelled"));
+  else if (m.duplicateOf) pills.push(el("span", { "class": "pill s-stopped", text: "duplicate" }));
+  else if (m.review === "pending") pills.push(el("span", { "class": "pill s-scheduled", text: "to review" }));
+  else if (m.review === "rejected") pills.push(el("span", { "class": "pill s-stopped", text: "rejected" }));
+  if (m.capture && m.capture.status !== "cancelled") pills.push(pill(m.capture.status));
+  if (m.removedAt) pills.push(el("span", { "class": "pill s-failed", text: "gone from feed" }));
+  var sub = [fmt(m.start), m.body && m.body !== m.title ? m.body : null, m.feedName, m.link || "no link yet",
+    m.capture ? "capture " + m.capture.slug : null,
+    m.duplicateOf ? "same as " + m.duplicateOf.title + " (" + m.duplicateOf.slug + ")" : null].filter(Boolean).join(" · ");
+  var hist = el("div", { "class": "sub" });
+  var actions = el("div", { "class": "actions" });
+  function act(name, body) {
+    return function () {
+      aapi("POST", "/api/admin/meetings/" + m.id + "/" + name, body || {}).then(function (d) { loadMeetings(); msgFor(m, d.effect); },
+        function (e) { alert(e.message); });
+    };
+  }
+  if (m.review === "pending" && m.status !== "cancelled" && !m.duplicateOf) {
+    actions.appendChild(el("button", { text: "Approve", on: { click: act("approve") } }));
+    actions.appendChild(el("button", { "class": "danger", text: "Reject", on: { click: act("reject") } }));
+  }
+  if (!inQueue) {
+    if (m.duplicateOf) actions.appendChild(el("button", { text: "Split", on: { click: act("split") } }));
+    else {
+      var near = MEETINGS.filter(function (x) { return x.id !== m.id && !x.duplicateOf && Math.abs(Date.parse(x.start) - Date.parse(m.start)) < 86400000; });
+      if (near.length) {
+        var sel = el("select", { "aria-label": "Same meeting as" }, el("option", { value: "", text: "Same as..." }));
+        near.forEach(function (x) { sel.appendChild(el("option", { value: x.id, text: x.title + " · " + fmt(x.start) + (x.feedName ? " · " + x.feedName : "") })); });
+        sel.addEventListener("change", function () {
+          if (sel.value && confirm("Treat " + m.title + " as the same meeting? It won't be captured itself.")) act("merge", { into: sel.value })();
+          else sel.value = "";
+        });
+        actions.appendChild(sel);
+      }
+    }
+    actions.appendChild(el("button", { text: "History", on: { click: function () {
+      if (hist.childNodes.length) { fill(hist); return; }
+      aapi("GET", "/api/admin/meetings/" + m.id + "/changes").then(function (cs) {
+        fill(hist, cs.length ? changeTable(cs) : el("div", { "class": "hint", text: "No changes recorded." }));
+      });
+    } } }));
+  }
+  var row = el("div", { "class": "row", id: (inQueue ? "q-" : "m-") + m.id },
+    el("div", { "class": "title" }, pills.length ? pills : null, m.title), actions, el("div", { "class": "sub", text: sub }), hist);
+  return row;
+}
+function msgFor(m, text) {
+  var r = document.getElementById("m-" + m.id) || document.getElementById("q-" + m.id);
+  if (r) r.appendChild(el("div", { "class": "sub msg ok", text: text }));
+}
+function loadMeetings() {
+  return Promise.all([aapi("GET", "/api/admin/meetings?view=upcoming"), aapi("GET", "/api/admin/meetings?view=review")]).then(function (d) {
+    MEETINGS = d[0];
+    var box = $("meetings"), q = $("review");
+    fill(box); fill(q);
+    if (!d[1].length) q.appendChild(el("div", { "class": "empty", text: "Nothing waiting for review." }));
+    d[1].forEach(function (m) { q.appendChild(meetingRow(m, true)); });
+    if (!MEETINGS.length) box.appendChild(el("div", { "class": "empty", text: "No upcoming meetings." }));
+    MEETINGS.forEach(function (m) { box.appendChild(meetingRow(m, false)); });
+  }, function () {});
 }
 
 function showRuns(f) {
@@ -214,7 +309,7 @@ function showRuns(f) {
   }, function (e) { fill($("runsbody"), el("div", { "class": "msg err", text: e.message })); });
 }
 
-function load() {
+function load(skipMeetings) {
   return aapi("GET", "/api/admin/feeds").then(function (d) {
     var first = !PARSERS.length;
     PARSERS = d.parsers; FEEDS = d.feeds;
@@ -225,6 +320,7 @@ function load() {
       if (!editing) setMode(null);
     }
     render();
+    if (!skipMeetings) loadMeetings();
   }, function (e) { fill($("feeds"), el("div", { "class": "empty", text: "Can't load feeds: " + e.message })); });
 }
 
@@ -246,7 +342,8 @@ $("form").addEventListener("submit", function (ev) {
 
 renderMe($("me"), true);
 load();
-setInterval(function () { if (!document.hidden) load(); }, 15000);
+// Feeds only: a refresh of the meeting lists would close open histories.
+setInterval(function () { if (!document.hidden) load(true); }, 15000);
 </script>
 </body>
 </html>

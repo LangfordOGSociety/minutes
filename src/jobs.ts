@@ -265,6 +265,7 @@ export class Scheduler {
     if (!m) throw new BadRequest("no such meeting", 404);
     return tx(this.db, () => {
       Object.assign(m, Object.fromEntries(Object.entries(ch).filter(([, v]) => v !== undefined)));
+      if (ch.link !== undefined) m.platform = platformFor(m.link)?.id ?? "";
       this.meetings.save(m);
       const pending = this.jobs.filter((j) => j.meetingRef === id && (j.status === "scheduled" || j.status === "queued") &&
         !this.launching.has(j.id) && (j.link !== m.link || j.start !== m.start));
@@ -307,6 +308,48 @@ export class Scheduler {
     log.info(`another attempt at ${m.slug}: ${slug} for ${job.start}`);
     void this.tick();
     return { ...job };
+  }
+
+  /** The meeting's capture that's scheduled, queued, running or stopping. */
+  activeJobFor(meetingId: string): Job | undefined {
+    return this.jobs.find((j) => j.meetingRef === meetingId && ["scheduled", "queued", "running", "stopping"].includes(j.status));
+  }
+
+  /** A capture for an existing meeting (from a feed, or approved from the
+   *  review queue). Its folder is the meeting's slug, or slug-2, -3, ... if
+   *  that's taken. Refused without a link, when the meeting is already
+   *  being captured, or when its start is too far in the past. */
+  scheduleMeeting(meetingId: string, name = this.o.defaultName): Job {
+    const m = this.meetings.get(meetingId);
+    if (!m) throw new BadRequest("no such meeting", 404);
+    if (!m.link) throw new BadRequest("this meeting has no supported link yet", 409);
+    if (m.status === "cancelled") throw new BadRequest("this meeting is cancelled", 409);
+    if (m.duplicateOf) throw new BadRequest("this meeting is a duplicate; capture the other one", 409);
+    const other = this.activeJobFor(m.id);
+    if (other) throw new BadRequest(`${other.slug} is already ${other.status} for this meeting`, 409);
+    if (Date.parse(m.start) < Date.now() - this.o.noShowMs) throw new BadRequest("this meeting started too long ago", 409);
+    const taken = (s: string) => this.jobs.some((j) => j.slug === s) || existsSync(path.join(this.o.out, s));
+    let n = 1, slug = m.slug;
+    while (taken(slug)) slug = `${m.slug}-${++n}`;
+    if (!SLUG_RE.test(slug)) throw new BadRequest("couldn't make a folder name for this meeting", 409);
+    const now = new Date().toISOString();
+    const job: Job = { id: randomUUID(), meetingRef: m.id, link: m.link, start: m.start, slug, name, status: "scheduled", createdAt: now };
+    this.save(job);
+    this.jobs.push(job);
+    this.writeActive();
+    log.info(`scheduled ${slug} for ${job.start} (meeting ${m.title})`);
+    void this.tick();
+    return { ...job };
+  }
+
+  /** Cancel the meeting's captures that haven't launched. Running ones are
+   *  left alone. Returns how many were cancelled. */
+  cancelMeetingJobs(meetingId: string): number {
+    const pending = this.jobs.filter((j) => j.meetingRef === meetingId && (j.status === "scheduled" || j.status === "queued") && !this.launching.has(j.id));
+    const at = new Date().toISOString();
+    for (const j of pending) { j.status = "cancelled"; j.endedAt = at; }
+    if (pending.length) this.save(...pending);
+    return pending.length;
   }
 
   /** Cancel a job that hasn't launched, or stop one that's running (the

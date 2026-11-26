@@ -127,6 +127,17 @@ captures).
   `/admin/feeds` (pages/feeds.ts): form built from `fields`, Preview (no
   saving; links shown as platform + meeting number), Run now, runs.
   Parsers register in `parsers/index.ts`.
+  `sync.ts` (the Applier, migration 7): diff by externalId into
+  meeting_changes (added, time/link changed, cancelled, reinstated,
+  removed, returned, details); `removed` only flags; a run removing more
+  than half (and >= 2) of a feed's upcoming meetings is `suspect` and
+  applies nothing (hash not saved, so it's re-checked). Policies auto /
+  review / list_only; dedup (same link within 12h, or same body within 15
+  min) sets duplicateOf, never captured twice. Rows + change log in one tx,
+  then captures via Scheduler.scheduleMeeting / updateMeeting /
+  cancelMeetingJobs (never launched ones). Links in changes and admin
+  lists are "Zoom 870...": never the passcode. Meetings from feeds have
+  link "" until one is published; slug = prefix-body-or-title-localdate.
 - `src/net.ts` TRUSTED_PROXIES (X-Forwarded-For/-Proto believed only from
   those), security headers, page CSP.
 - `src/timeline.ts` active speaker + Zoom captions: appended per change to

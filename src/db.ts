@@ -156,6 +156,29 @@ const MIGRATIONS: string[] = [
      error       TEXT
    );
    CREATE INDEX feed_runs_feed ON feed_runs (feed_id, id);`,
+
+  // 7: what feeds change (#10, #11). Meetings get review state, a link to
+  // the meeting they duplicate, and a removal flag; every change a feed
+  // makes to a meeting is logged with what it did to captures.
+  `ALTER TABLE meetings ADD COLUMN page_url TEXT;        -- the meeting on the source site (public)
+   ALTER TABLE meetings ADD COLUMN review TEXT;          -- pending | approved | rejected; NULL = none needed
+   ALTER TABLE meetings ADD COLUMN duplicate_of TEXT;    -- meetings.id this is the same meeting as
+   ALTER TABLE meetings ADD COLUMN removed_at TEXT;      -- missing from its feed since (only a flag)
+   ALTER TABLE meetings ADD COLUMN last_seen_at TEXT;    -- in its feed's last run
+   CREATE INDEX meetings_feed ON meetings (feed_id, external_id);
+   CREATE TABLE meeting_changes (
+     id         INTEGER PRIMARY KEY AUTOINCREMENT,
+     meeting_id TEXT NOT NULL,
+     feed_id    TEXT,
+     run_id     INTEGER,
+     at         TEXT NOT NULL,
+     kind       TEXT NOT NULL,         -- added | time_changed | link_changed | cancelled | reinstated | removed | returned | details_changed | approved | rejected | merged | split
+     before     TEXT,                  -- JSON, links as meeting numbers only
+     after      TEXT,
+     effect     TEXT                   -- what it did to captures, for people
+   );
+   CREATE INDEX meeting_changes_meeting ON meeting_changes (meeting_id, id);
+   CREATE INDEX meeting_changes_feed ON meeting_changes (feed_id, id);`,
 ];
 
 export function openDb(file: string): DB {
