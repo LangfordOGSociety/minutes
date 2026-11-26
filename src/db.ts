@@ -246,6 +246,35 @@ const MIGRATIONS: string[] = [
      passages   INTEGER NOT NULL,
      indexed_at TEXT NOT NULL
    );`,
+
+  // 12: alerts (src/alerts.ts): a saved search whose owner is emailed when a
+  // new meeting's transcript matches. `token` lets the email's link stop it
+  // without signing in. alert_deliveries makes a send once per alert and
+  // meeting; alert_runs marks a meeting as handled.
+  `CREATE TABLE alerts (
+     id           TEXT PRIMARY KEY,
+     user_id      TEXT NOT NULL REFERENCES users (id),
+     query        TEXT NOT NULL,
+     body         TEXT,
+     token        TEXT NOT NULL UNIQUE,
+     created_at   TEXT NOT NULL,
+     last_sent_at TEXT
+   );
+   CREATE INDEX alerts_user ON alerts (user_id);
+   CREATE TABLE alert_deliveries (
+     alert_id   TEXT NOT NULL,
+     meeting_id TEXT NOT NULL,
+     sent_at    TEXT NOT NULL,
+     PRIMARY KEY (alert_id, meeting_id)
+   );
+   CREATE TABLE alert_runs (
+     meeting_id TEXT PRIMARY KEY,
+     done_at    TEXT NOT NULL
+   );`,
+
+  // 13: the mtime of the speaker-names file a transcript was indexed with
+  // (0 = none), so naming a speaker re-indexes that transcript (speakers.ts).
+  `ALTER TABLE transcript_index ADD COLUMN names_mtime_ms INTEGER NOT NULL DEFAULT 0;`,
 ];
 
 export function openDb(file: string): DB {

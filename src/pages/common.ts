@@ -244,7 +244,8 @@ function loadTranscript(url, v, box) {
       segs.length ? list : el("div", { "class": "hint", text: "No speech was found." }),
       el("div", { "class": "hint", text: "Whisper " + (t.model || "") + " transcript. " +
         (t.diarization ? t.diarization.speakers_found + " voices found (pyannote); a voice shows a Zoom name only when one participant matched one voice."
-                       : "Names are Zoom's active-speaker label, not voice ID.") + " Times in " + TZ + "." }));
+                       : "Names are Zoom's active-speaker label, not voice ID.") +
+        (t.names_applied ? " Some speaker names were added by hand." : "") + " Times in " + TZ + "." }));
   }, function (e) { fill(box, el("div", { "class": "hint", text: "Couldn't load the transcript: " + e.message })); });
 }
 

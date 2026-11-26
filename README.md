@@ -232,6 +232,13 @@ second. Hiding a meeting hides its transcript from search at once. The
 index lives in the database and is rebuilt from the transcript files, so
 nothing needs backing up separately.
 
+**Alerts.** With mail set up, anyone with a confirmed email can save a
+search ("zoning", "public hearing") from the search page or their account
+page and get an email when it comes up in a *new* meeting's transcript, with
+a link to the moment. One email per meeting listing every alert that
+matched, up to 10 alerts each, and every email has a link that stops that
+alert without signing in. Existing meetings aren't announced.
+
 **YouTube.** A meeting whose link is a YouTube video or live link
 (`https://www.youtube.com/watch?v=...`, `youtu.be/...`, `/live/...`) is
 recorded from its stream with yt-dlp (no browser, no Xvfb, no login): it

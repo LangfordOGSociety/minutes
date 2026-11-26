@@ -183,6 +183,25 @@ captures).
   markup), `t` seconds and `url` = `/m/<slug>?t=<s>`; `/search` page; a
   search box on `/`. Index sync: at start, every 2 min, and on a search
   if >30 s old (`App.syncSearch`). node:sqlite FTS5 verified on Node 24.
+- `src/alerts.ts` email alerts (migration 12: alerts, alert_deliveries,
+  alert_runs; capability `alerts.own`, confirmed email, needs mail).
+  A saved search (<=10 per person, body optional) whose owner is emailed
+  when a NEW meeting's transcript matches. `processAlerts` runs after every
+  search index pass: for each visible meeting with a transcript not in
+  alert_runs it runs each applicable alert against just that meeting
+  (same query rules/visibility as search) and sends ONE email per person
+  (matches, links at the second, a stop link per alert). Once per
+  (alert, meeting) via alert_deliveries, so a retry after a mail failure
+  only sends what's missing; the meeting is marked handled when every send
+  succeeded or after 8 tries. Meetings that began >30 days ago are never
+  alerted and the first pass after deploy just marks the existing ones
+  handled (an alert made today must not announce the archive). Owners
+  who are gone/disabled/unconfirmed lose their matching alerts. The email's
+  stop link `/alerts/<token>/stop` is a PAGE that asks (mail scanners
+  prefetching links change nothing); `POST /api/alerts/stop {token}` is the
+  only credential-less write, 192-bit token, same-origin only. Alerts are
+  made from `/search` (button) or the account page; never show the token
+  in the API. Audit: alert.create/delete/stop.
 - Being found: `/robots.txt` (off /admin, /api/ except /api/docs, /login,
   /account, /embed/, /oembed; Sitemap line) and `/sitemap.xml` (home,
   search, docs, every visible meeting with lastmod; absolute from
@@ -198,6 +217,22 @@ captures).
   are not retried for an hour). Used as the player's `poster`, og:image,
   JSON-LD thumbnailUrl, and listed by /api/v1/.../files as `thumbnail`. Meeting lists carry `poster` (a /media path) and the cards show it
   (lazy, 128 px; 88 px on phones).
+- `src/speakers.ts` speaker names added by hand. `<slug>/speaker-names.json`
+  maps the transcriber's label ("Speaker 4", or a Zoom name) to a name;
+  APPLIED WHEN SERVING (public /media, /admin/media and the API's file
+  downloads) to `.transcript.json` (segment `label` + `names_applied`),
+  `.vtt` (`<v Label>` at a cue start), `.srt` (`Label: ` at cue text start)
+  and `.txt` (`[hh:mm:ss] Label:` headers), anchored so the same words in
+  speech aren't touched; the files on disk are never rewritten (a
+  transcriber re-run loses nothing, undo = delete a line). Two labels with
+  one name merge. The search index uses the named segments and re-indexes
+  when the names file changes (migration 13 `names_mtime_ms`). Admin:
+  `GET|PUT /api/admin/recordings/:slug/speakers` (labels in first-appearance
+  order with time spoken and a first line; PUT replaces the whole set,
+  validated against the transcript's own labels, no < > & or control
+  characters, audited) and a Speakers button per recording on /admin.
+  The player says some names were added by hand. Searching an apostrophe
+  name: O'Brien is two tokens (o, brien), so search "o'brien".
 - `src/recordings.ts` recordings on disk, admin view and public view.
   Public = a job made it, its meeting is public and not cancelled, video or
   live. `publicFiles()` is the only list /media serves from (never

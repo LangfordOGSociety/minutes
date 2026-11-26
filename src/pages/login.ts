@@ -138,6 +138,20 @@ label.check input { width: auto; }
     <p><a href="/" id="home">Continue</a></p>
   </section>
 
+  <section id="alerts" hidden>
+    <h2>Email alerts</h2>
+    <p class="hint">Get an email when a word or phrase comes up in a <b>new</b> meeting's transcript, with a link to the moment. Up to 10. You can also make one from a <a href="/search">search</a>.</p>
+    <div id="alertlist"></div>
+    <form id="alertform">
+      <label for="al-q">Watch for</label>
+      <input id="al-q" name="query" required maxlength="200" placeholder='e.g. zoning, "public hearing", harbour'>
+      <label for="al-body">In</label>
+      <select id="al-body" name="body"><option value="">Every meeting</option></select>
+      <button class="primary" type="submit">Add alert</button>
+      <div class="msg" id="alertmsg" role="status"></div>
+    </form>
+  </section>
+
   <section id="tokens" hidden>
     <h2>API tokens</h2>
     <p class="hint">For scripts that download recordings and transcripts. Listing meetings needs no token. See the <a href="/api/docs">API docs</a>.</p>
@@ -208,8 +222,43 @@ function api(method, url, body) {
 function $(id) { return document.getElementById(id); }
 function show(id, on) { $(id).hidden = !on; }
 function msg(id, cls, text) { var m = $(id); m.className = "msg" + (cls ? " " + cls : ""); m.textContent = text; }
-var PANES = ["signin", "signup", "forgot", "account", "tokens", "verify", "change"];
+var PANES = ["signin", "signup", "forgot", "account", "alerts", "tokens", "verify", "change"];
 function only(ids) { PANES.forEach(function (p) { show(p, ids.indexOf(p) >= 0); }); }
+
+// --- email alerts ---
+var alertBodies = false;
+function loadAlerts() {
+  if (!alertBodies) {
+    alertBodies = true;
+    api("GET", "/api/meetings?scope=past&limit=1").then(function (d) {
+      d.bodies.forEach(function (b) { var o = document.createElement("option"); o.value = b; o.textContent = b; $("al-body").appendChild(o); });
+    }, function () {});
+  }
+  api("GET", "/api/account/alerts").then(function (list) {
+    var box = $("alertlist");
+    box.replaceChildren();
+    if (!list.length) box.appendChild(h("p", "hint", "No alerts yet."));
+    list.forEach(function (a) {
+      var row = h("div", "tok");
+      row.appendChild(h("div", "t", a.query + (a.body ? " (" + a.body + ")" : "")));
+      row.appendChild(h("div", "s", "made " + day(a.createdAt) + " · last email " + (a.lastSentAt ? day(a.lastSentAt) : "none yet")));
+      var b = h("button", "", "Delete");
+      b.addEventListener("click", function () {
+        api("DELETE", "/api/account/alerts/" + a.id).then(function () { loadAlerts(); }, function (e) { msg("alertmsg", "err", e.message); });
+      });
+      row.appendChild(b);
+      box.appendChild(row);
+    });
+  }, function (e) { msg("alertmsg", "err", e.message); });
+}
+$("alertform").addEventListener("submit", function (ev) {
+  ev.preventDefault();
+  var f = ev.target;
+  msg("alertmsg", "", "Saving...");
+  api("POST", "/api/account/alerts", { query: f.query.value, body: f.body.value }).then(function () {
+    f.reset(); msg("alertmsg", "ok", "Added."); loadAlerts();
+  }, function (e) { msg("alertmsg", "err", e.message); });
+});
 
 // --- API tokens (#16) and usage (#18) ---
 function h(tag, cls, text) { var e = document.createElement(tag); if (cls) e.className = cls; if (text !== undefined) e.textContent = text; return e; }
@@ -284,6 +333,8 @@ function render(user, setupNeeded) {
   var panes = ["account"];
   var tokens = onAccount && !user.mustChangePassword && user.caps.indexOf("tokens.own") >= 0;
   if (tokens) { panes.push("tokens"); loadTokens(); }
+  var alertsOn = onAccount && !user.mustChangePassword && signupOpen && user.caps.indexOf("alerts.own") >= 0;
+  if (alertsOn) { panes.push("alerts"); loadAlerts(); }
   if (!user.verified && !user.mustChangePassword && signupOpen) panes.push("verify");
   if (user.mustChangePassword || onAccount) panes.push("change");
   only(panes);

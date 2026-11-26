@@ -41,6 +41,8 @@ label.check[hidden] { display: none; }
 .change { font-size: 13px; overflow-wrap: anywhere; }
 .change b { font-weight: 600; }
 #amore[hidden] { display: none; }
+.spk { padding: 8px 0; border-top: 1px solid var(--line); }
+.spk input { margin-top: 4px; }
 </style>
 </head>
 <body>
@@ -168,11 +170,38 @@ function renderRecs(recs) {
       (r.videoBytes ? " · " + mb(r.videoBytes) : "") + (r.video ? "" : r.active ? " · recording now" : " · no video") +
       (r.files && r.files.transcript ? " · transcript" : r.video && transcriptNote(r) ? " · " + transcriptNote(r).toLowerCase() : "") +
       (r.public ? "" : " · not public");
+    var panel = el("div", { "class": "spk-panel", style: "grid-column: 1 / -1" });
     var actions = el("div", { "class": "actions" },
-      r.video ? el("button", { text: selectedRec === r.slug ? "Playing" : "Play", on: { click: function () { playRec(r); } } }) : null);
+      r.video ? el("button", { text: selectedRec === r.slug ? "Playing" : "Play", on: { click: function () { playRec(r); } } }) : null,
+      r.files && r.files.transcript ? el("button", { text: "Speakers", on: { click: function () { toggleSpeakers(r, panel); } } }) : null);
     box.appendChild(el("div", { "class": "row" + (selectedRec === r.slug ? " selected" : "") },
-      el("div", { "class": "title" }, pill(status), r.slug), actions, el("div", { "class": "sub", text: sub })));
+      el("div", { "class": "title" }, pill(status), r.slug), actions, el("div", { "class": "sub", text: sub }), panel));
   });
+}
+
+// Who the transcriber's "Speaker N" voices are, by hand. Names show on every transcript view, public too.
+function toggleSpeakers(r, panel) {
+  if (panel.childNodes.length) { fill(panel); return; }
+  fill(panel, el("div", { "class": "hint", text: "Loading..." }));
+  aapi("GET", "/api/admin/recordings/" + encodeURIComponent(r.slug) + "/speakers").then(function (d) {
+    var inputs = {}, msg = el("div", { "class": "msg" });
+    var rows = d.labels.map(function (l) {
+      var inp = el("input", { type: "text", maxlength: "60", value: l.name || "", placeholder: "Who is this?", "aria-label": "Name for " + l.label });
+      inputs[l.label] = inp;
+      return el("div", { "class": "spk" }, el("div", { "class": "title", text: l.label + " · " + hms(l.seconds) + " · starts at " + hms(l.first.t) }),
+        el("div", { "class": "hint", text: "\u201c" + l.first.text + "\u201d" }), inp);
+    });
+    var save = el("button", { "class": "primary", text: "Save names", on: { click: function () {
+      var names = {};
+      Object.keys(inputs).forEach(function (k) { names[k] = inputs[k].value; });
+      msg.className = "msg"; msg.textContent = "Saving...";
+      aapi("PUT", "/api/admin/recordings/" + encodeURIComponent(r.slug) + "/speakers", { names: names }).then(function () {
+        msg.className = "msg ok"; msg.textContent = "Saved. The transcript shows them now (a replay in progress needs a reload).";
+      }, function (e) { msg.className = "msg err"; msg.textContent = e.message; });
+    } } });
+    fill.apply(null, [panel, el("div", { "class": "hint", text: "Name the voices. Two voices given the same name are merged. Names show on every transcript view, public too, and are marked as added by hand." })]
+      .concat(rows, [save, msg]));
+  }, function (e) { fill(panel, el("div", { "class": "msg err", text: e.message })); });
 }
 
 function playRec(r) {

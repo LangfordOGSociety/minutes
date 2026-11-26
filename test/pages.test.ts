@@ -3,7 +3,7 @@
  * password change, the admin page. Needs Playwright's Chromium.
  */
 import assert from "node:assert/strict";
-import { existsSync } from "node:fs";
+import { existsSync, writeFileSync } from "node:fs";
 import http from "node:http";
 import type { AddressInfo } from "node:net";
 import path from "node:path";
@@ -126,13 +126,13 @@ describe("pages in Chromium", { skip: skipReason() }, () => {
 });
 
 describe("public page in Chromium", { skip: skipReason() }, () => {
-  let browser: Browser, base: string;
+  let browser: Browser, base: string, app: App, out: string;
   const cleanups: (() => unknown)[] = [];
   before(async () => {
     const hooks: HasAfter = { after: (fn) => cleanups.push(fn) };
-    const out = path.join(tmpDir(hooks), "rec");
-    let app: App;
-    ({ app, base } = await startApp(hooks, out));
+    out = path.join(tmpDir(hooks), "rec");
+    // Chromium drops __Host- cookies on plain http, so sessions need COOKIE_SECURE=0 here (as in the other describes that sign in).
+    ({ app, base } = await startApp(hooks, out, { secureCookie: false }));
     fixtures(app, out);
     browser = await chromium.launch();
   });
@@ -254,6 +254,31 @@ describe("public page in Chromium", { skip: skipReason() }, () => {
     await page.waitForSelector("#hits .empty");
     assert.deepEqual(errors, []);
   });
+  it("an admin names a speaker; the public meeting page shows the name", async () => {
+    writeFileSync(path.join(out, "council-a", "council-a.transcript.json"), JSON.stringify({ segments: [{ start: 1, end: 5, text: "Call to order.", label: "Speaker 1" }] }));
+    await app.accounts.create({ email: "chair@example.com", role: "admin", password: "chair password 12", verified: true });
+    const page = await (await browser.newContext()).newPage();
+    const errors: string[] = [];
+    page.on("pageerror", (e) => errors.push(e.message));
+    await page.goto(base + "/login?next=/admin");
+    await page.fill("#email", "chair@example.com");
+    await page.fill("#password", "chair password 12");
+    await page.click("#loginform button");
+    await page.waitForURL(base + "/admin");
+    await page.click("#recs .row:has-text('council-a') button:has-text('Speakers')");
+    await page.waitForSelector("#recs .spk input");
+    assert.match(await page.textContent("#recs .spk") ?? "", /Speaker 1 .*Call to order/);
+    await page.fill("#recs .spk input", "Marie Watmo");
+    await page.click("#recs button:has-text('Save names')");
+    await page.waitForSelector("#recs .msg.ok");
+    const pub = await (await browser.newContext()).newPage();
+    pub.on("pageerror", (e) => errors.push(e.message));
+    await pub.goto(base + "/m/council-a");
+    await pub.waitForSelector("#player .tline .tw");
+    assert.equal(await pub.textContent("#player .tline .tw"), "Marie Watmo");
+    assert.match(await pub.textContent("#player .transcript") ?? "", /Some speaker names were added by hand/);
+    assert.deepEqual(errors, []);
+  });
 });
 
 describe("sign-up and reset in Chromium", { skip: skipReason() }, () => {
@@ -329,6 +354,48 @@ describe("sign-up and reset in Chromium", { skip: skipReason() }, () => {
     assert.ok(app.accounts.byEmail("reader@example.com")?.disabledAt);
     assert.equal(await page.isVisible("#users .row:has-text('boss@example.com') button"), false);   // not yourself
     await page.waitForSelector("#audit .row:has-text('user.update')");
+  });
+  it("alerts: made from a search, listed and deleted on the account page, stopped from the email's link", async () => {
+    await app.accounts.create({ email: "watcher@example.com", role: "user", password: "watcher password 1", verified: true });
+    const page = await (await browser.newContext()).newPage();
+    const errors: string[] = [];
+    page.on("pageerror", (e) => errors.push(e.message));
+    // Signed out: the search offers to sign in.
+    await page.goto(base + "/search?q=harbour");
+    await page.waitForSelector("#alertbox a");
+    assert.match(await page.getAttribute("#alertbox a", "href") ?? "", /^\/login\?next=%2Fsearch%3Fq%3Dharbour$/);
+    await page.click("#alertbox a");
+    await page.fill("#email", "watcher@example.com");
+    await page.fill("#password", "watcher password 1");
+    await page.click("#loginform button");
+    await page.waitForURL(/\/search\?q=harbour/);
+    await page.click("#alertbox button");
+    await page.waitForSelector("#alertbox .msg.ok");
+    assert.match(await page.textContent("#alertbox") ?? "", /Saved/);
+    await page.click("#alertbox button", { force: true }).catch(() => {});    // disabled now: no second alert
+    await page.goto(base + "/account");
+    await page.waitForSelector("#alertlist .tok");
+    assert.match(await page.textContent("#alertlist") ?? "", /harbour.*last email none yet/);
+    await page.fill("#al-q", "zoning");
+    await page.click("#alertform button");
+    await page.waitForSelector("#alertlist .tok:nth-child(2)");
+    await page.click("#alertlist .tok:has-text('zoning') button");
+    await page.waitForSelector("#alertlist .tok:nth-child(2)", { state: "detached" });
+    // The email's link asks first, then stops it, with no sign-in.
+    const u = app.accounts.byEmail("watcher@example.com")!;
+    const token = app.alerts.list(u.id)[0].token;
+    const anon = await (await browser.newContext()).newPage();
+    anon.on("pageerror", (e) => errors.push(e.message));
+    await anon.goto(`${base}/alerts/${token}/stop`);
+    await anon.waitForSelector("#box button");
+    assert.match(await anon.textContent("#box") ?? "", /harbour/);
+    assert.equal(app.alerts.list(u.id).length, 1);                                  // opening the page stopped nothing
+    await anon.click("#box button");
+    await anon.waitForSelector("#box:has-text('Stopped')");
+    assert.equal(app.alerts.list(u.id).length, 0);
+    await anon.goto(`${base}/alerts/${token}/stop`);
+    await anon.waitForSelector("#box:has-text('already stopped')");
+    assert.deepEqual(errors, []);
   });
 });
 
