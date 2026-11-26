@@ -148,6 +148,8 @@ export interface ServeOpts extends Omit<SchedulerOpts, "entry"> {
   tokenDownloadBps?: number;
   /** Make poster images for recordings that have a video and none yet (thumbs.ts). Default on; tests turn it off. */
   thumbnails?: boolean;
+  /** Searches allowed per minute per client address (default 60; 429 beyond). */
+  searchesPerMinute?: number;
   /** Also email the operator's messages (captures, transcripts, login, backups, feeds) to this address. Needs mail. */
   operatorEmail?: string;
   /** Who may frame /embed/<meeting> (net.ts embedAncestors): "*" (default), "none", or origins. */
@@ -374,6 +376,8 @@ export function createApp(o: ServeOpts, entry: string): App {
   const signupsByIp = new FailureLimiter(5, 3_600_000);
   const mailsByIp = new FailureLimiter(10, 3_600_000);
   const mailsByAccount = new FailureLimiter(3, 3_600_000);
+  // Full-text search is the one public endpoint that does real work per request: 60 a minute per client.
+  const searchesByIp = new FailureLimiter(o.searchesPerMinute ?? 60, 60_000);
   const codeFailsByIp = new FailureLimiter(30, 15 * 60_000);
   const mailer = o.mailer ?? null;
   const site = (o.publicUrl ?? "").replace(/\/$/, "");
@@ -703,6 +707,9 @@ export function createApp(o: ServeOpts, entry: string): App {
         // "What did council say about X": transcripts of the meetings the public can see (search.ts).
         if (!allow("watch")) return;
         openCors(res);
+        const wait = searchesByIp.blockedFor(ip);
+        if (wait > 0) return send(res, 429, { error: "too many searches; try again in a moment" }, { "Retry-After": String(Math.ceil(wait / 1000)) });
+        searchesByIp.fail(ip);
         const sp = url.searchParams;
         const q = (sp.get("q") ?? "").slice(0, 200);
         const day = (s: string | null, plus = 0) => {
