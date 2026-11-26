@@ -2,3 +2,4 @@
 import "./ical.js";
 import "./html.js";
 import "./escribe.js";
+import "./granicus.js";

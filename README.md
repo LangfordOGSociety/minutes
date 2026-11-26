@@ -231,6 +231,7 @@ to date: new ones, moved times, join links published late, cancellations.
 | Source type | For | Config |
 |---|---|---|
 | eScribe meetings portal | Langford and many others | the portal URL, e.g. `https://pub-langford.escribemeetings.com`; optionally the meeting types to keep |
+| Granicus (MediaManager) | Saanich and many others | the site URL, e.g. `https://saanich.ca.granicus.com`, view id (1), timezone |
 | iCalendar (.ics) | any calendar feed | the `.ics` URL |
 | Web page (CSS selectors) | a page that lists meetings | the URL plus selectors for each row, its title, date (and time), link |
 
@@ -254,6 +255,11 @@ Langford, recommended start: eScribe, portal URL as above, meeting types
 Meeting`, folder prefix `langford` (recordings become
 `langford-council-meeting-2026-12-08`, which also picks the Langford
 transcription vocabulary), policy *wait for review*.
+
+Saanich: Granicus, `https://saanich.ca.granicus.com`, view 1, timezone
+`America/Vancouver`, policy *list only*: its meetings stream on Granicus,
+which isn't a capture platform yet, so they're listed with their watch
+page but not recorded.
 
 ## Hardware encoding
 

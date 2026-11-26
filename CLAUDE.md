@@ -139,6 +139,11 @@ captures).
   2026-11-24 council had one and went ahead), link from upcoming meetings'
   HTML agenda (Langford: "Enter the Meeting ID: 843 4290 9811", webinar,
   no passcode). Fixtures saved from Langford in test/fixtures/feeds/escribe.
+  `granicus`: ViewPublisher.php?view_id=N, the Upcoming Events table only,
+  rows read by content (name = first cell, date = visible text in the
+  config timezone: NOT the hidden epoch span, 3h off on Pittsburgh's
+  site), externalId = hash(name, start) since event_id links appear only
+  later. Saanich streams on Granicus (no capture platform): list_only.
   `sync.ts` (the Applier, migration 7): diff by externalId into
   meeting_changes (added, time/link changed, cancelled, reinstated,
   removed, returned, details); `removed` only flags; a run removing more
