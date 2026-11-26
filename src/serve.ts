@@ -147,13 +147,10 @@ export interface ServeOpts extends Omit<SchedulerOpts, "entry"> {
   tokenDownloadBps?: number;
   /** Make poster images for recordings that have a video and none yet (thumbs.ts). Default on; tests turn it off. */
   thumbnails?: boolean;
-<<<<<<< HEAD
   /** Searches allowed per minute per client address (default 60; 429 beyond). */
   searchesPerMinute?: number;
-=======
   /** Also email the operator's messages (captures, transcripts, login, backups, feeds) to this address. Needs mail. */
   operatorEmail?: string;
->>>>>>> origin/main
   /** Who may frame /embed/<meeting> (net.ts embedAncestors): "*" (default), "none", or origins. */
   embedOrigins?: string;
   session: Omit<KeeperOpts, "auth" | "out" | "leadMs">;
