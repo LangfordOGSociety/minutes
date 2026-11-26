@@ -4,7 +4,22 @@
 
 Records online meetings start to finish without help from the host, and turns
 them into one chaptered video with a speaker-labelled transcript, the same
-night. Built for public council meetings; Zoom today, more platforms next.
+night, and publishes them. Built for public council meetings: Zoom, YouTube
+and Granicus today.
+
+What it does, end to end:
+
+- **Finds meetings** by itself from a municipality's calendar (eScribe,
+  PrimeGov, Granicus, iCal, a web page), tracks every change (moved,
+  cancelled, new documents) and lets you review before anything is recorded.
+- **Records** a Zoom meeting in a browser, a YouTube live stream, or imports a
+  finished Granicus video, and stitches it into one chaptered video.
+- **Transcribes** it on a GPU (WhisperX, speakers separated), with names you
+  can add by hand.
+- **Publishes** it: a page per meeting that fills in as results land,
+  permalinks, an embeddable player, search across every transcript, email
+  alerts, a download API with tokens, and notes to the operator when
+  something needs a look.
 
 Joins a Zoom meeting in headed Chromium on a virtual display, records screen +
 audio with ffmpeg, survives drops, and stitches the parts into one MP4.

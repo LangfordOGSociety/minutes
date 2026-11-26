@@ -437,6 +437,28 @@ Nightly `VACUUM INTO` of `minutes.db` plus `auth/` to a second location
 tested restore. Recordings themselves are out of scope (large, and the
 city publishes its own copy). (#31)
 
+## Status (2026-11-26)
+
+Phases 0-4 and 6 are built and deployed, and phase 5 is partly built:
+
+| built | notes |
+|---|---|
+| Phase 0-1 | database, accounts, hardening, mail, backups |
+| Phase 2 | feeds: iCal, HTML, eScribe, Granicus, PrimeGov, YouTube channels; change history; review, dedup |
+| Phase 3 | public pages, live status, permalinks, `/embed` + oEmbed, `/search`, email alerts, posters, sitemap and structured data |
+| Phase 4 | tokens, `/api/v1`, usage, OpenAPI, optional speed caps |
+| Phase 5 | YouTube stream (`yt-dlp`), YouTube channel feed, Granicus (archived clips imported; live events assumed, not verified) |
+| Phase 6 | `docs/extending/*` and `minutes feed test` |
+| Also | speaker names by hand, transcribe again, operator notifications (push or `OPERATOR_EMAIL`), search rate limit |
+
+Not built: the YouTube **screen** method and `auto` fallback (#35), Microsoft
+Teams (#22), fetching a YouTube stream's archived VOD afterwards, reading the
+Granicus archive table, per-token rate limits (the hook exists). Verified
+live: Zoom webinars (Langford), the YouTube and Granicus *archive* paths from
+a residential IP and the cluster's image. Not verified live: YouTube from the
+homelab's IP (bot checks), a live Granicus event, a real Saanich import on the
+cluster.
+
 ## Phases
 
 Order matters: nothing becomes public before accounts exist.
