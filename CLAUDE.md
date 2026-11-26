@@ -168,6 +168,13 @@ captures).
   Sign-up/verify/reset (serve.ts) never reveal whether an email has an
   account; codes are 6 digits, hashed, single use, 5 tries (accounts.ts
   `issueCode`/`useCode`). `capsFor()` withholds tokens until verified.
+- `docs/extending/feed-parsers.md` and `platforms.md`: how to add a feed
+  parser (interface, externalId and timezone rules, fixtures, checklist)
+  or a meeting platform (interface, State mapping, MARKERS convention,
+  media-safety checklist, what must be verified live). `minutes feed
+  parsers` / `minutes feed test <parser> --config ... --fixture|--route`
+  (`src/feeds/cli.ts`, `fixture.ts`) runs a parser offline from saved
+  files; `feedContext({ fixtures })` does the same in tests.
 - `src/feeds/` where meetings are found (Phase 2). `types.ts`: a
   FeedParser (id, label, fields for the admin form, validate, host, fetch)
   fetches and parses only, never touches the DB or jobs. `context.ts`: the
