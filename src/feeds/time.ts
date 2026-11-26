@@ -31,6 +31,14 @@ export function localDate(t: Date, tz: string): string {
   return new Intl.DateTimeFormat("en-CA", { timeZone: tz, year: "numeric", month: "2-digit", day: "2-digit" }).format(t);
 }
 
+/** "2026-12-08 17:30" in `tz`, for change logs people read. */
+export function localDateTime(t: Date, tz: string): string {
+  const p: Record<string, string> = {};
+  for (const x of new Intl.DateTimeFormat("en-CA", { timeZone: tz, year: "numeric", month: "2-digit", day: "2-digit",
+    hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).formatToParts(t)) p[x.type] = x.value;
+  return `${p.year}-${p.month}-${p.day} ${p.hour}:${p.minute}`;
+}
+
 const MONTHS = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"];
 
 /** Month number (1-12) from a name or abbreviation, or 0. */

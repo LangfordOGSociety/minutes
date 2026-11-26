@@ -3,8 +3,9 @@
  *
  * Each run is diffed against the feed's meetings by externalId:
  *
- *   added            new meeting; the feed's policy decides (below)
- *   time_changed     start moved: captures that haven't launched move too
+ *   added            new meeting (announced); the feed's policy decides (below)
+ *   date_changed     start moved to another day: captures that haven't launched move too
+ *   time_changed     start moved within the same day: the same
  *   link_changed     join link added or changed: copied to waiting captures
  *                    (and, under auto/approved, a capture is scheduled)
  *   cancelled        captures that haven't launched are cancelled
@@ -12,6 +13,11 @@
  *   removed          missing from the feed: ONLY flagged, never cancels
  *   returned         a removed meeting is back
  *   details_changed  title, body, agenda, page, end: recorded
+ *   document_added / document_removed / document_changed
+ *                    the source posted, pulled or retitled a document
+ *                    (agenda, revised agenda, addendum, notice, minutes):
+ *                    recorded, one per document. A meeting's first list
+ *                    is stored without entries (it isn't news).
  *
  * Safety valve: a run that would remove more than half of the feed's
  * upcoming meetings (and at least 2) is `suspect` and applies nothing; a
@@ -36,13 +42,20 @@ import { checkLink, platformFor } from "../platforms/registry.js";
 import { logger, notify } from "../util.js";
 import type { Applier, ApplyResult } from "./poller.js";
 import type { Feed } from "./store.js";
-import { localDate } from "./time.js";
-import type { DetectedMeeting } from "./types.js";
+import { localDate, localDateTime } from "./time.js";
+import type { DetectedMeeting, MeetingDocument } from "./types.js";
 
 const log = logger("feeds");
 
-export type ChangeKind = "added" | "time_changed" | "link_changed" | "cancelled" | "reinstated" | "removed" | "returned" |
-  "details_changed" | "approved" | "rejected" | "merged" | "split";
+export type ChangeKind = "added" | "date_changed" | "time_changed" | "link_changed" | "cancelled" | "reinstated" | "removed" | "returned" |
+  "details_changed" | "document_added" | "document_removed" | "document_changed" | "approved" | "rejected" | "merged" | "split";
+
+/** Same documents, by URL, in the same order? */
+function sameDocs(a: MeetingDocument[] | undefined, b: MeetingDocument[] | undefined): boolean {
+  return JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
+}
+
+const docRec = (d: MeetingDocument): Rec => ({ title: d.title, ...(d.type ? { type: d.type } : {}), url: d.url });
 
 type Rec = Record<string, unknown>;
 
@@ -128,7 +141,8 @@ export class Sync implements Applier {
         const dupOf = past ? undefined : this.dupCandidate(feed, d, link);
         const review = !past && !dupOf && !d.cancelled && feed.policy === "review" ? "pending" as const : undefined;
         const p: Planned = { kind: "added", detected: d, dupOf, review, action: "none", effect: "",
-          after: { title: d.title, body: d.body, start: d.start.toISOString(), link: shownLink(link || d.link), cancelled: d.cancelled || undefined } };
+          after: { title: d.title, body: d.body, start: d.start.toISOString(), local: localDateTime(d.start, this.tz),
+            link: shownLink(link || d.link), cancelled: d.cancelled || undefined, documents: d.documents?.length || undefined } };
         if (past) p.effect = "in the past: listed only";
         else if (d.cancelled) p.effect = "cancelled: listed only";
         else if (dupOf) p.effect = `same meeting as ${dupOf.title} (${dupOf.slug}): not captured twice`;
@@ -145,7 +159,9 @@ export class Sync implements Applier {
       const active = this.sched.activeJobFor(ex.id);
       if (ex.removedAt) changes.push({ kind: "returned", meeting: ex, action: "none", effect: "back in the feed", before: { removedAt: ex.removedAt } });
       if (Math.abs(exT - dT) > TIME_EPS_MS) {
-        changes.push({ kind: "time_changed", meeting: ex, detected: d, action: "update", before: { start: ex.start }, after: { start: d.start.toISOString() },
+        const kind = localDate(new Date(exT), this.tz) !== localDate(d.start, this.tz) ? "date_changed" : "time_changed";
+        changes.push({ kind, meeting: ex, detected: d, action: "update",
+          before: { start: ex.start, local: localDateTime(new Date(exT), this.tz) }, after: { start: d.start.toISOString(), local: localDateTime(d.start, this.tz) },
           effect: !active ? "no capture to move" : active.status === "scheduled" || active.status === "queued" ? `capture ${active.slug} moved` : `already ${active.status}: unchanged` });
       }
       if (link && link !== ex.link) {
@@ -168,6 +184,20 @@ export class Sync implements Applier {
       if (diff.length) {
         changes.push({ kind: "details_changed", meeting: ex, detected: d, action: "none", effect: "recorded",
           before: Object.fromEntries(diff.map(([k, a]) => [k, a ?? null])), after: Object.fromEntries(diff.map(([k, , b]) => [k, b])) });
+      }
+      // Documents: only against a list seen before (the first isn't news).
+      if (d.documents && ex.documents) {
+        const old = new Map(ex.documents.map((x) => [x.url, x])), now_ = new Map(d.documents.map((x) => [x.url, x]));
+        for (const [url, x] of now_) {
+          const o = old.get(url);
+          if (!o) changes.push({ kind: "document_added", meeting: ex, detected: d, action: "none", effect: "recorded", after: docRec(x) });
+          else if (o.title !== x.title || (o.type ?? null) !== (x.type ?? null)) {
+            changes.push({ kind: "document_changed", meeting: ex, detected: d, action: "none", effect: "recorded", before: docRec(o), after: docRec(x) });
+          }
+        }
+        for (const [url, o] of old) {
+          if (!now_.has(url)) changes.push({ kind: "document_removed", meeting: ex, detected: d, action: "none", effect: "recorded", before: docRec(o) });
+        }
       }
     }
     // Upcoming meetings the feed no longer lists: flagged only.
@@ -222,6 +252,7 @@ export class Sync implements Applier {
             platform: platformFor(link)?.id ?? "", link, start: d.start.toISOString(), endEst: d.end?.toISOString(),
             agendaUrl: d.agendaUrl, pageUrl: d.pageUrl, slug: this.uniqueSlug(`${feed.slugPrefix}-${slugify(d.body || d.title)}-${localDate(d.start, this.tz)}`),
             status: d.cancelled ? "cancelled" : "scheduled", review: p.review, duplicateOf: p.dupOf?.id, lastSeenAt: iso,
+            documents: d.documents,
           }, iso);
           if (p.review === "pending") pendingReviews++;
         } else if (m) {
@@ -243,10 +274,13 @@ export class Sync implements Applier {
         const id = this.logChange({ meetingId: m!.id, feedId: feed.id, runId, kind: p.kind, before: p.before, after: p.after, effect: p.effect }, now);
         if (p.action !== "none") jobsTodo.push({ change: id, p, meetingId: m!.id });
       }
-      // Everything still in the feed was seen now.
-      const seenIds = new Set(detected.map((d) => d.externalId));
+      // Everything still in the feed was seen now; keep its document list.
+      const byExt = new Map(detected.map((d) => [d.externalId, d]));
       for (const m of this.meetings.byFeed(feed.id)) {
-        if (m.externalId && seenIds.has(m.externalId) && m.lastSeenAt !== iso) { m.lastSeenAt = iso; this.meetings.save(m); }
+        const d = m.externalId ? byExt.get(m.externalId) : undefined;
+        if (!d) continue;
+        const docs = d.documents ?? m.documents;
+        if (m.lastSeenAt !== iso || !sameDocs(m.documents, docs)) { m.lastSeenAt = iso; m.documents = docs; this.meetings.save(m); }
       }
     });
     // Captures, through the Scheduler.
@@ -254,7 +288,7 @@ export class Sync implements Applier {
       try {
         if (p.action === "update" && p.detected) {
           const ch: { start?: string; link?: string } = {};
-          if (p.kind === "time_changed") ch.start = p.detected.start.toISOString();
+          if (p.kind === "time_changed" || p.kind === "date_changed") ch.start = p.detected.start.toISOString();
           if (p.kind === "link_changed") ch.link = this.linkOf(p.detected);
           this.sched.updateMeeting(meetingId, ch);
         }

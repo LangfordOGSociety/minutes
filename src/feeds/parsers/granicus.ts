@@ -62,6 +62,7 @@ export function rowsToMeetings(rows: string[], o: { baseUrl: string; tz: string 
       title, start, agendaUrl: agenda, pageUrl: watch ?? agenda,
       link: findLink(hrefs.join("\n")),
       cancelled: /\bcancell?ed\b/i.test(name) || undefined,
+      documents: agenda ? [{ title: "Agenda", type: "Agenda", url: agenda }] : [],
       agendaHtml: agenda,
     });
   }

@@ -246,9 +246,16 @@ passcode.
 Safety: a meeting that disappears from a feed is only flagged, never
 cancelled; a run that would remove most of a feed's upcoming meetings
 (a broken page, say) changes nothing and notifies you. A meeting already
-known from another feed or scheduled by hand isn't captured twice. Each
-meeting's history shows every change a feed made and what it did to the
-capture.
+known from another feed or scheduled by hand isn't captured twice.
+
+Each meeting's history (History on `/admin/feeds`) shows every change a
+feed made and what it did to the capture: announced (first seen), moved
+to another date or time (old and new, local time), join link published,
+cancelled or back on, gone from the listing or back, title/body changes,
+and, for eScribe and Granicus, each document posted, retitled or pulled
+(agenda, revised agenda, addenda, notices, minutes). Changes are seen on
+the next poll (hourly, every 5 minutes on a meeting day), and history
+starts when the feed was added.
 
 Langford, recommended start: eScribe, portal URL as above, meeting types
 `Council Meeting`, `Special Council Meeting`, `Committee of the Whole
