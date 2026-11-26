@@ -231,8 +231,12 @@ them there. Admins see every token and per-user, per-token usage (requests
 and data per day, most-downloaded files) on `/admin`; disabling a user
 revokes their tokens. Reads are open to other sites (CORS). Anything that
 plays in a browser can be saved: tokens are for tracking and fair use of
-bulk access, not for protecting files. There are no rate limits or speed
-throttle yet; the hook for them is in `src/tokens.ts`.
+bulk access, not for protecting files. There are no rate limits yet (the
+hook is in `src/tokens.ts`). An optional download speed cap, off by
+default: `DOWNLOAD_MAX_BPS` for all API downloads together and
+`DOWNLOAD_TOKEN_BPS` for each token (bytes per second, or `20m`, `500k`),
+and an admin can give one token its own cap. Playback (`/media`) is never
+throttled.
 
 **Permalinks and embedding.** Every public meeting has a permanent page,
 `/m/<slug>` (`?t=90` or `?t=1m30s` starts the video there), and

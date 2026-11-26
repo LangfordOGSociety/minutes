@@ -46,6 +46,7 @@
  *   DELETE /api/account/tokens/:id   revoke
  *   GET    /api/account/usage        your API usage (?days=30)
  *   GET    /api/admin/tokens         everyone's tokens;  DELETE /api/admin/tokens/:id  revoke
+ *   PATCH  /api/admin/tokens/:id     {downloadBps}: that token's own download speed cap (0 = the default)
  *   GET    /api/admin/usage          per day, token, user, top files (?days, ?user)
  *   GET    /api/v1/openapi.json, /api/docs   the API's description
  *   GET    /api/v1/meetings[/:id[/status|/files[/:name]]], /changes, /me   the API; downloads need a bearer token
@@ -75,6 +76,8 @@
  * request may take to arrive.
  */
 import { execFile } from "node:child_process";
+import { pipeline } from "node:stream";
+import { Bucket, Throttle, paced } from "./throttle.js";
 import { closeSync, createReadStream, existsSync, openSync, readSync, statSync } from "node:fs";
 import http from "node:http";
 import path from "node:path";
@@ -124,6 +127,9 @@ export interface ServeOpts extends Omit<SchedulerOpts, "entry"> {
   mailer?: Mailer | null;
   /** The site's address, for links in emails and in page metadata (canonical, previews, oEmbed). */
   publicUrl?: string;
+  /** Download speed caps in bytes/second (#36; throttle.ts): all API downloads together, and each token. 0 or unset = unlimited. */
+  downloadBps?: number;
+  tokenDownloadBps?: number;
   /** Who may frame /embed/<meeting> (net.ts embedAncestors): "*" (default), "none", or origins. */
   embedOrigins?: string;
   session: Omit<KeeperOpts, "auth" | "out" | "leadMs">;
@@ -164,7 +170,7 @@ function countBytes(res: http.ServerResponse): () => number {
 
 /** A token as its owner (or an admin) sees it: never its hash. */
 const publicToken = (t: ApiToken) => ({ id: t.id, prefix: t.prefix, label: t.label, scopes: t.scopes, createdAt: t.createdAt, expiresAt: t.expiresAt,
-  lastUsedAt: t.lastUsedAt, revokedAt: t.revokedAt, active: activeToken(t) });
+  lastUsedAt: t.lastUsedAt, revokedAt: t.revokedAt, active: activeToken(t), downloadBps: t.limits?.downloadBps ?? null });
 
 function send(res: http.ServerResponse, status: number, body: unknown, headers: Record<string, string> = {}): void {
   const isText = typeof body === "string" || Buffer.isBuffer(body);
@@ -266,7 +272,13 @@ function tail(file: string, bytes = 64 * 1024): string {
   }
 }
 
-function serveFile(req: http.IncomingMessage, res: http.ServerResponse, file: string): void {
+/** pace: buckets to throttle this response through (API downloads; see throttle.ts). */
+function serveFile(req: http.IncomingMessage, res: http.ServerResponse, file: string, pace: Bucket[] = []): void {
+  const stream = (s: NodeJS.ReadableStream) => {
+    if (!pace.length) return void s.pipe(res);
+    // pipeline ends everything if the client goes away mid-download.
+    pipeline(s, paced(pace), res, () => { /* aborts are normal */ });
+  };
   const type = MEDIA_TYPES[path.extname(file).toLowerCase()];
   if (!type || !existsSync(file)) return send(res, 404, "not found");
   const size = statSync(file).size;
@@ -283,11 +295,11 @@ function serveFile(req: http.IncomingMessage, res: http.ServerResponse, file: st
     }
     res.writeHead(206, { ...base, "Content-Range": `bytes ${start}-${end}/${size}`, "Content-Length": String(end - start + 1) });
     if (req.method === "HEAD") return void res.end();
-    return void createReadStream(file, { start, end }).pipe(res);
+    return stream(createReadStream(file, { start, end }));
   }
   res.writeHead(200, { ...base, "Content-Length": String(size) });
   if (req.method === "HEAD") return void res.end();
-  createReadStream(file).pipe(res);
+  stream(createReadStream(file));
 }
 
 function screenshot(display: string, width: number, height: number): Promise<Buffer> {
@@ -315,6 +327,7 @@ export function createApp(o: ServeOpts, entry: string): App {
   const accounts = new Accounts(db);
   const audit = new Audit(db);
   const tokens = new Tokens(db);
+  const throttle = new Throttle({ globalBps: o.downloadBps, tokenBps: o.tokenDownloadBps });
   const proxies = new Proxies(o.trustedProxies);
   const cookieName = o.secureCookie ? "__Host-minutes_session" : "minutes_session";
   const cookieAttrs = `Path=/; HttpOnly; SameSite=Lax${o.secureCookie ? "; Secure" : ""}`;
@@ -530,7 +543,7 @@ export function createApp(o: ServeOpts, entry: string): App {
           if (!FILE_RE.test(name) || !listed.some((x) => x[1] === name)) return send(res, 404, { error: "no such file" });
           usageFile = `${e.m.slug}/${name}`;
           res.setHeader("Content-Disposition", `attachment; filename="${name}"`);
-          return serveFile(req, res, path.join(o.out, e.rec.slug, name));
+          return serveFile(req, res, path.join(o.out, e.rec.slug, name), throttle.buckets(tokenAuth.t.id, tokenAuth.t.limits?.downloadBps));
         }
         if (!((seg[0] === "meetings" && seg.length >= 1 && seg.length <= 3) || (seg[0] === "changes" && seg.length === 1))) return send(res, 404, { error: "no such endpoint" });
       }
@@ -951,6 +964,24 @@ export function createApp(o: ServeOpts, entry: string): App {
         if (what === "tokens") {
           if (parts.length === 3 && read) {
             return send(res, 200, tokens.list().map((t) => ({ ...publicToken(t), userId: t.userId, userEmail: accounts.get(t.userId)?.email ?? "(deleted)" })));
+          }
+          if (parts.length === 4 && method === "PATCH") {
+            // A per-token download speed cap (#36): {downloadBps: bytes/second, 0 = the default}.
+            const t = id ? tokens.get(id) : undefined;
+            if (!t) return send(res, 404, { error: "no such token" });
+            const body = await jsonBody();
+            if (!body) return;
+            try {
+              const bps = body.downloadBps === null ? 0 : Number(body.downloadBps);
+              if (body.downloadBps === undefined || !Number.isFinite(bps)) return send(res, 400, { error: "send {downloadBps: bytes per second, or 0 for the default}" });
+              tokens.setDownloadLimit(t.id, bps);
+            } catch (e) {
+              if (e instanceof TokenError) return send(res, e.status, { error: e.message });
+              throw e;
+            }
+            const after = tokens.get(t.id)!;
+            audit.record(actor, "token.limit", { type: "token", id: t.id, label: `${t.prefix} ${t.label}` }, { downloadBps: t.limits?.downloadBps ?? null }, { downloadBps: after.limits?.downloadBps ?? null });
+            return send(res, 200, { ...publicToken(after), userId: after.userId });
           }
           if (parts.length === 4 && method === "DELETE") {
             const t = id ? tokens.get(id) : undefined;
