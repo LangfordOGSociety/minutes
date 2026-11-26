@@ -34,6 +34,8 @@
  *   GET    /admin/media/:slug/:file  any recording's files, incl. manifest.json and parts
  *   GET    /api/admin/info           timezone, tzdata, lead time
  *   GET    /api/admin/recordings     every recording, incl. failed attempts
+ *   GET    /api/admin/recordings/:slug/speakers  the transcript's speaker labels (first line, time spoken) and their names
+ *   PUT    /api/admin/recordings/:slug/speakers  {names: {"Speaker 4": "Mayor Smith"}}: replaces the set; shown on every transcript view
  *   GET    /api/admin/jobs           scheduled / running / finished captures
  *   POST   /api/admin/jobs           {link, start, slug?, name?, email?}
  *   PATCH  /api/admin/jobs/:id       edit a scheduled capture
@@ -84,7 +86,7 @@
 import { execFile } from "node:child_process";
 import { pipeline } from "node:stream";
 import { Bucket, Throttle, paced } from "./throttle.js";
-import { closeSync, createReadStream, existsSync, openSync, readSync, statSync } from "node:fs";
+import { closeSync, createReadStream, existsSync, openSync, readFileSync, readSync, statSync } from "node:fs";
 import http from "node:http";
 import path from "node:path";
 import { Accounts, AccountError, FailureLimiter, SESSION_MAX_AGE_S, capsFor, checkEmail, checkNewPassword, type Capability, type User } from "./accounts.js";
@@ -117,6 +119,7 @@ import { SessionKeeper, type KeeperOpts } from "./session.js";
 import { API_DOCS_PAGE, openApi } from "./apidocs.js";
 import { Tokens, TokenError, activeToken, type ApiToken } from "./tokens.js";
 import { Search } from "./search.js";
+import { NAMES_FILE, NamesError, applyNames, cleanNames, kindOf, labelsOf, namedFile, readNames, writeNames } from "./speakers.js";
 import { Alerts, AlertError, type Alert } from "./alerts.js";
 import { STOP_PAGE } from "./pages/stop.js";
 import { Thumbs } from "./thumbs.js";
@@ -354,6 +357,7 @@ export function createApp(o: ServeOpts, entry: string): App {
   const tokens = new Tokens(db);
   const search = new Search(db);
   const alerts = new Alerts(db);
+  const nameCache = new Map<string, string>();
   const throttle = new Throttle({ globalBps: o.downloadBps, tokenBps: o.tokenDownloadBps });
   const proxies = new Proxies(o.trustedProxies);
   const cookieName = o.secureCookie ? "__Host-minutes_session" : "minutes_session";
@@ -438,7 +442,7 @@ export function createApp(o: ServeOpts, entry: string): App {
     if (closed || (!force && Date.now() - searchSyncedAt < 30_000)) return;
     searchSyncedAt = Date.now();
     try {
-      const items = sched.list().map((j) => ({ recSlug: j.slug, meetingId: j.meetingRef, file: path.join(o.out, j.slug, `${j.slug}.transcript.json`) }))
+      const items = sched.list().map((j) => ({ recSlug: j.slug, meetingId: j.meetingRef, file: path.join(o.out, j.slug, `${j.slug}.transcript.json`), namesFile: path.join(o.out, j.slug, NAMES_FILE) }))
         .filter((i) => existsSync(i.file));
       const r = search.sync(items);
       if (r.indexed || r.removed) log.info(`transcript search: indexed ${r.indexed}, dropped ${r.removed}`);
@@ -548,8 +552,18 @@ export function createApp(o: ServeOpts, entry: string): App {
         send(res, 400, { error: "body must be a JSON object" });
         return null;
       };
+      /** A readable transcript file with the recording's speaker names put in (speakers.ts); false if there's nothing to apply. */
+      const serveWithNames = (slug: string, file: string): boolean => {
+        const text = namedFile(path.join(o.out, slug), slug, file, nameCache);
+        if (text === null) return false;
+        const buf = Buffer.from(text, "utf8");
+        res.writeHead(200, { "Content-Type": MEDIA_TYPES[path.extname(file).toLowerCase()] ?? "text/plain", "Content-Length": String(buf.length), "Cache-Control": "no-cache" });
+        if (req.method === "HEAD") res.end(); else res.end(buf);
+        return true;
+      };
       const media = (slug: string, file: string, allowed: (slug: string, file: string) => boolean) => {
         if (!read || !SLUG_RE.test(slug) || !FILE_RE.test(file) || !allowed(slug, file)) return send(res, 404, "not found");
+        if (serveWithNames(slug, file)) return;
         return serveFile(req, res, path.join(o.out, slug, file));
       };
 
@@ -614,6 +628,7 @@ export function createApp(o: ServeOpts, entry: string): App {
           if (!FILE_RE.test(name) || !listed.some((x) => x[1] === name)) return send(res, 404, { error: "no such file" });
           usageFile = `${e.m.slug}/${name}`;
           res.setHeader("Content-Disposition", `attachment; filename="${name}"`);
+          if (serveWithNames(e.rec.slug, name)) return;
           return serveFile(req, res, path.join(o.out, e.rec.slug, name), throttle.buckets(tokenAuth.t.id, tokenAuth.t.limits?.downloadBps));
         }
         if (!((seg[0] === "meetings" && seg.length >= 1 && seg.length <= 3) || (seg[0] === "changes" && seg.length === 1) || (seg[0] === "search" && seg.length === 1))) return send(res, 404, { error: "no such endpoint" });
@@ -1042,6 +1057,26 @@ export function createApp(o: ServeOpts, entry: string): App {
           return send(res, 200, { tz: o.tz, tzdata: process.versions.tz ?? null, leadMinutes: o.leadMs / 60_000, maxConcurrent: o.maxConcurrent });
         }
         if (what === "recordings" && parts.length === 3 && read) return send(res, 200, listRecordings(o.out, sched, o.tz));
+        if (what === "recordings" && parts.length === 5 && sub === "speakers" && id && SLUG_RE.test(id)) {
+          // Who the transcriber's "Speaker N" labels are, added by hand (speakers.ts). Shown to everyone once saved.
+          const dir = path.join(o.out, id), tf = path.join(dir, `${id}.transcript.json`);
+          if (!existsSync(tf)) return send(res, 404, { error: "that recording has no transcript" });
+          let transcript: unknown;
+          try { transcript = JSON.parse(readFileSync(tf, "utf8")); } catch { return send(res, 409, { error: "the transcript can't be read right now; try again in a moment" }); }
+          const labels = labelsOf(transcript), before = readNames(dir);
+          if (read) return send(res, 200, { labels: labels.map((l) => ({ ...l, name: before[l.label] ?? null })), names: before });
+          if (method === "PUT") {
+            const body = await jsonBody();
+            if (!body) return;
+            let names;
+            try { names = cleanNames(body.names, new Set(labels.map((l) => l.label))); }
+            catch (e) { if (e instanceof NamesError) return send(res, 400, { error: e.message }); throw e; }
+            writeNames(dir, names);
+            audit.record(actor, "speakers.update", { type: "recording", id, label: id }, before, names);
+            syncSearch(true);
+            return send(res, 200, { names });
+          }
+        }
         if (what === "feeds") {
           if (parts.length === 3 && read) {
             return send(res, 200, {

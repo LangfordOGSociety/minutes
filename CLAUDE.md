@@ -216,6 +216,22 @@ captures).
   startup and every 2 min (`ServeOpts.thumbnails`, off in tests; failures
   are not retried for an hour). Used as the player's `poster`, og:image,
   JSON-LD thumbnailUrl, and listed by /api/v1/.../files as `thumbnail`.
+- `src/speakers.ts` speaker names added by hand. `<slug>/speaker-names.json`
+  maps the transcriber's label ("Speaker 4", or a Zoom name) to a name;
+  APPLIED WHEN SERVING (public /media, /admin/media and the API's file
+  downloads) to `.transcript.json` (segment `label` + `names_applied`),
+  `.vtt` (`<v Label>` at a cue start), `.srt` (`Label: ` at cue text start)
+  and `.txt` (`[hh:mm:ss] Label:` headers), anchored so the same words in
+  speech aren't touched; the files on disk are never rewritten (a
+  transcriber re-run loses nothing, undo = delete a line). Two labels with
+  one name merge. The search index uses the named segments and re-indexes
+  when the names file changes (migration 13 `names_mtime_ms`). Admin:
+  `GET|PUT /api/admin/recordings/:slug/speakers` (labels in first-appearance
+  order with time spoken and a first line; PUT replaces the whole set,
+  validated against the transcript's own labels, no < > & or control
+  characters, audited) and a Speakers button per recording on /admin.
+  The player says some names were added by hand. Searching an apostrophe
+  name: O'Brien is two tokens (o, brien), so search "o'brien".
 - `src/recordings.ts` recordings on disk, admin view and public view.
   Public = a job made it, its meeting is public and not cancelled, video or
   live. `publicFiles()` is the only list /media serves from (never
