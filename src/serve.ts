@@ -38,6 +38,13 @@
  *   GET    /api/admin/session        saved Zoom login state
  *   POST   /api/admin/session/check  check (and refresh) the saved login now
  *   GET    /api/admin/audit          audit log, newest first (?action, actor, target, before, limit)
+ *   GET    /admin/feeds              feeds: where meetings are found (pages/feeds.ts)
+ *   GET    /api/admin/feeds          parsers and feeds, with health and recent runs
+ *   POST   /api/admin/feeds          {name, parser, config, slugPrefix, policy, intervalMin, enabled}
+ *   PATCH  /api/admin/feeds/:id      same fields, all optional
+ *   DELETE /api/admin/feeds/:id
+ *   POST   /api/admin/feeds/:id/run  poll now
+ *   POST   /api/admin/feeds/preview  {parser, config, feedId?}: fetch + parse (+ diff), nothing saved
  *   GET    /api/admin/users          accounts
  *   PATCH  /api/admin/users/:id      {role?, disabled?}
  *
@@ -60,6 +67,12 @@ import { openDb } from "./db.js";
 import { BadRequest, Scheduler, type Job, type SchedulerOpts } from "./jobs.js";
 import type { Mailer } from "./mail.js";
 import { Proxies, SECURITY_HEADERS, pageCsp } from "./net.js";
+import "./feeds/parsers/index.js";
+import { Poller, healthOf } from "./feeds/poller.js";
+import { parserById, parsers } from "./feeds/registry.js";
+import { FeedError, Feeds, type Feed } from "./feeds/store.js";
+import { ConfigError } from "./feeds/types.js";
+import { FEEDS_PAGE } from "./pages/feeds.js";
 import { ADMIN_PAGE } from "./pages/admin.js";
 import { LOGIN_PAGE } from "./pages/login.js";
 import { PUBLIC_PAGE } from "./pages/public.js";
@@ -86,6 +99,8 @@ export interface ServeOpts extends Omit<SchedulerOpts, "entry"> {
   session: Omit<KeeperOpts, "auth" | "out" | "leadMs">;
   /** Nightly backups; null = off. */
   backup: Omit<NightlyOpts, "auth" | "notifyUrl"> | null;
+  /** Poll feeds on their schedule (off in tests: they use Run now). */
+  pollFeeds?: boolean;
 }
 
 const MEDIA_TYPES: Record<string, string> = {
@@ -272,6 +287,14 @@ export function createApp(o: ServeOpts, entry: string): App {
 
   const sched = new Scheduler({ ...o, entry }, db);
   sched.start();
+  const feeds = new Feeds(db);
+  const poller = new Poller(feeds, { tz: o.tz });
+  if (o.pollFeeds !== false) poller.start();
+  /** A feed as the admin page sees it. */
+  const adminFeed = (f: Feed) => ({ ...f, httpCache: undefined, health: healthOf(f), running: poller.isRunning(f.id),
+    parserLabel: parserById(f.parser)?.label ?? f.parser, runs: feeds.runs(f.id, 10) });
+  const feedSnap = (f: Feed) => ({ name: f.name, parser: f.parser, config: f.config, slugPrefix: f.slugPrefix, policy: f.policy,
+    intervalMin: f.intervalMin, enabled: f.enabled });
   const keeper = new SessionKeeper({ ...o.session, auth: o.auth, out: o.out, leadMs: o.leadMs }, () => sched.list());
   keeper.start();
   const backups = o.backup
@@ -284,10 +307,10 @@ export function createApp(o: ServeOpts, entry: string): App {
     log.warn("no BACKUP_DIR: nightly backups are off");
   }
 
-  const pages = Object.fromEntries(Object.entries({ public: PUBLIC_PAGE, admin: ADMIN_PAGE, login: LOGIN_PAGE }).map(([k, html]) => {
+  const pages = Object.fromEntries(Object.entries({ public: PUBLIC_PAGE, admin: ADMIN_PAGE, login: LOGIN_PAGE, feeds: FEEDS_PAGE }).map(([k, html]) => {
     const body = html.replace("__TZ__", JSON.stringify(o.tz));
     return [k, { body, csp: pageCsp(body) }];
-  })) as Record<"public" | "admin" | "login", { body: string; csp: string }>;
+  })) as Record<"public" | "admin" | "login" | "feeds", { body: string; csp: string }>;
   const sendPage = (res: http.ServerResponse, p: { body: string; csp: string }) =>
     send(res, 200, p.body, { "Content-Type": "text/html; charset=utf-8", "Content-Security-Policy": p.csp });
 
@@ -349,6 +372,9 @@ export function createApp(o: ServeOpts, entry: string): App {
       // --- pages ---
       if (read && url.pathname === "/") return sendPage(res, pages.public);
       if (read && (url.pathname === "/login" || url.pathname === "/account")) return sendPage(res, pages.login);
+      if (read && url.pathname === "/admin/feeds") {
+        return allow("admin.view", true) ? sendPage(res, pages.feeds) : undefined;
+      }
       if (read && (url.pathname === "/admin" || url.pathname === "/admin/")) {
         return allow("admin.view", true) ? sendPage(res, pages.admin) : undefined;
       }
@@ -542,6 +568,58 @@ export function createApp(o: ServeOpts, entry: string): App {
           return send(res, 200, { tz: o.tz, tzdata: process.versions.tz ?? null, leadMinutes: o.leadMs / 60_000, maxConcurrent: o.maxConcurrent });
         }
         if (what === "recordings" && parts.length === 3 && read) return send(res, 200, listRecordings(o.out, sched, o.tz));
+        if (what === "feeds") {
+          if (parts.length === 3 && read) {
+            return send(res, 200, {
+              parsers: parsers().map((p) => ({ id: p.id, label: p.label, description: p.description, fields: p.fields })),
+              feeds: feeds.list().map(adminFeed),
+            });
+          }
+          if (parts.length === 3 && method === "POST") {
+            const body = await jsonBody();
+            if (!body) return;
+            const f = feeds.create(body);
+            audit.record(actor, "feed.create", { type: "feed", id: f.id, label: f.name }, null, feedSnap(f));
+            return send(res, 201, adminFeed(f));
+          }
+          if (id === "preview" && parts.length === 4 && method === "POST") {
+            const body = await jsonBody();
+            if (!body) return;
+            const parser = typeof body.parser === "string" ? parserById(body.parser) : undefined;
+            if (!parser) return send(res, 400, { error: "unknown parser" });
+            let config: Record<string, unknown>;
+            try { config = parser.validate(body.config ?? {}); }
+            catch (e) { return send(res, 400, { error: e instanceof ConfigError ? e.message : String(e) }); }
+            const feed = typeof body.feedId === "string" ? feeds.get(body.feedId) ?? null : null;
+            try {
+              return send(res, 200, await poller.preview({ parser: parser.id, config }, feed));
+            } catch (e) {
+              if (e instanceof FeedError) throw e;
+              return send(res, 502, { error: `fetching the feed failed: ${(e as Error).message}`.slice(0, 500) });
+            }
+          }
+          const f = id ? feeds.get(id) : undefined;
+          if (!f) return send(res, 404, { error: "no such feed" });
+          if (parts.length === 4 && method === "PATCH") {
+            const body = await jsonBody();
+            if (!body) return;
+            const g = feeds.update(f.id, body);
+            audit.record(actor, "feed.update", { type: "feed", id: f.id, label: g.name }, feedSnap(f), feedSnap(g));
+            return send(res, 200, adminFeed(g));
+          }
+          if (parts.length === 4 && method === "DELETE") {
+            if (poller.isRunning(f.id)) return send(res, 409, { error: "a run is in progress; try again shortly" });
+            feeds.delete(f.id);
+            audit.record(actor, "feed.delete", { type: "feed", id: f.id, label: f.name }, feedSnap(f), null);
+            return send(res, 200, { ok: true });
+          }
+          if (parts.length === 5 && sub === "run" && method === "POST") {
+            audit.record(actor, "feed.run", { type: "feed", id: f.id, label: f.name }, null, { trigger: "manual" });
+            const out = await poller.run(f.id, "manual");
+            return send(res, 200, { outcome: out, feed: adminFeed(feeds.get(f.id)!) });
+          }
+          if (parts.length === 5 && sub === "runs" && read) return send(res, 200, feeds.runs(f.id, 50));
+        }
         if (what === "users") {
           if (parts.length === 3 && read) return send(res, 200, accounts.list().map((u) => ({ ...adminUser(u), self: u.id === user!.id })));
           if (parts.length === 4 && method === "PATCH") {
@@ -622,7 +700,7 @@ export function createApp(o: ServeOpts, entry: string): App {
       }
       return send(res, 404, parts[0] === "api" ? { error: "not found" } : "not found");
     } catch (e) {
-      if (e instanceof BadRequest || e instanceof AccountError) return send(res, e.status, { error: e.message });
+      if (e instanceof BadRequest || e instanceof AccountError || e instanceof FeedError) return send(res, e.status, { error: e.message });
       log.error("request failed", e);
       if (!res.headersSent) send(res, 500, { error: "internal error" });
       else res.destroy();
@@ -637,6 +715,7 @@ export function createApp(o: ServeOpts, entry: string): App {
       clearInterval(pruneTimer);
       keeper.stop();
       backups?.stop();
+      poller.stop();
       await sched.shutdown();
       db.close();
     },

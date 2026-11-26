@@ -113,6 +113,20 @@ captures).
   Sign-up/verify/reset (serve.ts) never reveal whether an email has an
   account; codes are 6 digits, hashed, single use, 5 tries (accounts.ts
   `issueCode`/`useCode`). `capsFor()` withholds tokens until verified.
+- `src/feeds/` where meetings are found (Phase 2). `types.ts`: a
+  FeedParser (id, label, fields for the admin form, validate, host, fetch)
+  fetches and parses only, never touches the DB or jobs. `context.ts`: the
+  ctx.http it must use (UA, 30s timeout, 8 MB cap, http(s) only,
+  conditional GET with per-feed ETag/Last-Modified) and ctx.page()
+  (headless Chromium). `time.ts` zonedTime(): local wall time -> UTC via
+  Intl (feeds publish local times). `store.ts` feeds + feed_runs
+  (migration 6, 200 runs kept per feed). `poller.ts`: interval (5 min on
+  a meeting day), jitter, one run per host, backoff x2 up to 6h, health
+  (unhealthy after 24h failing); a 304 or the same parsed-result hash ends
+  the run; an Applier (sync, #10/#11) turns results into meetings.
+  `/admin/feeds` (pages/feeds.ts): form built from `fields`, Preview (no
+  saving; links shown as platform + meeting number), Run now, runs.
+  Parsers register in `parsers/index.ts`.
 - `src/net.ts` TRUSTED_PROXIES (X-Forwarded-For/-Proto believed only from
   those), security headers, page CSP.
 - `src/timeline.ts` active speaker + Zoom captions: appended per change to

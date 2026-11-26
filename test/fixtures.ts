@@ -1,8 +1,12 @@
 /** Recording folders and jobs, as the runner and transcriber leave them. */
 import { mkdirSync, writeFileSync } from "node:fs";
+import http from "node:http";
+import type { AddressInfo } from "node:net";
 import path from "node:path";
 import type { App } from "../src/serve.js";
-import { inDays } from "./helpers.js";
+import { registerParser } from "../src/feeds/registry.js";
+import { cfg, type FeedParser } from "../src/feeds/types.js";
+import { inDays, type HasAfter } from "./helpers.js";
 
 export const LINK = "https://zoom.us/j/87093163922?pwd=429539";
 
@@ -43,3 +47,34 @@ export function fixtures(app: App, out: string): void {
   app.sched.add({ link: LINK, start: inDays(1), slug: "live-e" });   // scheduled = active
   makeRecording(out, "live-e", { live: true });
 }
+
+/** A source: GET /feed returns `meetings` as JSON, with an ETag. */
+export async function fakeSource(t: HasAfter) {
+  const state = { meetings: [] as unknown[], etag: "v1", hits: 0, fail: false, delayMs: 0 };
+  const s = http.createServer(async (req, res) => {
+    state.hits++;
+    if (state.delayMs) await new Promise((r) => setTimeout(r, state.delayMs));
+    if (state.fail) { res.writeHead(500); return res.end("boom"); }
+    if (req.url === "/big") { res.writeHead(200); return res.end("x".repeat(9 * 1024 * 1024)); }
+    if (req.headers["if-none-match"] === state.etag) { res.writeHead(304); return res.end(); }
+    res.writeHead(200, { "content-type": "application/json", etag: state.etag });
+    res.end(JSON.stringify(state.meetings));
+  });
+  await new Promise<void>((r) => s.listen(0, "127.0.0.1", r));
+  t.after(() => new Promise<void>((r) => { s.closeAllConnections(); s.close(() => r()); }));
+  return { state, url: `http://127.0.0.1:${(s.address() as AddressInfo).port}/feed` };
+}
+
+export const testParser: FeedParser<{ url: string }> = {
+  id: "test-json", label: "Test JSON", description: "JSON list from a URL (tests only)",
+  fields: [{ name: "url", label: "URL", type: "url", required: true }],
+  validate(c) { return { url: cfg.url(cfg.obj(c), "url") }; },
+  host(c) { return c.url; },
+  async fetch(c, ctx) {
+    const r = await ctx.http(c.url, { conditional: true });
+    if (r.notModified) return { notModified: true };
+    const rows = JSON.parse(r.body) as { id: string; title: string; start: string; link?: string }[];
+    return { meetings: rows.map((x) => ({ externalId: x.id, title: x.title, start: new Date(x.start), link: x.link })) };
+  },
+};
+registerParser(testParser);

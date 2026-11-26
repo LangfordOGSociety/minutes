@@ -122,6 +122,40 @@ const MIGRATIONS: string[] = [
      created_at TEXT NOT NULL,
      PRIMARY KEY (user_id, purpose)
    );`,
+
+  // 6: feeds (#8, #9): where meetings are found, and each poll of them.
+  `CREATE TABLE feeds (
+     id           TEXT PRIMARY KEY,
+     name         TEXT NOT NULL,
+     parser       TEXT NOT NULL,          -- registry id: ical, html, escribe, granicus
+     config       TEXT NOT NULL,          -- JSON, as validated by the parser
+     slug_prefix  TEXT NOT NULL,          -- folder names: <prefix>-<title>-<date>
+     policy       TEXT NOT NULL DEFAULT 'review',   -- auto | review | list_only
+     interval_min INTEGER NOT NULL DEFAULT 60,
+     enabled      INTEGER NOT NULL DEFAULT 1,
+     http_cache   TEXT,                   -- JSON {url: {etag, lastModified}}
+     last_hash    TEXT,                   -- of the last parsed result
+     last_run_at  TEXT,
+     last_ok_at   TEXT,
+     next_run_at  TEXT,
+     failures     INTEGER NOT NULL DEFAULT 0,   -- in a row
+     last_error   TEXT,
+     created_at   TEXT NOT NULL,
+     updated_at   TEXT NOT NULL
+   );
+   CREATE TABLE feed_runs (
+     id          INTEGER PRIMARY KEY AUTOINCREMENT,
+     feed_id     TEXT NOT NULL REFERENCES feeds (id) ON DELETE CASCADE,
+     trigger     TEXT NOT NULL,           -- schedule | manual
+     started_at  TEXT NOT NULL,
+     finished_at TEXT,
+     status      TEXT NOT NULL,           -- running | ok | unchanged | not_modified | error | suspect
+     items       INTEGER,
+     hash        TEXT,
+     changes     INTEGER,
+     error       TEXT
+   );
+   CREATE INDEX feed_runs_feed ON feed_runs (feed_id, id);`,
 ];
 
 export function openDb(file: string): DB {
