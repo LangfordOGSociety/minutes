@@ -95,6 +95,23 @@ captures).
   is pasted into `public.ts` (`/`) and `admin.ts` (`/admin`); `login.ts`.
   Served with a CSP of their script's sha256 (net.ts `pageCsp`), so no
   eval and no inline handlers: attach listeners in the script.
+- `src/site.ts` the public site's model (Phase 3): a meeting row + its
+  jobs + its recording folder -> `PublicMeeting` with a `stage` (upcoming,
+  live, stitching, video_ready, ready, failed, not_recorded, cancelled;
+  `stageOf()`), visible = not hidden / duplicate / pending or rejected
+  review. Public id = the meeting slug (`/m/<slug>` also resolves a
+  capture's folder name, so old `/#recording` links work). Public history
+  = whitelisted change kinds only (announced, date/time moved, cancelled,
+  reinstated, documents), never link changes or review/merge entries.
+  Endpoints (cap `watch`): `/api/meetings?scope=upcoming|past&body&from&
+  to&q&limit&offset` (+ `bodies`), `/api/meetings/:slug` (+ recording,
+  history), `/api/meetings/:slug/status` (polled by the page),
+  `/api/changes`. Pages: `/` (upcoming, past with filters, recent
+  updates), `/m/:slug` (banner per stage, player, live draft, city
+  links/documents, history; title/description injected per meeting).
+  Admin override: `POST /api/admin/meetings/:id/hide|show` (page, listing
+  and /media all 404 while hidden). Public types have no link/feed fields:
+  keep it that way (test/site.test.ts greps the JSON).
 - `src/recordings.ts` recordings on disk, admin view and public view.
   Public = a job made it, its meeting is public and not cancelled, video or
   live. `publicFiles()` is the only list /media serves from (never

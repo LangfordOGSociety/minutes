@@ -379,10 +379,14 @@ export class Sync implements Applier {
     return { meeting: this.meetings.get(m.id)!, effect };
   }
 
-  changes(f: { meetingId?: string; feedId?: string; limit?: number }): MeetingChange[] {
-    const where = f.meetingId ? "meeting_id = ?" : "feed_id = ?";
-    const rows = this.db.prepare(`SELECT * FROM meeting_changes WHERE ${where} ORDER BY id DESC LIMIT ?`)
-      .all(f.meetingId ?? f.feedId ?? "", Math.min(f.limit ?? 100, 500)) as Record<string, unknown>[];
+  changes(f: { meetingId?: string; feedId?: string; kinds?: ChangeKind[]; limit?: number }): MeetingChange[] {
+    const args: (string | number)[] = [];
+    const where: string[] = [];
+    if (f.meetingId) { where.push("meeting_id = ?"); args.push(f.meetingId); }
+    else if (f.feedId) { where.push("feed_id = ?"); args.push(f.feedId); }
+    if (f.kinds?.length) { where.push(`kind IN (${f.kinds.map(() => "?").join(",")})`); args.push(...f.kinds); }
+    const rows = this.db.prepare(`SELECT * FROM meeting_changes ${where.length ? "WHERE " + where.join(" AND ") : ""} ORDER BY id DESC LIMIT ?`)
+      .all(...args, Math.min(f.limit ?? 100, 1000)) as Record<string, unknown>[];
     const p = (s: unknown) => { try { return s ? JSON.parse(String(s)) as Rec : null; } catch { return null; } };
     return rows.map((r) => ({ id: r.id as number, meetingId: r.meeting_id as string, feedId: r.feed_id as string | null, runId: r.run_id as number | null,
       at: r.at as string, kind: r.kind as ChangeKind, before: p(r.before), after: p(r.after), effect: r.effect as string | null }));

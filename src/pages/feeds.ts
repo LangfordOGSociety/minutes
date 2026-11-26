@@ -243,6 +243,7 @@ function meetingRow(m, inQueue) {
   else if (m.review === "rejected") pills.push(el("span", { "class": "pill s-stopped", text: "rejected" }));
   if (m.capture && m.capture.status !== "cancelled") pills.push(pill(m.capture.status));
   if (m.removedAt) pills.push(el("span", { "class": "pill s-failed", text: "gone from feed" }));
+  if (m.visibility === "hidden") pills.push(el("span", { "class": "pill s-stopped", text: "hidden" }));
   var sub = [fmt(m.start), m.body && m.body !== m.title ? m.body : null, m.feedName,
     m.capture ? "capture " + m.capture.slug : null,
     m.duplicateOf ? "same as " + m.duplicateOf.title + " (" + m.duplicateOf.slug + ")" : null].filter(Boolean).join(" · ");
@@ -271,6 +272,10 @@ function meetingRow(m, inQueue) {
         });
         actions.appendChild(sel);
       }
+    }
+    if (!m.duplicateOf) {
+      actions.appendChild(el("button", { text: m.visibility === "hidden" ? "Show publicly" : "Hide", title: "Admin-only override: a hidden meeting is not on the public site",
+        on: { click: act(m.visibility === "hidden" ? "show" : "hide") } }));
     }
     actions.appendChild(el("button", { text: "History", on: { click: function () {
       if (hist.childNodes.length) { fill(hist); return; }
