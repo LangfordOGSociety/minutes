@@ -51,7 +51,10 @@ jobs:
   # fails here (CI=true) instead of skipping.
   test:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    # The apt steps are sometimes slow (ffmpeg alone took 10 minutes once and
+    # the job was cancelled in Chromium's install), and the suite is a few
+    # minutes: leave room.
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v5
