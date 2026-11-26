@@ -24,6 +24,7 @@ const meeting = {
     documents: { type: "array", items: { type: "object", properties: { title: { type: "string" }, type: { type: ["string", "null"] }, url: { type: "string", format: "uri" } } } },
     hasVideo: { type: "boolean" },
     hasTranscript: { type: "boolean" },
+    poster: { type: ["string", "null"], description: "A frame of the recording, a path on this site." },
     duration: { type: ["integer", "null"], description: "Seconds." },
     live: { type: "boolean" },
   },

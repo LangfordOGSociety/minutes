@@ -41,6 +41,8 @@ export interface PublicMeeting {
   documents: PublicDoc[];
   hasVideo: boolean;
   hasTranscript: boolean;
+  /** A poster frame of the recording, as a path on this site (/media/...), when there is one. */
+  poster: string | null;
   duration: number | null;
   live: boolean;
 }
@@ -99,6 +101,7 @@ export function toPublicMeeting(m: Meeting, jobs: Job[], rec: Recording | undefi
     agendaUrl: httpUrl(m.agendaUrl), pageUrl: httpUrl(m.pageUrl), streamUrl: httpUrl(m.streamUrl),
     documents: (m.documents ?? []).flatMap((d) => { const url = httpUrl(d.url); return url ? [{ title: d.title, type: d.type ?? null, url }] : []; }),
     hasVideo: !!rec?.video && stage !== "cancelled", hasTranscript: !!rec?.files.transcript && stage !== "cancelled",
+    poster: rec?.public && rec.files.thumb && stage !== "cancelled" ? `/media/${encodeURIComponent(rec.slug)}/${encodeURIComponent(rec.files.thumb)}` : null,
     duration: rec?.duration ?? null, live: stage === "live",
   };
 }

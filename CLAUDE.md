@@ -236,7 +236,8 @@ captures).
   every recording with a video and none yet, made one at a time at
   startup and every 2 min (`ServeOpts.thumbnails`, off in tests; failures
   are not retried for an hour). Used as the player's `poster`, og:image,
-  JSON-LD thumbnailUrl, and listed by /api/v1/.../files as `thumbnail`.
+  JSON-LD thumbnailUrl, and listed by /api/v1/.../files as `thumbnail`. Meeting lists carry `poster` (a /media path) and the cards show it
+  (lazy, 128 px; 88 px on phones).
 - `src/speakers.ts` speaker names added by hand. `<slug>/speaker-names.json`
   maps the transcriber's label ("Speaker 4", or a Zoom name) to a name;
   APPLIED WHEN SERVING (public /media, /admin/media and the API's file
