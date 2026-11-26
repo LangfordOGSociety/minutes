@@ -229,6 +229,23 @@ const MIGRATIONS: string[] = [
      PRIMARY KEY (day, token_id)
    );
    CREATE INDEX api_usage_daily_user ON api_usage_daily (user_id, day);`,
+
+  // 11: full-text search over transcripts (src/search.ts). transcript_search
+  // holds ~30 s passages; transcript_index records which transcript file
+  // each came from, so a changed or removed file is re-indexed or dropped.
+  // Rebuildable from the files on disk at any time.
+  `CREATE VIRTUAL TABLE transcript_search USING fts5(
+     text, speaker, meeting_id UNINDEXED, rec_slug UNINDEXED, start UNINDEXED,
+     tokenize = 'porter unicode61 remove_diacritics 2'
+   );
+   CREATE TABLE transcript_index (
+     rec_slug   TEXT PRIMARY KEY,
+     meeting_id TEXT NOT NULL,
+     size       INTEGER NOT NULL,
+     mtime_ms   INTEGER NOT NULL,
+     passages   INTEGER NOT NULL,
+     indexed_at TEXT NOT NULL
+   );`,
 ];
 
 export function openDb(file: string): DB {

@@ -231,6 +231,29 @@ describe("public page in Chromium", { skip: skipReason() }, () => {
       await new Promise<void>((r) => { other.closeAllConnections(); other.close(() => r()); });
     }
   });
+  it("search: the home page's box, highlighted passages, a link at the second", async () => {
+    const page = await (await browser.newContext()).newPage();
+    const errors: string[] = [];
+    page.on("pageerror", (e) => errors.push(e.message));
+    await page.goto(base + "/");
+    await page.fill(".hsearch input", "call to order");
+    await page.press(".hsearch input", "Enter");
+    await page.waitForURL(/\/search\?q=call\+to\+order/);
+    await page.waitForSelector("#hits .hit");
+    assert.match(await page.textContent("#summary") ?? "", /1 passage for call to order/);
+    assert.equal(await page.inputValue("#q"), "call to order");
+    assert.deepEqual(await page.$$eval("#hits .hit mark", (els) => els.map((e) => e.textContent?.toLowerCase())), ["call", "to", "order"]);
+    assert.equal(await page.getAttribute("#hits .hit a.t", "href"), "/m/council-a?t=1");
+    assert.match(await page.textContent("#hits .hit .m") ?? "", /at 0:01/);
+    await page.fill("#q", "nonexistentword");
+    await page.press("#q", "Enter");
+    await page.waitForSelector("#hits .empty");
+    assert.match(await page.textContent("#summary") ?? "", /Nothing found for nonexistentword/);
+    // A search is a link: it works from a fresh load with the filter in the URL.
+    await page.goto(base + "/search?q=order&body=Nope");
+    await page.waitForSelector("#hits .empty");
+    assert.deepEqual(errors, []);
+  });
 });
 
 describe("sign-up and reset in Chromium", { skip: skipReason() }, () => {

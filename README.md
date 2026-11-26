@@ -223,6 +223,15 @@ logs. Every response carries security headers; pages get a CSP that allows
 only their own inline script (by hash). URLs over 2 KB, headers over 16 KB,
 bodies over 16 KB and requests that take over 30s to arrive are refused.
 
+**Search.** `/search` (and a box on the home page, and `/api/v1/search`)
+finds what was said across every public meeting's transcript: words must
+all appear (the last can be a word start), "quoted phrases" stay together,
+and each result is a ~30 second passage with the matched words
+highlighted, who said it, and a link that opens the meeting at that
+second. Hiding a meeting hides its transcript from search at once. The
+index lives in the database and is rebuilt from the transcript files, so
+nothing needs backing up separately.
+
 **YouTube.** A meeting whose link is a YouTube video or live link
 (`https://www.youtube.com/watch?v=...`, `youtu.be/...`, `/live/...`) is
 recorded from its stream with yt-dlp (no browser, no Xvfb, no login): it

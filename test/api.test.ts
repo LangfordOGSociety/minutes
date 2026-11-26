@@ -347,7 +347,7 @@ describe("CORS and the OpenAPI document", () => {
     const doc = (await get("/api/v1/openapi.json")).json as { openapi: string; paths: Record<string, { get: { operationId: string } }> };
     assert.equal(doc.openapi, "3.1.0");
     assert.deepEqual(Object.keys(doc.paths).sort(), ["/api/v1/changes", "/api/v1/me", "/api/v1/meetings", "/api/v1/meetings/{id}", "/api/v1/meetings/{id}/files",
-      "/api/v1/meetings/{id}/files/{name}", "/api/v1/meetings/{id}/status", "/api/v1/openapi.json"]);
+      "/api/v1/meetings/{id}/files/{name}", "/api/v1/meetings/{id}/status", "/api/v1/openapi.json", "/api/v1/search"].sort());
     for (const p of Object.keys(doc.paths)) {
       const url = p.replace("{id}", "council-a").replace("{name}", "council-a.mp4");
       const r = await get(url);

@@ -103,6 +103,24 @@ export function openApi(server: string): object {
           responses: { 200: { description: "The file" }, 206: { description: "Part of the file (Range)" }, 401: err, 403: err, 404: err, 429: err },
         },
       },
+      "/api/v1/search": {
+        get: {
+          summary: "Search what was said: passages of public transcripts", operationId: "search",
+          description: "Words must all appear (the last may be a prefix); put a phrase in quotes. Results are ~30 second passages, best match first, with the matched words flagged. `url` opens the meeting at that second.",
+          parameters: [
+            { name: "q", in: "query", required: true, schema: { type: "string", maxLength: 200 } },
+            { name: "body", in: "query", schema: { type: "string" } },
+            { name: "from", in: "query", schema: { type: "string", format: "date" } },
+            { name: "to", in: "query", schema: { type: "string", format: "date" } },
+            { name: "limit", in: "query", schema: { type: "integer", minimum: 1, maximum: 50, default: 20 } },
+            { name: "offset", in: "query", schema: { type: "integer", minimum: 0, default: 0 } },
+          ],
+          responses: { 200: ok({ type: "object", properties: { query: { type: "string" }, terms: { type: "array", items: { type: "string" } }, total: { type: "integer" },
+            hits: { type: "array", items: { type: "object", properties: { meeting: { type: "object", properties: { id: { type: "string" }, title: { type: "string" }, body: { type: ["string", "null"] }, start: { type: "string", format: "date-time" } } },
+              t: { type: "integer", description: "Seconds into the video." }, speaker: { type: ["string", "null"] }, url: { type: "string" },
+              parts: { type: "array", description: "The snippet in order; `hit` parts are the matched words.", items: { type: "object", properties: { text: { type: "string" }, hit: { type: "boolean" } } } } } } } } }) },
+        },
+      },
       "/api/v1/changes": {
         get: {
           summary: "Recent changes: announcements, moves, cancellations, new documents", operationId: "listChanges",
@@ -168,6 +186,7 @@ td:first-child { white-space: nowrap; }
 <tr><td><code>/api/v1/meetings/{id}/status</code></td><td>Stage (<code>upcoming</code>, <code>live</code>, <code>stitching</code>, <code>video_ready</code>, <code>ready</code>, <code>failed</code>, <code>not_recorded</code>, <code>cancelled</code>) and transcription progress. Small enough to poll.</td></tr>
 <tr><td><code>/api/v1/meetings/{id}/files</code></td><td>The recording's files: video, subtitles (VTT, SRT), transcript (text, JSON), Zoom captions.</td></tr>
 <tr><td><code>/api/v1/meetings/{id}/files/{name}</code></td><td><b>Download</b> (token with the <code>download</code> scope). Supports <code>Range</code>.</td></tr>
+<tr><td><code>/api/v1/search</code></td><td>Search every public transcript: <code>q</code> (words must all appear; "quoted phrase"), <code>body</code>, <code>from</code>, <code>to</code>, <code>limit</code>, <code>offset</code>. Returns passages with the matched words flagged and a <code>url</code> that opens the meeting at that second.</td></tr>
 <tr><td><code>/api/v1/changes</code></td><td>Recent changes across meetings.</td></tr>
 <tr><td><code>/api/v1/me</code></td><td>Check your token: label, scopes, expiry.</td></tr>
 </table>

@@ -169,6 +169,20 @@ captures).
   overrides the per-token one. Token buckets paced through a Transform in
   `serveFile`, so Range works and usage counts what was written; /media
   (playback) is never throttled.
+- `src/search.ts` public transcript search (migration 11: FTS5
+  `transcript_search` of ~30 s passages cut at speaker changes, porter +
+  unicode61, plus `transcript_index` of each file's size/mtime so changed
+  or removed transcripts are re-indexed/dropped; rebuildable from the
+  files). Everything is indexed, but WHO may see a hit is decided at query
+  time by the meeting ids serve.ts passes (public, recording public,
+  transcript present, body/date filters), so hiding a meeting hides its
+  words at once. User text is NEVER FTS syntax: `parseQuery` extracts
+  words and "phrases" and quotes each (AND/OR/NEAR/col: are plain words;
+  last word is a prefix; 8 terms max). `/api/search` and `/api/v1/search`
+  (`q body from to limit offset`) -> passages with `parts` (hit flags, no
+  markup), `t` seconds and `url` = `/m/<slug>?t=<s>`; `/search` page; a
+  search box on `/`. Index sync: at start, every 2 min, and on a search
+  if >30 s old (`App.syncSearch`). node:sqlite FTS5 verified on Node 24.
 - `src/recordings.ts` recordings on disk, admin view and public view.
   Public = a job made it, its meeting is public and not cancelled, video or
   live. `publicFiles()` is the only list /media serves from (never

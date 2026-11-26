@@ -9,6 +9,8 @@
  *   GET    /api/meetings             ?scope=upcoming|past &body &from &to &q &limit &offset
  *   GET    /api/meetings/:slug       detail + recording + public history; /status is polled
  *   GET    /api/changes              recent announcements, moves, cancellations, documents
+ *   GET    /search                   search every public transcript (pages/search.ts)
+ *   GET    /api/search               ?q= &body &from &to &limit &offset: passages with highlighted snippets and a link at the second
  *   GET    /api/recordings           published recordings, public fields only
  *   GET    /media/:slug/:file        a published recording's video, subtitles, transcript, live draft
  *   GET    /api/status?within=45     busy: a capture running or due (the deploy guard); counts only
@@ -110,6 +112,8 @@ import { FILE_RE, listRecordings, publicFiles, toPublic } from "./recordings.js"
 import { SessionKeeper, type KeeperOpts } from "./session.js";
 import { API_DOCS_PAGE, openApi } from "./apidocs.js";
 import { Tokens, TokenError, activeToken, type ApiToken } from "./tokens.js";
+import { Search } from "./search.js";
+import { SEARCH_PAGE } from "./pages/search.js";
 import { SLUG_RE, logger, notify } from "./util.js";
 
 const log = logger("web");
@@ -152,7 +156,7 @@ const MAX_URL = 2048;
 
 /** Public read-only endpoints other sites may call from a browser (no cookies are involved: tokens go in a header). */
 const CORS_EXPOSE = "Content-Length, Content-Range, Accept-Ranges, Retry-After, WWW-Authenticate";
-const corsPath = (p: string[]) => (p[0] === "api" && (p[1] === "v1" || p[1] === "meetings" || p[1] === "changes")) || p[0] === "media" || p[0] === "oembed";
+const corsPath = (p: string[]) => (p[0] === "api" && (p[1] === "v1" || p[1] === "meetings" || p[1] === "changes" || p[1] === "search")) || p[0] === "media" || p[0] === "oembed";
 function openCors(res: http.ServerResponse): void {
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Expose-Headers", CORS_EXPOSE);
@@ -317,6 +321,9 @@ export interface App {
   sched: Scheduler;
   audit: Audit;
   tokens: Tokens;
+  search: Search;
+  /** Re-read transcripts into the search index now (it also runs by itself). */
+  syncSearch(force?: boolean): void;
   /** Stop timers and captures, close the database. */
   close(): Promise<void>;
 }
@@ -327,6 +334,7 @@ export function createApp(o: ServeOpts, entry: string): App {
   const accounts = new Accounts(db);
   const audit = new Audit(db);
   const tokens = new Tokens(db);
+  const search = new Search(db);
   const throttle = new Throttle({ globalBps: o.downloadBps, tokenBps: o.tokenDownloadBps });
   const proxies = new Proxies(o.trustedProxies);
   const cookieName = o.secureCookie ? "__Host-minutes_session" : "minutes_session";
@@ -396,14 +404,30 @@ export function createApp(o: ServeOpts, entry: string): App {
     log.warn("no BACKUP_DIR: nightly backups are off");
   }
 
-  const pages = Object.fromEntries(Object.entries({ public: PUBLIC_PAGE, admin: ADMIN_PAGE, login: LOGIN_PAGE, feeds: FEEDS_PAGE, meeting: MEETING_PAGE, embed: EMBED_PAGE }).map(([k, html]) => {
+  const pages = Object.fromEntries(Object.entries({ public: PUBLIC_PAGE, admin: ADMIN_PAGE, login: LOGIN_PAGE, feeds: FEEDS_PAGE, meeting: MEETING_PAGE, embed: EMBED_PAGE, search: SEARCH_PAGE }).map(([k, html]) => {
     const body = html.replace("__TZ__", JSON.stringify(o.tz));
     return [k, { body, csp: pageCsp(body) }];
-  })) as Record<"public" | "admin" | "login" | "feeds" | "meeting" | "embed", { body: string; csp: string }>;
+  })) as Record<"public" | "admin" | "login" | "feeds" | "meeting" | "embed" | "search", { body: string; csp: string }>;
   const sendPage = (res: http.ServerResponse, p: { body: string; csp: string }) =>
     send(res, 200, p.body, { "Content-Type": "text/html; charset=utf-8", "Content-Security-Policy": p.csp });
 
   const publicRecordings = () => listRecordings(o.out, sched, o.tz).filter((r) => r.public).map(toPublic);
+
+  /** Bring the transcript search index in step with the files on disk (cheap when nothing changed). */
+  let searchSyncedAt = 0;
+  const syncSearch = (force = false) => {
+    if (!force && Date.now() - searchSyncedAt < 30_000) return;
+    searchSyncedAt = Date.now();
+    try {
+      const items = sched.list().map((j) => ({ recSlug: j.slug, meetingId: j.meetingRef, file: path.join(o.out, j.slug, `${j.slug}.transcript.json`) }))
+        .filter((i) => existsSync(i.file));
+      const r = search.sync(items);
+      if (r.indexed || r.removed) log.info(`transcript search: indexed ${r.indexed}, dropped ${r.removed}`);
+    } catch (e) { log.warn("indexing transcripts for search failed", e); }
+  };
+  const searchTimer = setInterval(() => syncSearch(true), 120_000);
+  searchTimer.unref();
+  setImmediate(() => syncSearch(true));
 
   /** Every meeting the public may see, with what became of it (see site.ts). */
   const publicSite = (now = Date.now()) => {
@@ -545,7 +569,7 @@ export function createApp(o: ServeOpts, entry: string): App {
           res.setHeader("Content-Disposition", `attachment; filename="${name}"`);
           return serveFile(req, res, path.join(o.out, e.rec.slug, name), throttle.buckets(tokenAuth.t.id, tokenAuth.t.limits?.downloadBps));
         }
-        if (!((seg[0] === "meetings" && seg.length >= 1 && seg.length <= 3) || (seg[0] === "changes" && seg.length === 1))) return send(res, 404, { error: "no such endpoint" });
+        if (!((seg[0] === "meetings" && seg.length >= 1 && seg.length <= 3) || (seg[0] === "changes" && seg.length === 1) || (seg[0] === "search" && seg.length === 1))) return send(res, 404, { error: "no such endpoint" });
       }
 
       // --- pages ---
@@ -554,6 +578,7 @@ export function createApp(o: ServeOpts, entry: string): App {
         return send(res, 200, page, { "Content-Type": "text/html; charset=utf-8", "Content-Security-Policy": pageCsp(page), "Cache-Control": "no-cache" });
       }
       if (read && url.pathname === "/") return sendPage(res, pages.public);
+      if (read && url.pathname === "/search") return sendPage(res, pages.search);
       if (read && (url.pathname === "/login" || url.pathname === "/account")) return sendPage(res, pages.login);
       if (read && url.pathname === "/admin/feeds") {
         return allow("admin.view", true) ? sendPage(res, pages.feeds) : undefined;
@@ -572,6 +597,30 @@ export function createApp(o: ServeOpts, entry: string): App {
       if (parts[0] === "api" && parts[1] === "recordings" && parts.length === 2 && read) {
         if (!allow("watch")) return;
         return send(res, 200, publicRecordings());
+      }
+      if (rp[0] === "api" && rp[1] === "search" && rp.length === 2 && read) {
+        // "What did council say about X": transcripts of the meetings the public can see (search.ts).
+        if (!allow("watch")) return;
+        openCors(res);
+        const sp = url.searchParams;
+        const q = (sp.get("q") ?? "").slice(0, 200);
+        const day = (s: string | null, plus = 0) => {
+          const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s ?? "");
+          return m ? zonedTime(o.tz, +m[1], +m[2], +m[3] + plus) : undefined;
+        };
+        const from = day(sp.get("from")), to = day(sp.get("to"), 1), body = sp.get("body")?.slice(0, 100).toLowerCase();
+        const int = (s: string | null, d: number, lo: number, hi: number) => Math.min(Math.max(Number.parseInt(s ?? "", 10) || d, lo), hi);
+        syncSearch();
+        const site = publicSite();
+        const eligible = site.entries.filter((e) => e.rec?.public && e.rec.files.transcript
+          && (!body || (e.m.body ?? "").toLowerCase() === body) && (!from || Date.parse(e.m.start) >= from.getTime()) && (!to || Date.parse(e.m.start) < to.getTime()));
+        const byId = new Map(eligible.map((e) => [e.m.id, e]));
+        const r = search.search(q, { meetingIds: [...byId.keys()], limit: int(sp.get("limit"), 20, 1, 50), offset: Math.max(Number.parseInt(sp.get("offset") ?? "", 10) || 0, 0) });
+        return send(res, 200, { query: q, terms: r.terms, total: r.total, hits: r.hits.flatMap((h) => {
+          const e = byId.get(h.meetingId);
+          return e ? [{ meeting: { id: e.p.id, title: e.p.title, body: e.p.body, start: e.p.start }, t: Math.floor(h.start), speaker: h.speaker || null, parts: h.parts,
+            url: `/m/${encodeURIComponent(e.p.id)}?t=${Math.floor(h.start)}` }] : [];
+        }) });
       }
       if (rp[0] === "api" && rp[1] === "meetings" && read && rp.length >= 2 && rp.length <= 4) {
         if (!allow("watch")) return;
@@ -1082,11 +1131,12 @@ export function createApp(o: ServeOpts, entry: string): App {
   });
 
   return {
-    server, accounts, sched, audit, tokens,
+    server, accounts, sched, audit, tokens, search, syncSearch,
     async close() {
       server.close();
       server.closeAllConnections();
       clearInterval(pruneTimer);
+      clearInterval(searchTimer);
       keeper.stop();
       backups?.stop();
       poller.stop();
