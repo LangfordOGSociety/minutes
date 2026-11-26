@@ -68,8 +68,16 @@ runs agree on 98.9%).
 Every push to `main` deploys, the same way as belay:
 
 1. `ci.yml` `check` (TypeScript build, shell/Python syntax, kustomize
-   render) and `images` (both images to `ghcr.io/langfordogsociety/`, tag
-   `sha-<commit>`, amd64, layer cache in `buildcache` tags) run side by side.
+   render) and `images` (`minutes`, `minutes-transcriber` and
+   `minutes-transcriber-rocm` to `ghcr.io/langfordogsociety/`, tag
+   `sha-<commit>`, amd64) run side by side. Images build on the persistent
+   BuildKit daemon `minutes-buildkitd` (homelab
+   `infra/actions-runner-controller/minutes-buildkitd.yaml`), which keeps
+   every layer between runs; if it's unreachable, buildx in the runner's
+   dind with the GHCR `buildcache` tags (slower: it pulls cached layers
+   first). The Dockerfiles put what a code push changes in `COPY --link`
+   layers on top, so a push rebuilds only the TypeScript / the
+   transcriber's .py files.
 2. Once both pass, `release.yml` retags the images `main`, then
    **waits until no capture is running or due within 45 min**
    (`scripts/deploy-guard.sh`, up to 4h), then

@@ -6,7 +6,8 @@ RUN apt-get update \
  && rm -rf /var/lib/apt/lists/*
 
 # Same uid as pwuser in the capture image, so both can write recordings/.
-RUN useradd -m -u 1000 app
+RUN useradd -m -u 1000 app \
+ && mkdir -p /models/hf /models/torch /models/cache && chown -R app:app /models
 WORKDIR /app
 
 COPY requirements.txt ./
@@ -16,10 +17,10 @@ COPY requirements.txt ./
 RUN pip install --no-cache-dir --extra-index-url https://download.pytorch.org/whl/cpu -r requirements.txt \
  && pip uninstall -y triton
 
-COPY transcribe.py ./
-COPY vocab/ ./vocab/
-# Owned by app so a fresh named volume inherits writable dirs.
-RUN mkdir -p /models/hf /models/torch /models/cache && chown -R app:app /models
+# --link, after every RUN: a code change adds a small layer on top without
+# needing (or pulling) the pip layers below it.
+COPY --link transcribe.py bench.py ./
+COPY --link vocab/ ./vocab/
 USER app
 
 # Model weights are cached on a volume so they download once.

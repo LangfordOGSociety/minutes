@@ -19,6 +19,18 @@ RUN set -e; \
     rm -f "$f" SHASUMS256.txt; \
     rm -rf /var/lib/apt/lists/*
 
+# Layer order is for CI speed (minutes-buildkitd, or a cold dind pulling
+# cached layers from GHCR): what changes on a code push (src -> dist) is
+# only copied, with --link, on top of layers that don't depend on it, so a
+# push rebuilds the TypeScript and nothing else.
+
+# Production dependencies: depend on the lockfile only (not on src).
+FROM base AS deps
+WORKDIR /app
+ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
+COPY package.json package-lock.json ./
+RUN npm ci --omit=dev
+
 FROM base AS build
 WORKDIR /app
 ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
@@ -26,12 +38,12 @@ COPY package.json package-lock.json ./
 RUN npm ci
 COPY tsconfig.json ./
 COPY src ./src
-RUN npm run build && npm prune --omit=dev
+RUN npm run build
 
 FROM base
 WORKDIR /app
 ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
-COPY --from=build /app/node_modules ./node_modules
+COPY --from=deps /app/node_modules ./node_modules
 # Chromium and the system libraries/fonts it needs, then the capture tools.
 # intel-media-va-driver (Intel iGPU VAAPI) only exists for amd64. On arm64
 # only mesa's VAAPI drivers are installed; x264 is the expected encoder there.
@@ -44,7 +56,8 @@ RUN set -e; \
       xvfb x11-utils pulseaudio pulseaudio-utils ffmpeg \
       mesa-va-drivers $intel; \
     rm -rf /var/lib/apt/lists/* /root/.cache /root/.npm /tmp/*; \
-    useradd -m -u 1000 -s /bin/bash pwuser
+    useradd -m -u 1000 -s /bin/bash pwuser; \
+    mkdir -p /recordings; chown pwuser:pwuser /recordings
 
 # Timezone data for Node's ICU, pinned. Node 20.18 shipped tzdata 2024a,
 # which predates BC's move to permanent daylight time (2026-11-01, UTC-7),
@@ -66,9 +79,10 @@ RUN set -e; \
       | sha256sum -c -
 ENV ICU_TIMEZONE_FILES_DIR=/usr/share/icu-tz
 
-COPY --from=build /app/dist ./dist
-COPY package.json entrypoint.sh ./
-RUN mkdir -p /recordings && chown pwuser:pwuser /recordings
+# --link: these layers don't need the ones below them unpacked, so a code
+# change doesn't pull or rebuild Chromium and friends.
+COPY --link --from=build /app/dist ./dist
+COPY --link package.json entrypoint.sh ./
 
 USER pwuser
 ENV TZ=America/Vancouver \
