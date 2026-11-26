@@ -30,6 +30,10 @@ ${PUBLIC_CSS}
   <span class="me" id="me"></span>
 </header>
 <p class="intro">Public meetings: what's coming up, and video and transcripts of the ones that have happened, usually the same night. Transcripts are machine-made: check the video before quoting.</p>
+<form class="hsearch" action="/search" method="get" role="search">
+  <input name="q" type="search" placeholder="Search what was said at meetings" aria-label="Search transcripts" required maxlength="200">
+  <button type="submit">Search</button>
+</form>
 <main>
   <section>
     <h2>Upcoming</h2>

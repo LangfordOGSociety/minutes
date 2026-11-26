@@ -37,7 +37,7 @@ ${PUBLIC_CSS}
   <span class="me" id="me"></span>
 </header>
 <main>
-  <p class="crumbs"><a href="/">&larr; All meetings</a></p>
+  <p class="crumbs"><a href="/">&larr; All meetings</a> &middot; <a href="/search">Search transcripts</a></p>
   <section id="head"><div class="empty">Loading...</div></section>
   <section id="player" hidden></section>
   <section id="livebox" hidden></section>

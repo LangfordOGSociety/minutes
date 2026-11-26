@@ -279,6 +279,9 @@ main { max-width: 1100px; margin: 0 auto; padding: 12px 24px 40px; }
 @media (max-width: 900px) { main { padding: 12px 16px 32px; } }
 .intro { color: var(--muted); margin: 0 auto 4px; font-size: 14px; max-width: 1100px; padding: 0 24px; }
 @media (max-width: 900px) { .intro { padding: 0 16px; } }
+.hsearch { max-width: 1100px; margin: 10px auto 0; padding: 0 24px; display: flex; gap: 8px; }
+.hsearch input { flex: 1; min-width: 0; }
+@media (max-width: 900px) { .hsearch { padding: 0 16px; } }
 .mcard { display: block; text-decoration: none; color: inherit; border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; }
 .mcard:hover, .mcard:focus-visible { border-color: var(--accent); outline: none; }
 .mcard .t { font-weight: 600; overflow-wrap: anywhere; }
