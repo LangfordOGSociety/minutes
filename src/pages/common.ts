@@ -282,7 +282,10 @@ main { max-width: 1100px; margin: 0 auto; padding: 12px 24px 40px; }
 .hsearch { max-width: 1100px; margin: 10px auto 0; padding: 0 24px; display: flex; gap: 8px; }
 .hsearch input { flex: 1; min-width: 0; }
 @media (max-width: 900px) { .hsearch { padding: 0 16px; } }
-.mcard { display: block; text-decoration: none; color: inherit; border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; }
+.mcard { display: flex; gap: 12px; align-items: flex-start; text-decoration: none; color: inherit; border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; }
+.mcard .p { flex: none; width: 128px; aspect-ratio: 16 / 9; object-fit: cover; border-radius: 5px; background: var(--bg); border: 1px solid var(--line); }
+.mcard .b { min-width: 0; flex: 1; }
+@media (max-width: 480px) { .mcard .p { width: 88px; } }
 .mcard:hover, .mcard:focus-visible { border-color: var(--accent); outline: none; }
 .mcard .t { font-weight: 600; overflow-wrap: anywhere; }
 .mcard .s { color: var(--muted); font-size: 13px; margin-top: 2px; overflow-wrap: anywhere; }
@@ -355,7 +358,8 @@ function stagePill(stage) {
 function meetingCard(m) {
   var sub = [whenOf(m.start), m.body && m.body !== m.title ? m.body : null, m.duration ? hms(m.duration) : null].filter(Boolean).join(" · ");
   return el("a", { "class": "mcard", href: "/m/" + encodeURIComponent(m.id) },
-    el("div", { "class": "t" }, stagePill(m.stage), m.title), el("div", { "class": "s", text: sub }));
+    m.poster ? el("img", { "class": "p", src: m.poster, alt: "", loading: "lazy", width: "128", height: "72" }) : null,
+    el("div", { "class": "b" }, el("div", { "class": "t" }, stagePill(m.stage), m.title), el("div", { "class": "s", text: sub })));
 }
 
 function changeText(c) {

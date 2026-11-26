@@ -153,6 +153,11 @@ describe("poster images", { skip: ffmpeg }, () => {
     const v = JSON.parse(/<script type="application\/ld\+json">([\s\S]*?)<\/script>/.exec(html)![1]);
     assert.equal(v.thumbnailUrl, "https://minutes.example.org/media/council-a/council-a.jpg");
     assert.ok((await pub.get("/api/v1/meetings/council-a/files")).json.some((f: { kind: string; name: string }) => f.kind === "thumbnail" && f.name === "council-a.jpg"));
+    // The meeting list carries it too (the cards show it); hidden and failed ones have none.
+    const list = (await pub.get("/api/meetings?scope=past&limit=50")).json.meetings as { id: string; poster: string | null }[];
+    assert.equal(list.find((m) => m.id === "council-a")!.poster, "/media/council-a/council-a.jpg");
+    assert.equal((await pub.get("/api/v1/meetings/council-a")).json.poster, "/media/council-a/council-a.jpg");
+    assert.equal((await pub.get("/api/meetings?scope=upcoming")).json.meetings.every((m: { poster: unknown }) => m.poster === null), true);
     assert.equal(await app.syncThumbs(), 0);                                         // nothing left to do
     // Hidden or unpublished recordings' posters aren't public either.
     assert.equal((await pub.get("/media/hidden-b/hidden-b.jpg")).status, 404);

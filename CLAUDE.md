@@ -196,7 +196,8 @@ captures).
   every recording with a video and none yet, made one at a time at
   startup and every 2 min (`ServeOpts.thumbnails`, off in tests; failures
   are not retried for an hour). Used as the player's `poster`, og:image,
-  JSON-LD thumbnailUrl, and listed by /api/v1/.../files as `thumbnail`.
+  JSON-LD thumbnailUrl, and listed by /api/v1/.../files as `thumbnail`. Meeting lists carry `poster` (a /media path) and the cards show it
+  (lazy, 128 px; 88 px on phones).
 - `src/recordings.ts` recordings on disk, admin view and public view.
   Public = a job made it, its meeting is public and not cancelled, video or
   live. `publicFiles()` is the only list /media serves from (never
