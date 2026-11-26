@@ -56,9 +56,9 @@ label.check[hidden] { display: none; }
     <section>
       <h2 id="formtitle">Schedule a meeting</h2>
       <form id="form" autocomplete="off">
-        <label for="link">Zoom link or meeting ID</label>
-        <input id="link" name="link" required placeholder="https://us06web.zoom.us/j/123456789?pwd=...">
-        <small>Only an ID and passcode? Use https://zoom.us/j/ID?pwd=PASSCODE</small>
+        <label for="link">Meeting link (Zoom or YouTube) or Zoom ID</label>
+        <input id="link" name="link" required placeholder="https://us06web.zoom.us/j/123456789?pwd=... or https://www.youtube.com/watch?v=...">
+        <small>Only a Zoom ID and passcode? Use https://zoom.us/j/ID?pwd=PASSCODE. A YouTube live stream is recorded from its stream, not a browser.</small>
         <label for="start">Start time <small id="tzlabel"></small></label>
         <input id="start" name="start" type="datetime-local" required>
         <label for="slug">Name <small>(folder and file name, optional)</small></label>
@@ -276,7 +276,7 @@ function setMode(job) {
   document.getElementById("submitbtn").textContent = job ? "Save changes" : "Schedule capture";
   document.getElementById("editcancel").hidden = !job;
   f.link.required = !job;
-  f.link.placeholder = job ? "Leave blank to keep meeting " + job.meetingId : "https://us06web.zoom.us/j/123456789?pwd=...";
+  f.link.placeholder = job ? "Leave blank to keep meeting " + job.meetingId : "https://us06web.zoom.us/j/123456789?pwd=... or a YouTube link";
   // Like the link, a saved email never comes back to the page.
   f.email.placeholder = job && job.hasEmail ? "Leave blank to keep the saved email" : "Only used if Zoom asks";
   document.getElementById("clearemailrow").hidden = !(job && job.hasEmail);

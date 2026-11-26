@@ -223,6 +223,17 @@ logs. Every response carries security headers; pages get a CSP that allows
 only their own inline script (by hash). URLs over 2 KB, headers over 16 KB,
 bodies over 16 KB and requests that take over 30s to arrive are refused.
 
+**YouTube.** A meeting whose link is a YouTube video or live link
+(`https://www.youtube.com/watch?v=...`, `youtu.be/...`, `/live/...`) is
+recorded from its stream with yt-dlp (no browser, no Xvfb, no login): it
+waits while the stream is upcoming, records while it's live (a late start
+still gets the beginning of the stream, as far back as YouTube keeps it)
+and stops when it ends. Schedule it like any meeting on `/admin`, or let a
+feed find the link. yt-dlp is a pinned binary in the image
+(`YT_DLP_VERSION` in the Dockerfile); when YouTube changes and captures
+start failing, bumping it is the first thing to try. `YOUTUBE_MAX_HEIGHT`
+(default 1080) caps the quality.
+
 **API.** `/api/v1` (docs at `/api/docs`, OpenAPI at
 `/api/v1/openapi.json`) lists meetings, their status, history and files with
 no token. Downloading files needs a token: people with a confirmed email

@@ -1,0 +1,124 @@
+{
+ "id": "4xDzrJKXOOY",
+ "title": "synthwave radio \ud83c\udf0c beats to chill/game to 2026-11-25 23:24",
+ "live_status": "post_live",
+ "is_live": false,
+ "was_live": false,
+ "release_timestamp": 1688333422,
+ "timestamp": 1688332651,
+ "availability": "public",
+ "requested_formats": [
+  {
+   "format_id": "270",
+   "protocol": "m3u8_native",
+   "vcodec": "avc1.640028",
+   "acodec": "none",
+   "height": 1080,
+   "width": 1920,
+   "fps": 30.0,
+   "ext": "mp4",
+   "url": "https://manifest.googlevideo.com/api/manifest/hls_playlist/id/270.m3u8"
+  },
+  {
+   "format_id": "234",
+   "protocol": "m3u8_native",
+   "vcodec": "none",
+   "acodec": null,
+   "height": null,
+   "width": null,
+   "fps": null,
+   "ext": "mp4",
+   "url": "https://manifest.googlevideo.com/api/manifest/hls_playlist/id/234.m3u8"
+  }
+ ],
+ "formats": [
+  {
+   "format_id": "233",
+   "protocol": "m3u8_native",
+   "vcodec": "none",
+   "acodec": null,
+   "height": null,
+   "width": null,
+   "fps": null,
+   "ext": "mp4",
+   "url": "https://manifest.googlevideo.com/api/manifest/hls_playlist/id/233.m3u8"
+  },
+  {
+   "format_id": "234",
+   "protocol": "m3u8_native",
+   "vcodec": "none",
+   "acodec": null,
+   "height": null,
+   "width": null,
+   "fps": null,
+   "ext": "mp4",
+   "url": "https://manifest.googlevideo.com/api/manifest/hls_playlist/id/234.m3u8"
+  },
+  {
+   "format_id": "269",
+   "protocol": "m3u8_native",
+   "vcodec": "avc1.42C00B",
+   "acodec": "none",
+   "height": 144,
+   "width": 256,
+   "fps": 15.0,
+   "ext": "mp4",
+   "url": "https://manifest.googlevideo.com/api/manifest/hls_playlist/id/269.m3u8"
+  },
+  {
+   "format_id": "229",
+   "protocol": "m3u8_native",
+   "vcodec": "avc1.4D4015",
+   "acodec": "none",
+   "height": 240,
+   "width": 426,
+   "fps": 30.0,
+   "ext": "mp4",
+   "url": "https://manifest.googlevideo.com/api/manifest/hls_playlist/id/229.m3u8"
+  },
+  {
+   "format_id": "230",
+   "protocol": "m3u8_native",
+   "vcodec": "avc1.4D401E",
+   "acodec": "none",
+   "height": 360,
+   "width": 640,
+   "fps": 30.0,
+   "ext": "mp4",
+   "url": "https://manifest.googlevideo.com/api/manifest/hls_playlist/id/230.m3u8"
+  },
+  {
+   "format_id": "231",
+   "protocol": "m3u8_native",
+   "vcodec": "avc1.4D401F",
+   "acodec": "none",
+   "height": 480,
+   "width": 854,
+   "fps": 30.0,
+   "ext": "mp4",
+   "url": "https://manifest.googlevideo.com/api/manifest/hls_playlist/id/231.m3u8"
+  },
+  {
+   "format_id": "232",
+   "protocol": "m3u8_native",
+   "vcodec": "avc1.4D401F",
+   "acodec": "none",
+   "height": 720,
+   "width": 1280,
+   "fps": 30.0,
+   "ext": "mp4",
+   "url": "https://manifest.googlevideo.com/api/manifest/hls_playlist/id/232.m3u8"
+  },
+  {
+   "format_id": "270",
+   "protocol": "m3u8_native",
+   "vcodec": "avc1.640028",
+   "acodec": "none",
+   "height": 1080,
+   "width": 1920,
+   "fps": 30.0,
+   "ext": "mp4",
+   "url": "https://manifest.googlevideo.com/api/manifest/hls_playlist/id/270.m3u8"
+  }
+ ]
+}
