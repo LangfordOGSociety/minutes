@@ -187,6 +187,13 @@ captures).
   Sign-up/verify/reset (serve.ts) never reveal whether an email has an
   account; codes are 6 digits, hashed, single use, 5 tries (accounts.ts
   `issueCode`/`useCode`). `capsFor()` withholds tokens until verified.
+- `docs/extending/feed-parsers.md` and `platforms.md`: how to add a feed
+  parser (interface, externalId and timezone rules, fixtures, checklist)
+  or a meeting platform (interface, State mapping, MARKERS convention,
+  media-safety checklist, what must be verified live). `minutes feed
+  parsers` / `minutes feed test <parser> --config ... --fixture|--route`
+  (`src/feeds/cli.ts`, `fixture.ts`) runs a parser offline from saved
+  files; `feedContext({ fixtures })` does the same in tests.
 - `src/feeds/` where meetings are found (Phase 2). `types.ts`: a
   FeedParser (id, label, fields for the admin form, validate, host, fetch)
   fetches and parses only, never touches the DB or jobs. `context.ts`: the
@@ -213,6 +220,18 @@ captures).
   2026-11-24 council had one and went ahead), link from upcoming meetings'
   HTML agenda (Langford: "Enter the Meeting ID: 843 4290 9811", webinar,
   no passcode). Fixtures saved from Langford in test/fixtures/feeds/escribe.
+  `youtube` (#21): a channel's /streams tab (`ytInitialData`: current
+  `lockupViewModel` layout, old `videoRenderer` still read) for videos
+  that are live ("N watching") or upcoming ("N waiting", "Scheduled
+  for"), then each candidate's watch page (`ytInitialPlayerResponse`) for
+  the real start (`liveBroadcastDetails.startTimestamp` / offline-slate
+  epoch). The tab's "Scheduled for 11/29/26, 7:25 AM" is in the
+  REQUESTER's timezone: never used for the time. link = watch URL (the
+  YouTube platform takes it), externalId = video id; live streams
+  started over 24 h ago (24/7 loops) are skipped; titleFilter, maxVideos.
+  Fails loudly when YouTube's page data isn't there (consent page, layout
+  change). Fixtures: test/fixtures/feeds/youtube (trimmed real pages,
+  2026-11-26).
   `granicus`: ViewPublisher.php?view_id=N, the Upcoming Events table only,
   rows read by content (name = first cell, date = visible text in the
   config timezone: NOT the hidden epoch span, 3h off on Pittsburgh's
