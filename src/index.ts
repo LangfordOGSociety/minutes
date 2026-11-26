@@ -27,6 +27,9 @@ const USAGE = `usage: minutes --link <zoom link or id> --start <ISO datetime> [o
        minutes user disable|enable <email>                  disable also signs out
        minutes user list
        minutes mail-test <to>                               send a test email (SMTP_URL, MAIL_FROM)
+       minutes feed parsers                                 the built-in feed parsers and their config
+       minutes feed test <parser> --config <json|@file> [--fixture <file>] [--route <part>=<file>]...
+                                                            run a parser and print what it detects (offline with fixtures)
        minutes backup [--out <dir>] [--auth <file>] [--dir <backups>]   back up now
        minutes backup --list | --verify <backup folder>
        minutes restore <backup folder> [--out <dir>] [--auth <file>]   server must be stopped
@@ -257,6 +260,11 @@ if (process.argv[2] === "user") {
     console.error(`user ${cmd} failed: ${(e as Error).message}`);
     process.exit(1);
   }
+}
+
+if (process.argv[2] === "feed") {
+  const { feedCommand } = await import("./feeds/cli.js");
+  process.exit(await feedCommand(process.argv.slice(3)));
 }
 
 if (process.argv[2] === "mail-test") {
