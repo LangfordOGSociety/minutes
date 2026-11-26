@@ -38,7 +38,7 @@
 import { tx, type DB } from "../db.js";
 import type { Scheduler } from "../jobs.js";
 import type { Meeting } from "../meetings.js";
-import { checkLink, platformFor } from "../platforms/registry.js";
+import { checkLink, isArchive, platformFor } from "../platforms/registry.js";
 import { logger, notify } from "../util.js";
 import type { Applier, ApplyResult } from "./poller.js";
 import type { Feed } from "./store.js";
@@ -86,6 +86,8 @@ const DEDUP_LINK_MS = 12 * 3_600_000;
 const TIME_EPS_MS = 60_000;
 /** A meeting this far in the past is history: listed, never captured. */
 const PAST_MS = 60 * 60_000;
+/** An archived video this recent is imported even though its meeting is over. */
+const ARCHIVE_DAYS = 45;
 
 export function slugify(s: string): string {
   return s.normalize("NFKD").replace(/[̀-ͯ]/g, "").toLowerCase()
@@ -112,9 +114,16 @@ export class Sync implements Applier {
     try { return checkLink(d.link).link; } catch { return ""; }
   }
 
+  /** A finished, published video (a Granicus clip) of a meeting from the last 45 days that isn't recorded yet: worth importing even though the meeting is over. */
+  private archiveOk(m: { id?: string; link?: string; start: string }, now: Date): boolean {
+    if (!m.link || !isArchive(m.link) || Date.parse(m.start) < now.getTime() - ARCHIVE_DAYS * 86_400_000) return false;
+    return !m.id || !this.sched.list().some((j) => j.meetingRef === m.id && ["scheduled", "queued", "running", "stopping", "done"].includes(j.status));
+  }
+
   /** May a capture be scheduled for this meeting under this feed's policy? */
-  private wantsCapture(feed: Feed, m: { review?: Meeting["review"]; duplicateOf?: string; status: string; start: string }, now: Date): boolean {
-    if (m.duplicateOf || m.status === "cancelled" || Date.parse(m.start) < now.getTime() - PAST_MS) return false;
+  private wantsCapture(feed: Feed, m: { id?: string; link?: string; review?: Meeting["review"]; duplicateOf?: string; status: string; start: string }, now: Date): boolean {
+    if (m.duplicateOf || m.status === "cancelled") return false;
+    if (Date.parse(m.start) < now.getTime() - PAST_MS && !this.archiveOk(m, now)) return false;
     return feed.policy === "auto" || m.review === "approved";
   }
 
@@ -137,7 +146,8 @@ export class Sync implements Applier {
       const link = this.linkOf(d);
       const ex = byExt.get(d.externalId);
       if (!ex) {
-        const past = d.start.getTime() < now.getTime() - PAST_MS;
+        const archive = !!link && this.archiveOk({ link, start: d.start.toISOString() }, now);
+        const past = !archive && d.start.getTime() < now.getTime() - PAST_MS;
         const dupOf = past ? undefined : this.dupCandidate(feed, d, link);
         const review = !past && !dupOf && !d.cancelled && feed.policy === "review" ? "pending" as const : undefined;
         const p: Planned = { kind: "added", detected: d, dupOf, review, action: "none", effect: "",
@@ -155,7 +165,7 @@ export class Sync implements Applier {
       }
       // Known meeting: what changed?
       const exT = Date.parse(ex.start), dT = d.start.getTime();
-      const capture = this.wantsCapture(feed, ex, now);
+      const capture = this.wantsCapture(feed, { ...ex, link: link || ex.link }, now);   // judged with the link it is about to have
       const active = this.sched.activeJobFor(ex.id);
       if (ex.removedAt) changes.push({ kind: "returned", meeting: ex, action: "none", effect: "back in the feed", before: { removedAt: ex.removedAt } });
       if (Math.abs(exT - dT) > TIME_EPS_MS) {
@@ -335,7 +345,8 @@ export class Sync implements Applier {
     let effect = decision === "approved" ? "approved" : "rejected: never captured";
     this.meetings.save(m);
     if (decision === "approved") {
-      if (!this.sched.activeJobFor(m.id) && m.link && m.status !== "cancelled" && !m.duplicateOf && Date.parse(m.start) > Date.now() - PAST_MS) {
+      if (!this.sched.activeJobFor(m.id) && m.link && m.status !== "cancelled" && !m.duplicateOf
+          && (Date.parse(m.start) > Date.now() - PAST_MS || this.archiveOk(m, new Date()))) {
         effect = `capture ${this.sched.scheduleMeeting(m.id).slug} scheduled`;
       } else if (!m.link) effect = "approved; capture scheduled once a link is published";
     } else {

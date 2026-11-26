@@ -81,6 +81,9 @@ export interface Platform {
   /** The link without its secret parts (e.g. no passcode), safe to show
    *  admins; undefined if there's no such form. */
   publicUrl?(link: string): string | undefined;
+  /** The video is already finished and published (an archive to import), not a meeting to wait for:
+   *  it's captured at once whatever the meeting's date, and ends when it has been read. */
+  isArchive?(link: string): boolean;
   /** A join link found in free text (an agenda, a calendar entry), as a
    *  link this platform accepts, or undefined. For feeds. */
   extractLink?(text: string): string | undefined;

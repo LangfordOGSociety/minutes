@@ -102,7 +102,7 @@ import { Poller, healthOf } from "./feeds/poller.js";
 import { parserById, parsers } from "./feeds/registry.js";
 import { FeedError, Feeds, type Feed } from "./feeds/store.js";
 import { Sync, shownLink } from "./feeds/sync.js";
-import { platformFor as platformOf } from "./platforms/registry.js";
+import { isArchive, platformFor as platformOf } from "./platforms/registry.js";
 import type { Meeting } from "./meetings.js";
 import { ConfigError } from "./feeds/types.js";
 import { FEEDS_PAGE } from "./pages/feeds.js";
@@ -1134,7 +1134,8 @@ export function createApp(o: ServeOpts, entry: string): App {
           if (parts.length === 3 && read) {
             const view = url.searchParams.get("view") ?? "upcoming";
             const now = Date.now(), all = sched.meetings.list();
-            const list = view === "review" ? all.filter((m) => m.review === "pending" && m.status !== "cancelled" && Date.parse(m.start) > now - 3_600_000)
+            // The review queue: waiting meetings still ahead of us, and finished videos (archives) that are only waiting to be imported.
+            const list = view === "review" ? all.filter((m) => m.review === "pending" && m.status !== "cancelled" && (Date.parse(m.start) > now - 3_600_000 || isArchive(m.link)))
               : view === "recent" ? all.filter((m) => Date.parse(m.start) <= now).slice(-50).reverse()
               : all.filter((m) => Date.parse(m.start) > now - 3_600_000);
             return send(res, 200, list.map(adminMeeting));

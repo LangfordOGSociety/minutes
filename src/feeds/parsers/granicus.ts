@@ -17,10 +17,12 @@
  * Past meetings move to the archive tables and aren't read (they're past,
  * so the sync doesn't count them as removed).
  *
- * Saanich streams on Granicus itself, which isn't a capture platform yet:
- * its meetings come with no join link (the stream page is pageUrl), so use
- * the list_only policy until there is one. A join link in an HTML agenda
- * (a Zoom ID, say) is picked up for meetings that have one.
+ * Saanich streams on Granicus itself, and Granicus is now a capture platform
+ * (platforms/granicus.ts): an upcoming row's MediaPlayer event link becomes
+ * the join link when its agenda has no Zoom ID (the live path is NOT verified
+ * live yet: use the review policy), and a Zoom ID in an HTML agenda still wins.
+ * Archived videos are not read here (only the Upcoming table); the PrimeGov
+ * parser imports a finished meeting's published Granicus video.
  */
 import { createHash } from "node:crypto";
 import { findLink } from "../../platforms/registry.js";

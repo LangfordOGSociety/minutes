@@ -239,6 +239,15 @@ a link to the moment. One email per meeting listing every alert that
 matched, up to 10 alerts each, and every email has a link that stops that
 alert without signing in. Existing meetings aren't announced.
 
+**Granicus (Saanich).** A Granicus clip link (an archived meeting,
+`https://<city>.granicus.com/player/clip/<id>`) is imported as a recording:
+schedule it on `/admin` with the meeting's own date as the start and it's
+recorded at once, in minutes, then transcribed like any other. The PrimeGov
+feed does this by itself for finished meetings whose video Granicus has
+published (within 45 days; with the review policy you approve each first).
+Live Granicus events are expected to work the same way as a live stream but
+haven't been tried on a real meeting yet.
+
 **YouTube.** A meeting whose link is a YouTube video or live link
 (`https://www.youtube.com/watch?v=...`, `youtu.be/...`, `/live/...`) is
 recorded from its stream with yt-dlp (no browser, no Xvfb, no login): it

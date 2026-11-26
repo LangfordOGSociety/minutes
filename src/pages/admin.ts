@@ -58,9 +58,9 @@ label.check[hidden] { display: none; }
     <section>
       <h2 id="formtitle">Schedule a meeting</h2>
       <form id="form" autocomplete="off">
-        <label for="link">Meeting link (Zoom or YouTube) or Zoom ID</label>
+        <label for="link">Meeting link (Zoom, YouTube or a Granicus video) or Zoom ID</label>
         <input id="link" name="link" required placeholder="https://us06web.zoom.us/j/123456789?pwd=... or https://www.youtube.com/watch?v=...">
-        <small>Only a Zoom ID and passcode? Use https://zoom.us/j/ID?pwd=PASSCODE. A YouTube live stream is recorded from its stream, not a browser.</small>
+        <small>Only a Zoom ID and passcode? Use https://zoom.us/j/ID?pwd=PASSCODE. A YouTube or Granicus video is recorded from its stream, not a browser. A Granicus <b>clip</b> (an archived meeting, <code>.../player/clip/123</code>) is imported at once: give the meeting's own date as the start.</small>
         <label for="start">Start time <small id="tzlabel"></small></label>
         <input id="start" name="start" type="datetime-local" required>
         <label for="slug">Name <small>(folder and file name, optional)</small></label>
