@@ -198,6 +198,12 @@ password) is gone.
   going stale. It can't sign in for you: when it says *expired*, run
   `minutes login` again (the bar clears on its own a minute later).
   Set `CAPTURE_NOTIFY_URL` (e.g. an ntfy.sh topic) to get a push alert too.
+  The same address also hears about each capture: "Recording started",
+  "Recording finished: ... 151 min" or "Recording problem: ... blocked / never
+  started / failed" (high priority, with what to check), "Not recording yet"
+  when a capture hasn't started 10 minutes after its meeting did, and
+  "Transcript ready" (with the public link) or "Transcription FAILED". Each
+  once, never a meeting link or passcode.
   From the command line: `minutes check-login --auth auth/zoom-auth.json`.
 - **Meetings that ask for an email**: some hosts require an email address
   before Join works. Fill in the form's optional *Email* field for that

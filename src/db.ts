@@ -275,6 +275,12 @@ const MIGRATIONS: string[] = [
   // 13: the mtime of the speaker-names file a transcript was indexed with
   // (0 = none), so naming a speaker re-indexes that transcript (speakers.ts).
   `ALTER TABLE transcript_index ADD COLUMN names_mtime_ms INTEGER NOT NULL DEFAULT 0;`,
+
+  // 14: operator notifications already sent (src/ops.ts), so a restart doesn't repeat them.
+  `CREATE TABLE ops_notified (
+     key TEXT PRIMARY KEY,
+     at  TEXT NOT NULL
+   );`,
 ];
 
 export function openDb(file: string): DB {

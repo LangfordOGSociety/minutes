@@ -58,7 +58,13 @@ export interface Job {
   error?: string;
 }
 
+/** What happened to a capture, for whoever wants to tell the operator (ops.ts). */
+export type JobEvent = { kind: "started" | "finished" | "overdue"; job: Job };
+
 export interface NewJob { link?: unknown; start?: unknown; slug?: unknown; name?: unknown; email?: unknown; clearEmail?: unknown }
+
+/** A capture still not started this long after its meeting's start is worth a message. */
+const OVERDUE_MS = 10 * 60_000;
 
 export interface SchedulerOpts {
   out: string;
@@ -105,6 +111,12 @@ export class Scheduler {
   private activeFile: string;
   private timer?: NodeJS.Timeout;
   private ticking = false;
+  /** Called for a capture starting, finishing, or not starting when it should have. Must not throw (errors are logged). */
+  onEvent: (e: JobEvent) => void = () => {};
+  private overdueSeen = new Set<string>();
+  private emit(kind: JobEvent["kind"], j: Job): void {
+    try { this.onEvent({ kind, job: { ...j } }); } catch (e) { log.warn(`job event ${kind} for ${j.slug} failed`, e); }
+  }
 
   constructor(private o: SchedulerOpts, private db: DB) {
     mkdirSync(o.out, { recursive: true });
@@ -403,6 +415,7 @@ export class Scheduler {
           new Date(j.start).getTime() - this.o.leadMs - 60_000 <= now)
         .sort((a, b) => a.start.localeCompare(b.start));
       for (const j of due) {
+        if (now > new Date(j.start).getTime() + OVERDUE_MS && !this.overdueSeen.has(j.id)) { this.overdueSeen.add(j.id); this.emit("overdue", j); }
         if (this.running.size >= this.o.maxConcurrent) {
           if (j.status !== "queued") {
             j.status = "queued";
@@ -477,6 +490,7 @@ export class Scheduler {
       this.save(j);
       log.error(`${j.slug}: ${j.error}`);
       capLog.end();
+      this.emit("finished", j);
       return;
     }
 
@@ -529,6 +543,7 @@ export class Scheduler {
         if (j.status === "failed" && !j.error) j.error = signal ? `capture killed by ${signal}` : `capture exited ${code}`;
         this.save(j);
         log.info(`${j.slug} finished: ${j.status} (outcome ${j.outcome ?? "?"})`);
+        this.emit("finished", j);
         resolve();
         void this.tick(); // a queued job may be waiting for this slot
       });
@@ -540,6 +555,7 @@ export class Scheduler {
     delete j.error;
     this.save(j);
     log.info(screen ? `launched ${j.slug} on display ${display}, sink ${sink}` : `launched ${j.slug} (${method}, no display)`);
+    this.emit("started", j);
   }
 }
 

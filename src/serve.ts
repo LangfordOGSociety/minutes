@@ -121,6 +121,7 @@ import { Tokens, TokenError, activeToken, type ApiToken } from "./tokens.js";
 import { Search } from "./search.js";
 import { NAMES_FILE, NamesError, applyNames, cleanNames, kindOf, labelsOf, namedFile, readNames, writeNames } from "./speakers.js";
 import { Alerts, AlertError, type Alert } from "./alerts.js";
+import { Ops } from "./ops.js";
 import { STOP_PAGE } from "./pages/stop.js";
 import { Thumbs } from "./thumbs.js";
 import { SEARCH_PAGE } from "./pages/search.js";
@@ -465,9 +466,20 @@ export function createApp(o: ServeOpts, entry: string): App {
     } catch (e) { log.warn("processing alerts failed", e); return 0; }
     finally { alertsBusy = false; }
   };
-  const searchTimer = setInterval(() => syncSearch(true), 120_000);
+  /** Tell the operator (CAPTURE_NOTIFY_URL) about captures and transcripts (ops.ts). */
+  const ops = new Ops(db, {
+    notify: (text, opts) => notify(o.session.notifyUrl, text, opts), site,
+    titleOf: (j) => { const m = sched.meetings.get(j.meetingRef); return m && m.title !== j.slug ? m.title : j.slug; },
+    platformOf: (j) => platformFor(j.link)?.label ?? "The platform",
+  });
+  sched.onEvent = (e) => ops.job(e);
+  const opsTranscripts = () => {
+    if (closed || !o.session.notifyUrl) return;
+    try { ops.transcripts(listRecordings(o.out, sched, o.tz)); } catch (e) { log.warn("checking transcripts for the operator failed", e); }
+  };
+  const searchTimer = setInterval(() => { syncSearch(true); opsTranscripts(); }, 120_000);
   searchTimer.unref();
-  setImmediate(() => syncSearch(true));
+  setImmediate(() => { syncSearch(true); opsTranscripts(); });
 
   /** Poster images: a frame of each recording's video, made one at a time in the background. */
   const thumbs = new Thumbs();
