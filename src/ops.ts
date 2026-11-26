@@ -32,6 +32,7 @@ export function describeOutcome(job: Pick<Job, "status" | "outcome" | "error">, 
     case "email_required": return { text: "the meeting wants an email address to join and none is set", bad: true };
     case "ended_after_interruption": return { text: "it ended after an interruption: check the video for gaps", bad: true };
     case "stopped": return { text: "it was stopped by hand", bad: false };
+    case "archive_failed": return { text: "the archived video couldn't be read (it failed three times)", bad: true };
   }
   if (job.status === "failed") return { text: job.error ? `it failed: ${job.error}` : "it failed", bad: true };
   if (job.status === "stopped") return { text: "it was stopped by hand", bad: false };
