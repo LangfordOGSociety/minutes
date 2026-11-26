@@ -223,6 +223,17 @@ logs. Every response carries security headers; pages get a CSP that allows
 only their own inline script (by hash). URLs over 2 KB, headers over 16 KB,
 bodies over 16 KB and requests that take over 30s to arrive are refused.
 
+**Permalinks and embedding.** Every public meeting has a permanent page,
+`/m/<slug>` (`?t=90` or `?t=1m30s` starts the video there), and
+`/embed/<slug>` is the video on its own for other sites' iframes, with
+`?transcript=1`, `?chapters=1`, `?title=0`, `?t=` and `?theme=light|dark`.
+The meeting page's Share box has the link and the iframe code, and
+`/oembed?url=<meeting link>` serves oEmbed JSON for sites that support
+it. `/embed` is the only page other sites may frame: `EMBED_ORIGINS` limits
+who (`*` by default, since it's public and read-only; `none`; or origins
+like `https://openlangford.ca https://*.openlangford.ca`). Set
+`PUBLIC_URL` so the canonical and preview links are absolute.
+
 ## Feeds: finding meetings automatically
 
 `/admin/feeds` polls a municipality's calendar and keeps its meetings up

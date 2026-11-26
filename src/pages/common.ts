@@ -173,7 +173,10 @@ function transcriptNote(r) {
   return "Transcribing" + (t.progress !== null ? " " + t.progress + "%" : "") + (t.stage ? " (" + t.stage + ")" : "") + "...";
 }
 
-function play(r, base, box, extraLinks) {
+// o (optional): { bare: no title or download links, chapters: false hides
+// the chapter buttons, transcript: false leaves the panel out }.
+function play(r, base, box, extraLinks, o) {
+  o = o || {};
   var src = mediaUrl(base, r.slug, r.video), f = r.files || {};
   var v = el("video", { controls: "", preload: "metadata", src: src, crossorigin: "anonymous" });
   // Subtitles: the Whisper transcript on by default; Zoom's own captions as
@@ -181,6 +184,7 @@ function play(r, base, box, extraLinks) {
   if (f.vtt) v.appendChild(el("track", { kind: "subtitles", srclang: "en", label: "Transcript", src: mediaUrl(base, r.slug, f.vtt), "default": "" }));
   if (f.zoomCaptions) v.appendChild(el("track", { kind: "subtitles", srclang: "en", label: "Zoom captions", src: mediaUrl(base, r.slug, f.zoomCaptions) }));
   var chapters = el("div", { "class": "chapters" });
+  var showChapters = o.chapters !== false && r.chapters.length > 1;
   r.chapters.forEach(function (c) {
     chapters.appendChild(el("button", { text: hms(c.at) + "  " + c.title, on: { click: function () { v.currentTime = c.at; v.play(); } } }));
   });
@@ -191,11 +195,13 @@ function play(r, base, box, extraLinks) {
   (extraLinks || []).forEach(function (a) { links.appendChild(document.createTextNode(" · ")); links.appendChild(a); });
   var tpanel = el("div", { "class": "transcript" });
   fill(box,
-    el("div", { "class": "player-title" }, el("h3", { text: r.title || r.slug }), links),
-    v, r.chapters.length > 1 ? chapters : null, tpanel);
+    o.bare ? null : el("div", { "class": "player-title" }, el("h3", { text: r.title || r.slug }), links),
+    v, showChapters ? chapters : null, o.transcript === false ? null : tpanel);
   box.hidden = false;
+  if (o.transcript === false) return v;
   if (f.transcript) loadTranscript(mediaUrl(base, r.slug, f.transcript), v, tpanel);
   else tpanel.appendChild(el("div", { "class": "hint", text: transcriptNote(r) || "No transcript." }));
+  return v;
 }
 
 function loadTranscript(url, v, box) {
@@ -298,6 +304,14 @@ main { max-width: 1100px; margin: 0 auto; padding: 12px 24px 40px; }
 .docs li { padding: 5px 0; border-bottom: 1px solid var(--line); overflow-wrap: anywhere; }
 .docs li:last-child { border-bottom: 0; }
 .docs .k { color: var(--muted); font-size: 12px; margin-left: 6px; }
+.share-row { display: flex; gap: 8px; flex-wrap: wrap; }
+.share-row input { flex: 1 1 260px; width: auto; min-width: 0; }
+details.embed { margin-top: 12px; }
+details.embed summary { cursor: pointer; font-weight: 600; }
+.opt { display: inline-flex; gap: 6px; align-items: center; font-weight: 400; margin: 8px 14px 0 0; }
+.opt input { width: auto; }
+textarea { width: 100%; margin-top: 8px; font: 12px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; padding: 8px; border: 1px solid var(--line);
+  border-radius: 7px; background: var(--bg); color: var(--ink); resize: vertical; }
 `;
 
 /** Public-site helpers: dates with a year, countdowns, cards, change text. Needs BASE_JS. */
@@ -312,6 +326,16 @@ function until(iso) {
   if (h < 24) return "in " + h + " h" + (m % 60 ? " " + (m % 60) + " min" : "");
   var d = Math.round(m / 1440);
   return "in " + d + (d === 1 ? " day" : " days");
+}
+// ?t=90, ?t=1m30s, ?t=1h2m3s, ?t=1:02:03 -> seconds (0 if absent or not a time).
+function startFrom(search) {
+  var m = /[?&]t=([^&#]*)/.exec(search || "");
+  if (!m) return 0;
+  var s; try { s = decodeURIComponent(m[1]); } catch (e) { return 0; }
+  var n = /^(\d+)(?::(\d+))?(?::(\d+))?$/.exec(s);
+  if (n) { var a = [n[1], n[2], n[3]].filter(function (x) { return x !== undefined; }).map(Number); return a.length === 1 ? a[0] : a.length === 2 ? a[0] * 60 + a[1] : a[0] * 3600 + a[1] * 60 + a[2]; }
+  var u = /^(?:(\d+)h)?(?:(\d+)m)?(?:(\d+)s)?$/.exec(s);
+  return u && s ? (+(u[1] || 0)) * 3600 + (+(u[2] || 0)) * 60 + (+(u[3] || 0)) : 0;
 }
 function safeUrl(u) { return typeof u === "string" && /^https?:[/][/]/i.test(u) ? u : null; }
 function ext(href, text) { return el("a", { href: safeUrl(href) || "#", text: text, target: "_blank", rel: "noopener noreferrer" }); }

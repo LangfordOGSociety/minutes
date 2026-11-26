@@ -76,7 +76,8 @@ import { NightlyBackup, type NightlyOpts } from "./backup.js";
 import { openDb } from "./db.js";
 import { BadRequest, Scheduler, type Job, type SchedulerOpts } from "./jobs.js";
 import type { Mailer } from "./mail.js";
-import { Proxies, SECURITY_HEADERS, pageCsp } from "./net.js";
+import { Proxies, SECURITY_HEADERS, embedAncestors, pageCsp } from "./net.js";
+import { EMBED_PAGE } from "./pages/embed.js";
 import "./feeds/parsers/index.js";
 import { Poller, healthOf } from "./feeds/poller.js";
 import { parserById, parsers } from "./feeds/registry.js";
@@ -111,8 +112,10 @@ export interface ServeOpts extends Omit<SchedulerOpts, "entry"> {
   trustedProxies?: string;
   /** Outgoing mail (mail.ts). Without it, sign-up and password reset are off. */
   mailer?: Mailer | null;
-  /** The site's address, for links in emails. */
+  /** The site's address, for links in emails and in page metadata (canonical, previews, oEmbed). */
   publicUrl?: string;
+  /** Who may frame /embed/<meeting> (net.ts embedAncestors): "*" (default), "none", or origins. */
+  embedOrigins?: string;
   session: Omit<KeeperOpts, "auth" | "out" | "leadMs">;
   /** Nightly backups; null = off. */
   backup: Omit<NightlyOpts, "auth" | "notifyUrl"> | null;
@@ -290,6 +293,7 @@ export function createApp(o: ServeOpts, entry: string): App {
   const codeFailsByIp = new FailureLimiter(30, 15 * 60_000);
   const mailer = o.mailer ?? null;
   const site = (o.publicUrl ?? "").replace(/\/$/, "");
+  const frameAncestors = embedAncestors(o.embedOrigins);
   const prune = () => {
     try {
       accounts.pruneSessions();
@@ -344,10 +348,10 @@ export function createApp(o: ServeOpts, entry: string): App {
     log.warn("no BACKUP_DIR: nightly backups are off");
   }
 
-  const pages = Object.fromEntries(Object.entries({ public: PUBLIC_PAGE, admin: ADMIN_PAGE, login: LOGIN_PAGE, feeds: FEEDS_PAGE, meeting: MEETING_PAGE }).map(([k, html]) => {
+  const pages = Object.fromEntries(Object.entries({ public: PUBLIC_PAGE, admin: ADMIN_PAGE, login: LOGIN_PAGE, feeds: FEEDS_PAGE, meeting: MEETING_PAGE, embed: EMBED_PAGE }).map(([k, html]) => {
     const body = html.replace("__TZ__", JSON.stringify(o.tz));
     return [k, { body, csp: pageCsp(body) }];
-  })) as Record<"public" | "admin" | "login" | "feeds" | "meeting", { body: string; csp: string }>;
+  })) as Record<"public" | "admin" | "login" | "feeds" | "meeting" | "embed", { body: string; csp: string }>;
   const sendPage = (res: http.ServerResponse, p: { body: string; csp: string }) =>
     send(res, 200, p.body, { "Content-Type": "text/html; charset=utf-8", "Content-Security-Policy": p.csp });
 
@@ -493,15 +497,51 @@ export function createApp(o: ServeOpts, entry: string): App {
         });
         return send(res, 200, list.slice(0, limit));
       }
+      // The site's own address: PUBLIC_URL, else what the request says (a plausible Host only).
+      const base = () => {
+        if (site) return site;
+        const host = String(req.headers.host ?? "");
+        return /^[a-z0-9.-]+(:\d{1,5})?$|^\[[0-9a-f:]+\](:\d{1,5})?$/i.test(host) ? `${proxies.https(req) ? "https" : "http"}://${host}` : "";
+      };
+      const esc = (s: string) => s.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
       if (parts[0] === "m" && parts.length === 2 && read) {
         const e = publicSite().find(parts[1]);
         if (!e) return send(res, 404, "not found");
-        // The shell is the same for every meeting; the title and description are filled in for link previews.
-        const esc = (s: string) => s.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
+        // The shell is the same for every meeting; its title, description and
+        // link-preview / permalink / oEmbed tags are filled in per meeting.
         const when = new Intl.DateTimeFormat("en-CA", { timeZone: o.tz, dateStyle: "long" }).format(new Date(e.m.start));
-        const body = pages.meeting.body.replace("__TITLE__", () => esc(`${e.m.title} (${when})`))
-          .replace("__DESC__", () => esc(`${e.m.title}, ${when}: video, transcript and documents.`));
+        const title = `${e.m.title} (${when})`, desc = `${e.m.title}, ${when}: video, transcript and documents.`;
+        const b = base(), self = `${b}/m/${encodeURIComponent(e.m.slug)}`;
+        const head = [
+          `<meta property="og:title" content="${esc(title)}">`, `<meta property="og:description" content="${esc(desc)}">`, `<meta property="og:type" content="video.other">`,
+          ...(b ? [`<link rel="canonical" href="${esc(self)}">`, `<meta property="og:url" content="${esc(self)}">`,
+            `<link rel="alternate" type="application/json+oembed" href="${esc(`${b}/oembed?format=json&url=${encodeURIComponent(self)}`)}" title="${esc(title)}">`] : []),
+        ].join("\n");
+        const body = pages.meeting.body.replace("__TITLE__", () => esc(title)).replace("__DESC__", () => esc(desc)).replace("__HEAD__", () => head);
         return send(res, 200, body, { "Content-Type": "text/html; charset=utf-8", "Content-Security-Policy": pageCsp(body) });
+      }
+      if (parts[0] === "embed" && parts.length === 2 && read) {
+        // The video on its own, for other sites' iframes (embed.ts). The one page that may be framed.
+        const e = publicSite().find(parts[1]);
+        if (!e) return send(res, 404, "not found");
+        res.removeHeader("X-Frame-Options");
+        const body = pages.embed.body.replace("__TITLE__", () => esc(e.m.title)).replace("__SLUG__", () => JSON.stringify(e.m.slug).replace(/</g, "\\u003c"));
+        return send(res, 200, body, { "Content-Type": "text/html; charset=utf-8", "Content-Security-Policy": pageCsp(body, frameAncestors) });
+      }
+      if (parts[0] === "oembed" && parts.length === 1 && read) {
+        // oEmbed (JSON): paste a meeting's link into a site that supports it and get the player.
+        const m = /^\/(?:m|embed)\/([^/]+)\/?$/.exec((() => { try { return new URL(url.searchParams.get("url") ?? "", "http://x").pathname; } catch { return ""; } })());
+        let slug = "";
+        try { slug = m ? decodeURIComponent(m[1]) : ""; } catch { /* bad escape */ }
+        const e = slug ? publicSite().find(slug) : undefined;
+        if (!e) return send(res, 404, { error: "no such meeting" });
+        if ((url.searchParams.get("format") ?? "json") !== "json") return send(res, 501, { error: "only format=json" });
+        const w = Math.min(Math.max(Number.parseInt(url.searchParams.get("maxwidth") ?? "", 10) || 640, 240), 1920);
+        const h = Math.round(w * 9 / 16);
+        const b = base();
+        return send(res, 200, { version: "1.0", type: "video", provider_name: "minutes", provider_url: b, title: e.m.title, width: w, height: h,
+          html: `<iframe src="${esc(`${b}/embed/${encodeURIComponent(e.m.slug)}`)}" width="${w}" height="${h}" frameborder="0" allow="fullscreen" allowfullscreen title="${esc(e.m.title)}"></iframe>` },
+          { "Access-Control-Allow-Origin": "*", "Cache-Control": "no-store" });
       }
       if (parts[0] === "api" && parts[1] === "status" && parts.length === 2 && read) {
         // For the deploy guard (scripts/deploy-guard.sh): is a capture

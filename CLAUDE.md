@@ -109,6 +109,16 @@ captures).
   `/api/changes`. Pages: `/` (upcoming, past with filters, recent
   updates), `/m/:slug` (banner per stage, player, live draft, city
   links/documents, history; title/description injected per meeting).
+  Permalinks: `/m/<slug>` (slug = the meeting's, stable; canonical, Open
+  Graph and oEmbed discovery tags in the head, absolute from PUBLIC_URL
+  else the request's host), `?t=90|1m30s|1:30` starts the video there; the
+  page's Share box has the link, a link at the current time and iframe
+  code. Embed: `/embed/<slug>` (pages/embed.ts) is the video alone for
+  other sites' iframes (`?transcript=1&chapters=1&title=0&t=&theme=`),
+  the ONLY page that may be framed: frame-ancestors from EMBED_ORIGINS
+  (net.ts `embedAncestors`: `*` default, `none`, or origins), X-Frame-
+  Options removed for it only; no sign-in, no admin calls. `/oembed?url=`
+  (JSON, CORS *) for sites that support oEmbed.
   Admin override: `POST /api/admin/meetings/:id/hide|show` (page, listing
   and /media all 404 while hidden). Public types have no link/feed fields:
   keep it that way (test/site.test.ts greps the JSON).

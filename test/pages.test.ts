@@ -4,6 +4,8 @@
  */
 import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
+import http from "node:http";
+import type { AddressInfo } from "node:net";
 import path from "node:path";
 import { after, before, describe, it } from "node:test";
 import { chromium, type Browser } from "playwright";
@@ -158,6 +160,49 @@ describe("public page in Chromium", { skip: skipReason() }, () => {
     assert.ok(!requests.some((p) => p.startsWith("/api/admin") || p.startsWith("/admin")), requests.join(" "));
     // Media 206s for the fake 100-byte video show up as errors; ignore those, and the 404 page.
     assert.deepEqual(errors.filter((e) => !/media|video|MEDIA_ERR|Failed to load resource/i.test(e)), []);
+  });
+
+  it("the share box: permalink, embed code with the chosen options", async () => {
+    const page = await (await browser.newContext()).newPage();
+    await page.goto(base + "/m/council-a?t=5");
+    await page.waitForSelector("#share input[type=text]");
+    assert.equal(await page.inputValue("#share input[type=text]"), base + "/m/council-a");
+    await page.click("#share summary");
+    assert.match(await page.inputValue("#share textarea"), /^<iframe src="http:\/\/127\.0\.0\.1:\d+\/embed\/council-a" width="640" height="360" /);
+    await page.check("#share .opt:has-text('transcript') input");
+    await page.check("#share .opt:has-text('chapters') input");
+    assert.match(await page.inputValue("#share textarea"), /\/embed\/council-a\?transcript=1&chapters=1" width="640" height="640"/);
+    assert.equal(await page.isVisible("#share button:has-text('Copy link at current time')"), true);
+    // Another name for the same meeting (the capture's folder) lands on the permalink.
+    await page.goto(base + "/m/council-a");
+    assert.equal(new URL(page.url()).pathname, "/m/council-a");
+  });
+
+  it("another site can frame /embed/<slug> and play it; the meeting page can't be framed", async () => {
+    // A second origin (another port) standing in for openlangford.ca.
+    const other = http.createServer((req, res) => {
+      res.writeHead(200, { "content-type": "text/html" });
+      res.end(`<!doctype html><title>host</title><iframe id="e" src="${base}/embed/council-a?transcript=1&title=1" width="640" height="560"></iframe>` +
+        `<iframe id="m" src="${base}/m/council-a" width="640" height="300"></iframe>`);
+    });
+    await new Promise<void>((r) => other.listen(0, "127.0.0.1", r));
+    try {
+      const hostUrl = `http://localhost:${(other.address() as AddressInfo).port}/`;   // localhost vs 127.0.0.1: a different site
+      const page = await (await browser.newContext()).newPage();
+      await page.goto(hostUrl);
+      const frame = page.frames().find((f) => f.url().includes("/embed/council-a"))!;
+      await frame.waitForSelector("video");
+      assert.equal(await frame.getAttribute("video", "src"), "/media/council-a/council-a.mp4");
+      await frame.waitForSelector(".tline");
+      assert.match(await frame.textContent(".tline") ?? "", /Call to order\./);
+      assert.equal(await frame.textContent(".tbar a"), "council-a");
+      assert.equal(await frame.getAttribute(".tbar a", "target"), "_blank");
+      // The meeting page refuses to be framed: its frame never gets the page.
+      const blocked = page.frames().find((f) => f.url().includes("/m/council-a"));
+      assert.ok(!blocked || (await blocked.$("#head")) === null, "the meeting page rendered inside another site's frame");
+    } finally {
+      await new Promise<void>((r) => { other.closeAllConnections(); other.close(() => r()); });
+    }
   });
 });
 
