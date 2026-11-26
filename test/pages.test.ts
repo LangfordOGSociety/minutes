@@ -171,7 +171,7 @@ describe("public page in Chromium", { skip: skipReason() }, () => {
     assert.match(await page.inputValue("#share textarea"), /^<iframe src="http:\/\/127\.0\.0\.1:\d+\/embed\/council-a" width="640" height="360" /);
     await page.check("#share .opt:has-text('transcript') input");
     await page.check("#share .opt:has-text('chapters') input");
-    assert.match(await page.inputValue("#share textarea"), /\/embed\/council-a\?transcript=1&chapters=1" width="640" height="640"/);
+    assert.match(await page.inputValue("#share textarea"), /\/embed\/council-a\?transcript=1&amp;chapters=1" width="640" height="640"/);
     assert.equal(await page.isVisible("#share button:has-text('Copy link at current time')"), true);
     // Another name for the same meeting (the capture's folder) lands on the permalink.
     await page.goto(base + "/m/council-a");
