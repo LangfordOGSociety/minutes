@@ -223,6 +223,17 @@ logs. Every response carries security headers; pages get a CSP that allows
 only their own inline script (by hash). URLs over 2 KB, headers over 16 KB,
 bodies over 16 KB and requests that take over 30s to arrive are refused.
 
+**API.** `/api/v1` (docs at `/api/docs`, OpenAPI at
+`/api/v1/openapi.json`) lists meetings, their status, history and files with
+no token. Downloading files needs a token: people with a confirmed email
+make up to five on their account page (shown once; `mnt_...`), and revoke
+them there. Admins see every token and per-user, per-token usage (requests
+and data per day, most-downloaded files) on `/admin`; disabling a user
+revokes their tokens. Reads are open to other sites (CORS). Anything that
+plays in a browser can be saved: tokens are for tracking and fair use of
+bulk access, not for protecting files. There are no rate limits or speed
+throttle yet; the hook for them is in `src/tokens.ts`.
+
 **Permalinks and embedding.** Every public meeting has a permanent page,
 `/m/<slug>` (`?t=90` or `?t=1m30s` starts the video there), and
 `/embed/<slug>` is the video on its own for other sites' iframes, with

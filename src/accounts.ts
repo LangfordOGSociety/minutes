@@ -211,7 +211,11 @@ export class Accounts {
     const now = new Date().toISOString();
     tx(this.db, () => {
       this.db.prepare("UPDATE users SET disabled_at = ?, updated_at = ? WHERE id = ?").run(disabled ? (u.disabled_at ?? now) : null, now, u.id);
-      if (disabled) this.db.prepare("DELETE FROM sessions WHERE user_id = ?").run(u.id);
+      if (disabled) {
+        this.db.prepare("DELETE FROM sessions WHERE user_id = ?").run(u.id);
+        // Their API tokens stop working too (#16).
+        this.db.prepare("UPDATE api_tokens SET revoked_at = ? WHERE user_id = ? AND revoked_at IS NULL").run(now, u.id);
+      }
     });
     return this.get(u.id)!;
   }

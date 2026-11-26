@@ -41,6 +41,14 @@
  *   GET    /api/admin/jobs/:id/log   tail of that capture's log
  *   GET    /api/admin/session        saved Zoom login state
  *   POST   /api/admin/session/check  check (and refresh) the saved login now
+ *   GET    /api/account/tokens       your API tokens (tokens.own: needs a confirmed email)
+ *   POST   /api/account/tokens       {label, scopes?, expiresInDays?} -> {token (shown once), record}
+ *   DELETE /api/account/tokens/:id   revoke
+ *   GET    /api/account/usage        your API usage (?days=30)
+ *   GET    /api/admin/tokens         everyone's tokens;  DELETE /api/admin/tokens/:id  revoke
+ *   GET    /api/admin/usage          per day, token, user, top files (?days, ?user)
+ *   GET    /api/v1/openapi.json, /api/docs   the API's description
+ *   GET    /api/v1/meetings[/:id[/status|/files[/:name]]], /changes, /me   the API; downloads need a bearer token
  *   GET    /api/admin/audit          audit log, newest first (?action, actor, target, before, limit)
  *   GET    /admin/feeds              feeds: where meetings are found (pages/feeds.ts)
  *   GET    /api/admin/feeds          parsers and feeds, with health and recent runs
@@ -97,6 +105,8 @@ import { zonedTime } from "./feeds/time.js";
 import { platformFor } from "./platforms/registry.js";
 import { FILE_RE, listRecordings, publicFiles, toPublic } from "./recordings.js";
 import { SessionKeeper, type KeeperOpts } from "./session.js";
+import { API_DOCS_PAGE, openApi } from "./apidocs.js";
+import { Tokens, TokenError, activeToken, type ApiToken } from "./tokens.js";
 import { SLUG_RE, logger, notify } from "./util.js";
 
 const log = logger("web");
@@ -133,6 +143,28 @@ const MEDIA_TYPES: Record<string, string> = {
   ".txt": "text/plain; charset=utf-8",
 };
 const MAX_URL = 2048;
+
+/** Public read-only endpoints other sites may call from a browser (no cookies are involved: tokens go in a header). */
+const CORS_EXPOSE = "Content-Length, Content-Range, Accept-Ranges, Retry-After, WWW-Authenticate";
+const corsPath = (p: string[]) => (p[0] === "api" && (p[1] === "v1" || p[1] === "meetings" || p[1] === "changes")) || p[0] === "media" || p[0] === "oembed";
+function openCors(res: http.ServerResponse): void {
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader("Access-Control-Expose-Headers", CORS_EXPOSE);
+}
+
+/** Count the body bytes written to a response (so Range responses count what they sent, an aborted download what got out). */
+function countBytes(res: http.ServerResponse): () => number {
+  let n = 0;
+  const len = (c: unknown) => (typeof c === "string" ? Buffer.byteLength(c) : c instanceof Uint8Array ? c.byteLength : 0);
+  const write = res.write.bind(res) as (...a: unknown[]) => boolean, end = res.end.bind(res) as (...a: unknown[]) => http.ServerResponse;
+  res.write = ((c: unknown, ...a: unknown[]) => { n += len(c); return write(c, ...a); }) as typeof res.write;
+  res.end = ((c?: unknown, ...a: unknown[]) => { n += len(c); return end(c, ...a); }) as typeof res.end;
+  return () => n;
+}
+
+/** A token as its owner (or an admin) sees it: never its hash. */
+const publicToken = (t: ApiToken) => ({ id: t.id, prefix: t.prefix, label: t.label, scopes: t.scopes, createdAt: t.createdAt, expiresAt: t.expiresAt,
+  lastUsedAt: t.lastUsedAt, revokedAt: t.revokedAt, active: activeToken(t) });
 
 function send(res: http.ServerResponse, status: number, body: unknown, headers: Record<string, string> = {}): void {
   const isText = typeof body === "string" || Buffer.isBuffer(body);
@@ -272,6 +304,7 @@ export interface App {
   accounts: Accounts;
   sched: Scheduler;
   audit: Audit;
+  tokens: Tokens;
   /** Stop timers and captures, close the database. */
   close(): Promise<void>;
 }
@@ -281,6 +314,7 @@ export function createApp(o: ServeOpts, entry: string): App {
   const db = openDb(path.join(o.out, "minutes.db"));
   const accounts = new Accounts(db);
   const audit = new Audit(db);
+  const tokens = new Tokens(db);
   const proxies = new Proxies(o.trustedProxies);
   const cookieName = o.secureCookie ? "__Host-minutes_session" : "minutes_session";
   const cookieAttrs = `Path=/; HttpOnly; SameSite=Lax${o.secureCookie ? "; Secure" : ""}`;
@@ -297,6 +331,7 @@ export function createApp(o: ServeOpts, entry: string): App {
   const prune = () => {
     try {
       accounts.pruneSessions();
+      tokens.prune();
       for (const email of accounts.deleteUnverified(UNVERIFIED_DAYS)) {
         audit.record({ id: null, label: "system" }, "user.expire", { type: "user", label: email }, { verified: false }, null);
         log.info(`deleted an account never verified in ${UNVERIFIED_DAYS} days`);
@@ -412,6 +447,11 @@ export function createApp(o: ServeOpts, entry: string): App {
         }
         return false;
       };
+      if (method === "OPTIONS" && corsPath(parts)) {
+        res.writeHead(204, { "Access-Control-Allow-Origin": "*", "Access-Control-Allow-Methods": "GET, HEAD, OPTIONS",
+          "Access-Control-Allow-Headers": "Authorization, Range, Content-Type", "Access-Control-Max-Age": "86400" });
+        return void res.end();
+      }
       if (!read && !sameOrigin(req)) return send(res, 403, "cross-origin request refused");
       const jsonBody = async (): Promise<Record<string, unknown> | null> => {
         if (!/^application\/json\b/i.test(req.headers["content-type"] ?? "")) { send(res, 415, "send JSON"); return null; }
@@ -429,7 +469,77 @@ export function createApp(o: ServeOpts, entry: string): App {
         return serveFile(req, res, path.join(o.out, slug, file));
       };
 
+      // The site's own address: PUBLIC_URL, else what the request says (a plausible Host only).
+      const base = () => {
+        if (site) return site;
+        const host = String(req.headers.host ?? "");
+        return /^[a-z0-9.-]+(:\d{1,5})?$|^\[[0-9a-f:]+\](:\d{1,5})?$/i.test(host) ? `${proxies.https(req) ? "https" : "http"}://${host}` : "";
+      };
+      const esc = (s: string) => s.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
+      // --- the API (/api/v1): public reads need nothing; downloads need a bearer token ---
+      // /api/v1/meetings and /changes are the public endpoints below, reached as `rp`.
+      const v1 = parts[0] === "api" && parts[1] === "v1";
+      const rp = v1 ? ["api", ...parts.slice(2)] : parts;
+      let tokenAuth: { t: ApiToken; user: User } | null = null;
+      let usageFile: string | null = null;
+      if (v1) {
+        openCors(res);
+        const seg = parts.slice(2);
+        const route = "/" + seg.map((x, i) => (seg[0] === "meetings" && i === 1 ? ":id" : seg[0] === "meetings" && i === 3 ? ":name" : x)).join("/");
+        const authz = req.headers.authorization;
+        if (authz !== undefined) {
+          const m = /^Bearer +(\S{1,200})$/i.exec(authz);
+          const t = m ? tokens.authenticate(m[1]) : null;
+          const u = t ? accounts.get(t.userId) : undefined;
+          if (!t || !u || u.disabledAt || u.mustChangePassword) {
+            return send(res, 401, { error: "invalid, expired or revoked token" }, { "WWW-Authenticate": 'Bearer error="invalid_token"' });
+          }
+          tokenAuth = { t, user: u };
+          const sent = countBytes(res);
+          res.on("close", () => {
+            try { tokens.record({ tokenId: t.id, userId: u.id, route, file: usageFile, status: res.statusCode, bytes: sent(), ip }); }
+            catch (e) { log.warn("recording API usage failed", e); }
+          });
+          const verdict = tokens.limiter(t, route);
+          if (!verdict.allow) return send(res, 429, { error: "rate limit reached" }, { "Retry-After": String(Math.max(1, Math.ceil(verdict.retryAfterS))) });
+        }
+        if (!read) return send(res, 405, { error: "the API is read-only" }, { Allow: "GET, HEAD, OPTIONS" });
+        if (seg[0] === "openapi.json" && seg.length === 1) return send(res, 200, openApi(base()), { "Cache-Control": "public, max-age=300" });
+        if (seg[0] === "me" && seg.length === 1) {
+          if (!tokenAuth) return send(res, 401, { error: "send Authorization: Bearer <token>" }, { "WWW-Authenticate": "Bearer" });
+          const t = tokenAuth.t;
+          return send(res, 200, { prefix: t.prefix, label: t.label, scopes: t.scopes, createdAt: t.createdAt, expiresAt: t.expiresAt, lastUsedAt: t.lastUsedAt,
+            canDownload: t.scopes.includes("download") && capsFor(tokenAuth.user).includes("api.download") });
+        }
+        if (seg[0] === "meetings" && seg[2] === "files" && (seg.length === 3 || seg.length === 4)) {
+          const e = publicSite().find(seg[1]);
+          const rec = e?.rec?.public ? toPublic(e.rec) : null;
+          if (!e || !e.rec || !rec) return send(res, 404, { error: "no recording for that meeting" });
+          const listed = ([["video", rec.video], ["subtitles", rec.files.vtt], ["subtitles-srt", rec.files.srt], ["transcript-text", rec.files.txt],
+            ["transcript-json", rec.files.transcript], ["zoom-captions", rec.files.zoomCaptions]] as [string, string | null | undefined][])
+            .filter((x): x is [string, string] => !!x[1]);
+          if (seg.length === 3) {
+            return send(res, 200, listed.map(([kind, name]) => ({ name, kind, bytes: statSync(path.join(o.out, e.rec!.slug, name)).size,
+              url: `/api/v1/meetings/${encodeURIComponent(e.m.slug)}/files/${encodeURIComponent(name)}` })));
+          }
+          // A download: needs a token with the download scope whose owner may still download.
+          if (!tokenAuth) return send(res, 401, { error: "downloads need an API token: send Authorization: Bearer <token>" }, { "WWW-Authenticate": "Bearer" });
+          if (!tokenAuth.t.scopes.includes("download")) return send(res, 403, { error: "this token doesn't have the download scope" });
+          if (!capsFor(tokenAuth.user).includes("api.download")) return send(res, 403, { error: "confirm your email address before downloading" });
+          const name = seg[3];
+          if (!FILE_RE.test(name) || !listed.some((x) => x[1] === name)) return send(res, 404, { error: "no such file" });
+          usageFile = `${e.m.slug}/${name}`;
+          res.setHeader("Content-Disposition", `attachment; filename="${name}"`);
+          return serveFile(req, res, path.join(o.out, e.rec.slug, name));
+        }
+        if (!((seg[0] === "meetings" && seg.length >= 1 && seg.length <= 3) || (seg[0] === "changes" && seg.length === 1))) return send(res, 404, { error: "no such endpoint" });
+      }
+
       // --- pages ---
+      if (read && url.pathname === "/api/docs") {
+        const page = API_DOCS_PAGE.replace(/https:\/\/YOUR-SITE/g, () => esc(base() || "https://YOUR-SITE"));
+        return send(res, 200, page, { "Content-Type": "text/html; charset=utf-8", "Content-Security-Policy": pageCsp(page), "Cache-Control": "no-cache" });
+      }
       if (read && url.pathname === "/") return sendPage(res, pages.public);
       if (read && (url.pathname === "/login" || url.pathname === "/account")) return sendPage(res, pages.login);
       if (read && url.pathname === "/admin/feeds") {
@@ -442,6 +552,7 @@ export function createApp(o: ServeOpts, entry: string): App {
       // --- public ---
       if (parts[0] === "media" && parts.length === 3) {
         if (!allow("watch")) return;
+        openCors(res);
         const r = publicRecordings().find((x) => x.slug === parts[1]);
         return media(parts[1], parts[2], (_, f) => !!r && publicFiles(r).has(f));
       }
@@ -449,10 +560,11 @@ export function createApp(o: ServeOpts, entry: string): App {
         if (!allow("watch")) return;
         return send(res, 200, publicRecordings());
       }
-      if (parts[0] === "api" && parts[1] === "meetings" && read && parts.length >= 2 && parts.length <= 4) {
+      if (rp[0] === "api" && rp[1] === "meetings" && read && rp.length >= 2 && rp.length <= 4) {
         if (!allow("watch")) return;
+        openCors(res);
         const site = publicSite();
-        if (parts.length === 2) {
+        if (rp.length === 2) {
           const sp = url.searchParams;
           const day = (s: string | null, plus = 0) => {
             const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s ?? "");
@@ -468,10 +580,10 @@ export function createApp(o: ServeOpts, entry: string): App {
           const bodies = [...new Set(all.map((p) => p.body).filter((b): b is string => !!b))].sort((a, b) => a.localeCompare(b));
           return send(res, 200, { ...r, bodies });
         }
-        const e = site.find(parts[2]);
+        const e = site.find(rp[2]);
         if (!e) return send(res, 404, { error: "no such meeting" });
-        if (parts.length === 4) {
-          if (parts[3] !== "status") return send(res, 404, { error: "not found" });
+        if (rp.length === 4) {
+          if (rp[3] !== "status") return send(res, 404, { error: "not found" });
           // Small, polled while the page waits for something to finish.
           const t = e.rec?.transcript;
           return send(res, 200, { stage: e.p.stage, hasVideo: e.p.hasVideo, hasTranscript: e.p.hasTranscript, live: e.p.live,
@@ -482,9 +594,10 @@ export function createApp(o: ServeOpts, entry: string): App {
           .flatMap((c) => publicChange(c, e.m) ?? []);
         return send(res, 200, { ...e.p, recording: e.rec?.public ? toPublic(e.rec) : null, startedAt: live?.launchedAt ?? null, history });
       }
-      if (parts[0] === "api" && parts[1] === "changes" && parts.length === 2 && read) {
+      if (rp[0] === "api" && rp[1] === "changes" && rp.length === 2 && read) {
         // What changed lately across the public meetings: announcements, moves, cancellations, new documents.
         if (!allow("watch")) return;
+        openCors(res);
         const site = publicSite();
         const byId = new Map(site.entries.map((e) => [e.m.id, e.m]));
         const limit = Math.min(Math.max(Number.parseInt(url.searchParams.get("limit") ?? "", 10) || 30, 1), 100);
@@ -497,13 +610,6 @@ export function createApp(o: ServeOpts, entry: string): App {
         });
         return send(res, 200, list.slice(0, limit));
       }
-      // The site's own address: PUBLIC_URL, else what the request says (a plausible Host only).
-      const base = () => {
-        if (site) return site;
-        const host = String(req.headers.host ?? "");
-        return /^[a-z0-9.-]+(:\d{1,5})?$|^\[[0-9a-f:]+\](:\d{1,5})?$/i.test(host) ? `${proxies.https(req) ? "https" : "http"}://${host}` : "";
-      };
-      const esc = (s: string) => s.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
       if (parts[0] === "m" && parts.length === 2 && read) {
         const e = publicSite().find(parts[1]);
         if (!e) return send(res, 404, "not found");
@@ -553,6 +659,36 @@ export function createApp(o: ServeOpts, entry: string): App {
         const running = jobs.filter((j) => j.status === "running" || j.status === "stopping" || j.status === "queued").length;
         const due = jobs.filter((j) => j.status === "scheduled" && Date.parse(j.start) - now < within).map((j) => j.start).sort();
         return send(res, 200, { busy: running > 0 || due.length > 0, running, nextStart: due[0] ?? null });
+      }
+
+      // --- API tokens and usage: the signed-in user's own (#16, #18) ---
+      if (parts[0] === "api" && parts[1] === "account" && parts[2] === "tokens" && parts.length <= 4) {
+        if (!allow("tokens.own")) return;
+        if (parts.length === 3 && read) return send(res, 200, tokens.list(user!.id).map(publicToken));
+        if (parts.length === 3 && method === "POST") {
+          const body = await jsonBody();
+          if (!body) return;
+          try {
+            const r = tokens.create(user!.id, body);
+            audit.record(actor, "token.create", { type: "token", id: r.record.id, label: `${r.record.prefix} ${r.record.label}` }, null,
+              { label: r.record.label, scopes: r.record.scopes, expiresAt: r.record.expiresAt });
+            return send(res, 201, { token: r.token, record: publicToken(r.record) });   // the only time it's shown
+          } catch (e) {
+            if (e instanceof TokenError) return send(res, e.status, { error: e.message });
+            throw e;
+          }
+        }
+        if (parts.length === 4 && method === "DELETE") {
+          const t = tokens.get(parts[3]);
+          if (!t || t.userId !== user!.id) return send(res, 404, { error: "no such token" });
+          tokens.revoke(t.id);
+          audit.record(actor, "token.revoke", { type: "token", id: t.id, label: `${t.prefix} ${t.label}` }, { revoked: false }, { revoked: true });
+          return send(res, 200, { revoked: true });
+        }
+      }
+      if (parts[0] === "api" && parts[1] === "account" && parts[2] === "usage" && parts.length === 3 && read) {
+        if (!allow("tokens.own")) return;
+        return send(res, 200, tokens.usage({ userId: user!.id, days: Number(url.searchParams.get("days") ?? 30) || 30 }));
       }
 
       // --- accounts ---
@@ -812,6 +948,21 @@ export function createApp(o: ServeOpts, entry: string): App {
             return send(res, 200, { meeting: adminMeeting(r.meeting), effect: r.effect });
           }
         }
+        if (what === "tokens") {
+          if (parts.length === 3 && read) {
+            return send(res, 200, tokens.list().map((t) => ({ ...publicToken(t), userId: t.userId, userEmail: accounts.get(t.userId)?.email ?? "(deleted)" })));
+          }
+          if (parts.length === 4 && method === "DELETE") {
+            const t = id ? tokens.get(id) : undefined;
+            if (!t) return send(res, 404, { error: "no such token" });
+            tokens.revoke(t.id);
+            audit.record(actor, "token.revoke", { type: "token", id: t.id, label: `${t.prefix} ${t.label} (${accounts.get(t.userId)?.email ?? "?"})` }, { revoked: false }, { revoked: true });
+            return send(res, 200, { revoked: true });
+          }
+        }
+        if (what === "usage" && parts.length === 3 && read) {
+          return send(res, 200, tokens.usage({ userId: url.searchParams.get("user") || undefined, days: Number(url.searchParams.get("days") ?? 30) || 30 }));
+        }
         if (what === "users") {
           if (parts.length === 3 && read) return send(res, 200, accounts.list().map((u) => ({ ...adminUser(u), self: u.id === user!.id })));
           if (parts.length === 4 && method === "PATCH") {
@@ -900,7 +1051,7 @@ export function createApp(o: ServeOpts, entry: string): App {
   });
 
   return {
-    server, accounts, sched, audit,
+    server, accounts, sched, audit, tokens,
     async close() {
       server.close();
       server.closeAllConnections();
