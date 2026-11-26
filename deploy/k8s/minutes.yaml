@@ -144,7 +144,7 @@ spec:
             - { name: MAIL_FROM, value: "minutes <minutes@emc2.build>" }
             - { name: PUBLIC_URL, value: "https://minutes.emc2.build" }
             # Also email the operator's messages (captures, transcripts, login, backups, feeds): set to your address.
-            # - { name: OPERATOR_EMAIL, value: "you@example.com" }
+            - { name: OPERATOR_EMAIL, value: "emcniece@gmail.com" }
             # Traefik runs in the pod network; only its X-Forwarded-For counts.
             - { name: TRUSTED_PROXIES, value: 10.42.0.0/16 }
             # Nightly after 03:00 local, kept 14 days (BACKUP_KEEP_DAYS).
