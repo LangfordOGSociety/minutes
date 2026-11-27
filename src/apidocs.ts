@@ -36,7 +36,7 @@ const change = {
   type: "object",
   properties: {
     at: { type: "string", format: "date-time" },
-    kind: { type: "string", enum: ["added", "date_changed", "time_changed", "cancelled", "reinstated", "document_added", "document_changed", "document_removed"] },
+    kind: { type: "string", enum: ["added", "date_changed", "time_changed", "cancelled", "reinstated", "document_added", "document_changed", "document_removed", "transcript_started", "transcript_done", "transcript_failed"] },
     meeting: { type: "object", properties: { id: { type: "string" }, title: { type: "string" } } },
     from: { type: ["string", "null"], format: "date-time" },
     to: { type: ["string", "null"], format: "date-time" },

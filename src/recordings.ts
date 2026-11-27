@@ -28,7 +28,7 @@ export interface Recording {
   parts: { index: number; started: string; ended: string | null }[];
   chapters: { title: string; at: number }[];
   /** From the transcriber's transcript.status.json, if it has seen this one. */
-  transcript: { status: string; stage: string | null; progress: number | null; error: string | null } | null;
+  transcript: { status: string; stage: string | null; progress: number | null; error: string | null; started: string | null; finished: string | null; updated: string | null } | null;
   /** Side files that exist: subtitles, transcript, Zoom captions, speakers, live draft. */
   files: { vtt?: string; srt?: string; txt?: string; transcript?: string; zoomCaptions?: string; speakers?: string; live?: string; thumb?: string };
 }
@@ -76,7 +76,9 @@ export function listRecordings(out: string, sched: Scheduler, tz: string): Recor
       title: meeting && meeting.title !== slug ? meeting.title : slug,
       public: !!meeting && meeting.visibility === "public" && meeting.status !== "cancelled" && (!!video || active),
       transcript: st ? { status: String(st.status ?? "unknown"), stage: st.stage ?? null,
-        progress: typeof st.progress === "number" ? st.progress : null, error: st.error ?? null } : null,
+        progress: typeof st.progress === "number" ? st.progress : null, error: st.error ?? null,
+        started: typeof st.started === "string" ? st.started : null, finished: typeof st.finished === "string" ? st.finished : null,
+        updated: typeof st.updated === "string" ? st.updated : null } : null,
       files: Object.fromEntries(Object.entries(files).filter(([, v]) => v)) as Recording["files"],
       scheduledStart: m.scheduledStart ?? null,
       outcome: m.outcome ?? "unknown",

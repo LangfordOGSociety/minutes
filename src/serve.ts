@@ -515,7 +515,26 @@ export function createApp(o: ServeOpts, entry: string): App {
       text: `${text}\n\n-- \nminutes${site ? " · " + site : ""}${opts.priority === "high" || opts.priority === "urgent" ? "\nThis one needs a look." : ""}\n` }));
     log.info(`operator messages are also emailed to ${o.operatorEmail}`);
   }
+  /** Put transcription start, finish and failure in the meetings' history, at the times the transcriber wrote. */
+  const recordTranscripts = () => {
+    if (closed) return;
+    try {
+      const jobs = sched.list();
+      const when = (s: string | null | undefined) => { const d = s ? new Date(s) : null; return d && !Number.isNaN(d.getTime()) ? d : null; };
+      for (const r of listRecordings(o.out, sched, o.tz)) {
+        const t = r.transcript;
+        const job = jobs.filter((j) => j.slug === r.slug).at(-1);
+        const m = t && job ? sched.meetings.get(job.meetingRef) : undefined;
+        if (!t || !m) continue;
+        const started = when(t.started);
+        if (started) sync.transcriptEvent(m, `${r.slug}:started:${t.started}`, "transcript_started", started, { recording: r.slug }, "transcription started");
+        if (t.status === "done" && when(t.finished)) sync.transcriptEvent(m, `${r.slug}:done:${t.finished}`, "transcript_done", when(t.finished)!, { recording: r.slug }, "transcript ready");
+        if (t.status === "failed") sync.transcriptEvent(m, `${r.slug}:failed:${t.started ?? ""}`, "transcript_failed", when(t.updated) ?? new Date(), { recording: r.slug }, "transcription failed");
+      }
+    } catch (e) { log.warn("recording transcription history failed", e); }
+  };
   const opsTranscripts = () => {
+    recordTranscripts();
     if (closed || (!o.session.notifyUrl && !emailOperator)) return;
     try { ops.transcripts(listRecordings(o.out, sched, o.tz)); } catch (e) { log.warn("checking transcripts for the operator failed", e); }
   };
@@ -820,6 +839,8 @@ export function createApp(o: ServeOpts, entry: string): App {
           if (!pc || (pc.kind === "added" && Date.parse(pc.to ?? "") < Date.parse(pc.at))) return [];
           return [pc];
         });
+        // Newest first by when it happened (a transcription noticed late keeps its real time).
+        list.sort((a, b) => b.at.localeCompare(a.at));
         return send(res, 200, list.slice(0, limit));
       }
       if (parts[0] === "m" && parts.length === 2 && read) {
