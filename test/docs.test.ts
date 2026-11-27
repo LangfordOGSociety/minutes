@@ -61,7 +61,7 @@ describe("kinds of document", () => {
 
 describe("mirroring and join links", () => {
   it("stores the documents, finds the meeting ID, sets the link, and says so in the history each time it changes", async (t) => {
-    const { app, admin, src, run, fetcher, text, start, doc } = await setup(t);
+    const { app, admin, src, run, fetcher, text, start, doc, base } = await setup(t);
     src.state.meetings = [{ id: "s1", title: "Special Council Meeting", body: "Special Council Meeting", start, documents: [doc("Dial in Instructions", 19549), doc("Meeting Notice", 19550)] }];
     await run();
     let m = await meetingOf(admin, "Special Council Meeting");
@@ -84,6 +84,9 @@ describe("mirroring and join links", () => {
     m = await meetingOf(admin, "Special Council Meeting");
     assert.equal(m.link, "Zoom 88604377392");
     assert.equal(m.capture?.status, "scheduled");                // the feed's policy is auto: a link means a capture
+    assert.equal(m.joinSource, "Dial in Instructions");           // the admin sees where the link came from
+    const pubJoin = (await new Client(base).get(`/api/meetings/${m.slug}`)).json.join;
+    assert.deepEqual(pubJoin, { platform: "Zoom", id: "886 0437 7392", url: "https://zoom.us/j/88604377392" });   // and the public sees how to join, no passcode
     let h = await history();
     const det = h.filter((c) => c.kind === "link_detected");
     assert.equal(det.length, 1);

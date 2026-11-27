@@ -427,12 +427,18 @@ export function createApp(o: ServeOpts, entry: string): App {
   /** A feed as the admin page sees it. */
   const adminFeed = (f: Feed) => ({ ...f, httpCache: undefined, health: healthOf(f), running: poller.isRunning(f.id),
     parserLabel: parserById(f.parser)?.label ?? f.parser, runs: feeds.runs(f.id, 10) });
+  /** Where the meeting's link came from when a document gave it ("Dial in Instructions"), else null. */
+  const joinSourceOf = (m: Meeting): string | null => {
+    if (!m.link) return null;
+    const det = sync.changes({ meetingId: m.id, kinds: ["link_detected"], limit: 1 })[0];
+    return det && det.after?.link === shownLink(m.link) ? String(det.after.document ?? "a document") : null;
+  };
   /** A meeting as the admin sees it: the link only as platform + number. */
   const adminMeeting = (m: Meeting) => {
     const job = sched.activeJobFor(m.id) ?? sched.list().filter((j) => j.meetingRef === m.id).at(-1);
     const dup = m.duplicateOf ? sched.meetings.get(m.duplicateOf) : undefined;
     return { id: m.id, title: m.title, body: m.body ?? null, start: m.start, slug: m.slug, status: m.status, review: m.review ?? null,
-      removedAt: m.removedAt ?? null, visibility: m.visibility, link: shownLink(m.link), joinLink: joinLinkOf(m.link), streamUrl: m.streamUrl ?? null,
+      removedAt: m.removedAt ?? null, visibility: m.visibility, link: shownLink(m.link), joinLink: joinLinkOf(m.link), joinSource: joinSourceOf(m), streamUrl: m.streamUrl ?? null,
       agendaUrl: m.agendaUrl ?? null, pageUrl: m.pageUrl ?? null,
       feedId: m.feedId ?? null, feedName: m.feedId ? feeds.get(m.feedId)?.name ?? "(deleted feed)" : null,
       duplicateOf: dup ? { id: dup.id, title: dup.title, slug: dup.slug, start: dup.start } : null,

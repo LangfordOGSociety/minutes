@@ -301,6 +301,7 @@ function linksLine(m) {
     line.appendChild(document.createTextNode(" "));
     line.appendChild(j.url ? el("a", { href: j.url, target: "_blank", rel: "noopener", text: j.label }) : el("span", { text: j.label }));
     if (j.passcode) line.appendChild(document.createTextNode(" (passcode on file)"));
+    if (m.joinSource) line.appendChild(document.createTextNode(" (found in " + m.joinSource + ")"));
   }
   line.appendChild(document.createTextNode("  "));
   line.appendChild(el("span", { "class": "tag " + (m.streamUrl ? "h-ok" : "h-new"), text: m.streamUrl ? "stream" : "no stream page yet" }));

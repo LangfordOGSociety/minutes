@@ -306,6 +306,7 @@ main { max-width: 1100px; margin: 0 auto; padding: 12px 24px 40px; }
 .banner { border: 1px solid var(--line); border-left: 4px solid var(--accent); border-radius: 8px; padding: 10px 12px; margin-top: 12px; }
 .banner.live { border-left-color: var(--live); } .banner.warn { border-left-color: var(--warn); } .banner.off { border-left-color: var(--muted); }
 .banner b { display: block; }
+.joinbox { margin-top: 6px; overflow-wrap: anywhere; } .joinbox .l { font-weight: 600; }
 .linkrow { display: flex; flex-wrap: wrap; gap: 6px 14px; margin-bottom: 8px; }
 .docs { list-style: none; margin: 0; padding: 0; }
 .docs li { padding: 5px 0; border-bottom: 1px solid var(--line); overflow-wrap: anywhere; }

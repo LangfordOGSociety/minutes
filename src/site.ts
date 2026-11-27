@@ -13,6 +13,7 @@
  * before it happened is not shown; one that has a recording always is.
  */
 import type { Job } from "./jobs.js";
+import { platformFor } from "./platforms/registry.js";
 import type { Meeting } from "./meetings.js";
 import type { PublicRecording, Recording } from "./recordings.js";
 import { toPublic } from "./recordings.js";
@@ -27,6 +28,9 @@ export const STITCH_WAIT_MS = 6 * 3_600_000;
 
 export interface PublicDoc { title: string; type: string | null; url: string; copy: string | null }
 
+/** How to join a meeting that is about to happen or happening, from its Zoom meeting number only: never the passcode (Zoom asks for that itself). */
+export interface PublicJoin { platform: string; id: string; url: string }
+
 export interface PublicMeeting {
   id: string;                    // the slug
   title: string;
@@ -39,6 +43,7 @@ export interface PublicMeeting {
   pageUrl: string | null;        // the meeting on the city's own site
   streamUrl: string | null;      // the city's own live/recorded video page
   documents: PublicDoc[];
+  join: PublicJoin | null;
   hasVideo: boolean;
   hasTranscript: boolean;
   /** A poster frame of the recording, as a path on this site (/media/...), when there is one. */
@@ -93,6 +98,17 @@ export function isUpcoming(p: PublicMeeting, now: number): boolean {
   return p.stage === "cancelled" && Date.parse(p.start) + 2 * 3_600_000 > now;
 }
 
+/** A Zoom join link for an upcoming or live meeting that a feed (or its documents) published; hand-entered links stay private. */
+export function joinOf(m: Meeting, stage: Stage): PublicJoin | null {
+  if (!m.link || !m.feedId || (stage !== "upcoming" && stage !== "live")) return null;
+  const p = platformFor(m.link);
+  if (!p || p.id !== "zoom") return null;
+  const url = p.publicUrl?.(m.link), id = p.publicId(m.link);
+  if (!url || !/^\d{9,12}$/.test(id)) return null;
+  const spaced = id.length === 11 ? `${id.slice(0, 3)} ${id.slice(3, 7)} ${id.slice(7)}` : id;
+  return { platform: p.label, id: spaced, url };
+}
+
 export function toPublicMeeting(m: Meeting, jobs: Job[], rec: Recording | undefined, now: number, copies?: Map<string, string>): PublicMeeting {
   const stage = stageOf(m, jobs, rec, now);
   return {
@@ -100,6 +116,7 @@ export function toPublicMeeting(m: Meeting, jobs: Job[], rec: Recording | undefi
     cancelled: m.status === "cancelled",
     agendaUrl: httpUrl(m.agendaUrl), pageUrl: httpUrl(m.pageUrl), streamUrl: httpUrl(m.streamUrl),
     documents: (m.documents ?? []).flatMap((d) => { const url = httpUrl(d.url); return url ? [{ title: d.title, type: d.type ?? null, url, copy: copies?.get(d.url) ?? null }] : []; }),
+    join: joinOf(m, stage),
     hasVideo: !!rec?.video && stage !== "cancelled", hasTranscript: !!rec?.files.transcript && stage !== "cancelled",
     poster: rec?.public && rec.files.thumb && stage !== "cancelled" ? `/media/${encodeURIComponent(rec.slug)}/${encodeURIComponent(rec.files.thumb)}` : null,
     duration: rec?.duration ?? null, live: stage === "live",

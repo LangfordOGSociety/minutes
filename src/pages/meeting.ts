@@ -62,6 +62,14 @@ function gone(msg) {
   ["player", "livebox", "share", "links", "history"].forEach(function (id) { document.getElementById(id).hidden = true; });
 }
 
+// How to join, for a meeting that is about to happen or happening (its number only, no passcode).
+function joinBox(m) {
+  if (!m.join) return null;
+  return el("div", { "class": "joinbox" }, el("span", { "class": "l", text: "Join on " + m.join.platform + ": " }),
+    el("a", { href: m.join.url, target: "_blank", rel: "noopener", text: m.join.url.replace("https://", "") }),
+    el("span", { "class": "hint", text: " Meeting ID " + m.join.id + ". Zoom asks for a passcode if the meeting has one." }));
+}
+
 function cityLinks(m) {
   var items = [];
   if (m.agendaUrl) items.push(ext(m.agendaUrl, "Agenda"));
@@ -77,11 +85,11 @@ function banner(m) {
   switch (m.stage) {
     case "upcoming":
       untilNode = el("span", { text: until(m.start) });
-      return el("div", { "class": "banner" }, el("b", {}, "Starts ", untilNode),
+      return el("div", { "class": "banner" }, el("b", {}, "Starts ", untilNode), joinBox(m),
         el("div", { "class": "hint", text: "Video and a transcript appear on this page if the meeting is recorded. This page updates by itself." }));
     case "live":
       startedNode = el("span", { text: m.startedAt ? "started " + ago(m.startedAt) : "" });
-      return el("div", { "class": "banner live" }, el("b", {}, "Recording now ", startedNode),
+      return el("div", { "class": "banner live" }, el("b", {}, "Recording now ", startedNode), joinBox(m),
         el("div", { "class": "hint", text: "The video appears here when the meeting ends. A draft transcript follows along below." }));
     case "stitching":
       return el("div", { "class": "banner warn" }, el("b", { text: "Processing the video" }),

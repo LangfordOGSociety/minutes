@@ -103,7 +103,7 @@ describe("public meetings API", () => {
     up = (await pub.get("/api/meetings?scope=upcoming")).json;
     assert.deepEqual(up.meetings.map((m: { title: string }) => m.title), ["Council Meeting", "Called off"]);
     const c = up.meetings[0];
-    assert.deepEqual(Object.keys(c).sort(), ["agendaUrl", "body", "cancelled", "documents", "duration", "end", "hasTranscript", "hasVideo", "id", "live", "pageUrl", "poster", "stage", "start", "streamUrl", "title"]);
+    assert.deepEqual(Object.keys(c).sort(), ["agendaUrl", "body", "cancelled", "documents", "duration", "end", "hasTranscript", "hasVideo", "id", "join", "live", "pageUrl", "poster", "stage", "start", "streamUrl", "title"]);
     assert.deepEqual([c.stage, c.body, c.agendaUrl, c.streamUrl], ["upcoming", "Council", "https://city.example/agenda/1", "https://city.example/video/1"]);
     assert.deepEqual(c.documents, [{ title: "Agenda", type: "Agenda", url: "https://city.example/agenda/1", copy: null }]);   // not the javascript: URL
     assert.equal(up.meetings[1].stage, "cancelled");
@@ -123,7 +123,13 @@ describe("public meetings API", () => {
 
     // Not one secret anywhere in what the public gets.
     const text = [(await pub.get("/api/meetings?scope=upcoming")).text, (await pub.get("/api/meetings?scope=past")).text, (await pub.get("/api/changes")).text].join("\n");
-    assert.doesNotMatch(text, /429539|87093163922|zoom\.us|feed|link|externalId|capture/i);
+    assert.doesNotMatch(text, /429539|pwd|feed|link|externalId|capture/i);
+    // What it does show of a feed meeting that hasn't happened: how to join, from the number alone.
+    const ups = (await pub.get("/api/meetings?scope=upcoming")).json.meetings as { title: string; join: unknown }[];
+    assert.deepEqual(ups.find((m) => m.title === "Called off")!.join, null);
+    for (const m of ups.filter((x) => x.join)) assert.deepEqual(m.join, { platform: "Zoom", id: "870 9316 3922", url: "https://zoom.us/j/87093163922" });
+    assert.ok(ups.some((m) => m.join), "an upcoming feed meeting with a link has a join link");
+    assert.doesNotMatch(JSON.stringify(ups), /87093163922\?|\?pwd/);
   });
 
   it("the meeting's page data, its history, and /m/:slug", async (t) => {
