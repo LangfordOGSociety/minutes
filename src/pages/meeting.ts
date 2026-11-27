@@ -93,7 +93,7 @@ function banner(m) {
         el("div", { "class": "hint", text: "The video appears here when the meeting ends. A draft transcript follows along below." }));
     case "stitching":
       return el("div", { "class": "banner warn" }, el("b", { text: "Processing the video" }),
-        el("div", { "class": "hint", text: "The recording is being put together. It usually takes a few minutes, and this page updates by itself." }));
+        el("div", { "class": "hint", text: "The recording is being imported or put together. It usually takes a few minutes, and this page updates by itself." }));
     case "video_ready":
       return null;   // the player's transcript panel says how far the transcriber is
     case "failed":

@@ -13,7 +13,7 @@
  * before it happened is not shown; one that has a recording always is.
  */
 import type { Job } from "./jobs.js";
-import { platformFor } from "./platforms/registry.js";
+import { isArchive, platformFor } from "./platforms/registry.js";
 import type { Meeting } from "./meetings.js";
 import type { PublicRecording, Recording } from "./recordings.js";
 import { toPublic } from "./recordings.js";
@@ -77,7 +77,9 @@ export function visible(m: Meeting): boolean {
 /** Where a meeting is, for the page's "stage". */
 export function stageOf(m: Meeting, jobs: Job[], rec: Recording | undefined, now: number): Stage {
   if (m.status === "cancelled") return "cancelled";
-  if (jobs.some((j) => j.status === "running" || j.status === "stopping")) return "live";
+  // A finished video being imported (a Granicus clip) isn't a meeting in progress, whatever its date: it is being processed.
+  const running = jobs.filter((j) => j.status === "running" || j.status === "stopping");
+  if (running.length) return running.every((j) => isArchive(j.link)) ? "stitching" : "live";
   if (rec?.video) return rec.files.transcript ? "ready" : "video_ready";
   const last = jobs.at(-1);
   const start = Date.parse(m.start);
