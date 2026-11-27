@@ -30,6 +30,8 @@ describe("stages", () => {
     assert.equal(stageOf(meeting({ start: at(1) }), [job("scheduled")], undefined, NOW), "upcoming");
     assert.equal(stageOf(meeting({ start: at(-1) }), [job("running")], rec({ active: true }), NOW), "live");
     assert.equal(stageOf(meeting({ start: at(-1) }), [job("stopping")], undefined, NOW), "live");
+    // An import of a finished video (a Granicus clip) is being processed, not a meeting in progress, whatever its date.
+    assert.equal(stageOf(meeting({ start: at(-72) }), [job("running", { link: "https://saanich.ca.granicus.com/player/clip/1356" })], rec({ active: true }), NOW), "stitching");
     assert.equal(stageOf(meeting({ start: at(-3) }), [job("done", { endedAt: at(-0.5) })], undefined, NOW), "stitching");
     assert.equal(stageOf(meeting({ start: at(-3) }), [job("done", { endedAt: at(-0.5) })], rec({ video: "council.mp4" }), NOW), "video_ready");
     assert.equal(stageOf(meeting({ start: at(-3) }), [job("done")], rec({ video: "council.mp4", files: { transcript: "council.transcript.json" } }), NOW), "ready");

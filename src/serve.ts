@@ -129,7 +129,7 @@ import { Alerts, AlertError, type Alert } from "./alerts.js";
 import { Ops } from "./ops.js";
 import { prepareVocab } from "./agendavocab.js";
 import { STOP_PAGE } from "./pages/stop.js";
-import { Thumbs } from "./thumbs.js";
+import { Thumbs, latestFrame } from "./thumbs.js";
 import { SEARCH_PAGE } from "./pages/search.js";
 import { SLUG_RE, logger, notify, setOperatorSink } from "./util.js";
 
@@ -1364,9 +1364,14 @@ export function createApp(o: ServeOpts, entry: string): App {
           }
           if (parts.length === 5 && sub === "log" && read) return send(res, 200, tail(path.join(o.out, job.slug, "capture.log")));
           if (parts.length === 5 && sub === "screen" && read) {
+            if (job.status !== "running" && job.status !== "stopping") return send(res, 409, "not running");
             const d = sched.displayOf(job.id);
-            if (!d) return send(res, 409, "not running");
-            return send(res, 200, await screenshot(d, o.width, o.height), { "Content-Type": "image/png" });
+            if (d) return send(res, 200, await screenshot(d, o.width, o.height), { "Content-Type": "image/png" });
+            // No screen (a stream or an archive import): the newest frame of the recording itself.
+            let part: string | undefined;
+            try { part = (JSON.parse(readFileSync(path.join(o.out, job.slug, "manifest.json"), "utf8")).parts as { file: string }[]).at(-1)?.file; } catch { /* no manifest yet */ }
+            const png = part && FILE_RE.test(part) ? await latestFrame(path.join(o.out, job.slug, part)) : null;
+            return png ? send(res, 200, png, { "Content-Type": "image/png" }) : send(res, 409, "no picture yet");
           }
         }
       }

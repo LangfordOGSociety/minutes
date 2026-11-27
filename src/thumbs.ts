@@ -20,6 +20,19 @@ export function frameAt(durationS: number | null): number {
   return Math.max(1, Math.min(60, d * 0.05, d / 2));
 }
 
+/**
+ * The newest frame of a recording in progress, as a PNG: what a capture
+ * without a screen (a stream or an archive import) has to show in the
+ * admin's live view, where a screen capture would be black. Reads the last
+ * few seconds of the growing part. Null when there is no readable frame yet.
+ */
+export function latestFrame(part: string, width = 960): Promise<Buffer | null> {
+  return new Promise((resolve) => {
+    execFile("ffmpeg", ["-v", "error", "-sseof", "-4", "-i", part, "-frames:v", "1", "-vf", `scale='min(${width},iw)':-2`, "-f", "image2pipe", "-vcodec", "png", "-"],
+      { encoding: "buffer", maxBuffer: 16 * 1024 * 1024, timeout: 30_000 }, (err, out) => resolve(err || !out.length ? null : out));
+  });
+}
+
 export async function makeThumb(video: string, dest: string, durationS: number | null, o: { timeoutMs?: number } = {}): Promise<boolean> {
   const tmp = `${dest}.tmp.jpg`;
   const frame = (at: number) => new Promise<string | null>((resolve) => {
