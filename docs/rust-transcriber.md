@@ -43,9 +43,28 @@ mechanically. The risk is entirely in the three model steps.
    their claim, not independently checked). Council meetings have crosstalk
    and our Zoom-name matching relies on clean voice segments. A Rust
    diarizer that is worse than pyannote 3.x is a regression users hear.
-4. **Alignment has no off-the-shelf Rust answer.** whisper.cpp offers token
-   timestamps, not wav2vec2 word alignment. Word-level timing drives the
-   clickable transcript and speaker splits at word boundaries.
+4. **Alignment has one real candidate:** [wav2vec2-rs](https://github.com/Djoe-Denne/wav2vec2-rs)
+   (crate `wav2vec2-align`): CTC forced alignment of a known transcript onto
+   audio, word timings in milliseconds with a confidence score, Viterbi on
+   CPU, wgpu (Vulkan) or CUDA, model through Candle (safetensors) or ONNX
+   Runtime. That is the WhisperX alignment step. It fits, with caveats:
+   - **No licence file** (GitHub shows none), so by default all rights are
+     reserved. We would need the author's permission or a licence before
+     depending on it or copying code. Ask first.
+   - **Young and small:** created 2026-02, ~14 stars, one author, CI runs CPU
+     only; the GPU paths are not tested in CI.
+   - **GPU is CUDA-shaped.** On our AMD GPU the usable parts are the wgpu
+     Viterbi and Candle/ONNX on the CPU. The Viterbi is cheap; the wav2vec2
+     forward pass is the cost. Alignment is a small part of the total next to
+     Whisper, so CPU may be fine, but that needs measuring.
+   - **Segment-level work is ours:** it takes text and 16 kHz audio. Splitting
+     into segments, number and punctuation normalisation, and mapping words
+     back to the Whisper text are what WhisperX does around its aligner and
+     we would still write. Check the model: WhisperX uses an English wav2vec2
+     (`WAV2VEC2_ASR_BASE_960H`-class); the same family exports to ONNX with
+     the repo's script.
+   - Its README describes quality as "MFA-quality" boundaries; compare it
+     with WhisperX's on our own meetings before believing it.
 5. **What Rust would genuinely give us:** a much smaller image (the ROCm
    Python image is multi-GB: torch, TheRock wheels, pyannote), faster CI
    builds (the transcriber image is the slowest to build), lower idle memory
@@ -67,7 +86,7 @@ Do not rewrite everything. Stage it so each step can be stopped:
 3. **Decision gate.** Continue only if A is within ~25% of CTranslate2's
    speed and no worse on names. Otherwise stop, and the Rust effort moves to
    what it is good for without ML: nothing in this repo needs it.
-4. **Spike B (only after the gate): diarization.** `speakrs` against pyannote 3.x
+4. **Spike B (only after the gate): alignment and diarization.** wav2vec2-rs against WhisperX word timings (after the licence is sorted out); then `speakrs` against pyannote 3.x
    on a meeting with crosstalk; compare speaker count and boundary errors.
 5. **Hybrid fallback.** If B or alignment disappoints, ship a Rust
    orchestrator and STT with the Python pieces behind a small local service
@@ -80,6 +99,7 @@ Do not rewrite everything. Stage it so each step can be stopped:
   print peak RSS and write one JSON line per run so Python and Rust runs diff.
 - CI: record `images` job duration cold and warm, and the pushed image sizes,
   in the job summary for the Python image now, the Rust image if it exists.
+- Alignment: word start/end of wav2vec2-rs against WhisperX on the same excerpt (median and 95th percentile difference in ms, words missing).
 - Quality: a fixed excerpt with a hand-corrected reference transcript, word
   error rate and name-term recall (names are what the vocab work is for).
 
