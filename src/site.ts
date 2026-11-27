@@ -42,6 +42,8 @@ export interface PublicMeeting {
   agendaUrl: string | null;
   pageUrl: string | null;        // the meeting on the city's own site
   streamUrl: string | null;      // the city's own live/recorded video page
+  /** Which municipality or feed it comes from (the feed's name, e.g. "Langford Council"); null for a meeting entered by hand. */
+  source: string | null;
   documents: PublicDoc[];
   join: PublicJoin | null;
   hasVideo: boolean;
@@ -62,7 +64,7 @@ export const PUBLIC_KINDS: ChangeKind[] = ["added", "date_changed", "time_change
 export interface PublicChange {
   at: string;
   kind: PublicChangeKind;
-  meeting: { id: string; title: string };
+  meeting: { id: string; title: string; source: string | null };
   from: string | null;           // start before (date/time changes)
   to: string | null;             // start after (added, date/time changes)
   doc: { title: string; type: string | null; url: string | null } | null;
@@ -111,13 +113,14 @@ export function joinOf(m: Meeting, stage: Stage): PublicJoin | null {
   return { platform: p.label, id: spaced, url };
 }
 
-export function toPublicMeeting(m: Meeting, jobs: Job[], rec: Recording | undefined, now: number, copies?: Map<string, string>): PublicMeeting {
+export function toPublicMeeting(m: Meeting, jobs: Job[], rec: Recording | undefined, now: number, copies?: Map<string, string>, source?: string | null): PublicMeeting {
   const stage = stageOf(m, jobs, rec, now);
   return {
     id: m.slug, title: m.title, body: m.body ?? null, start: m.start, end: m.endEst ?? null, stage,
     cancelled: m.status === "cancelled",
     agendaUrl: httpUrl(m.agendaUrl), pageUrl: httpUrl(m.pageUrl), streamUrl: httpUrl(m.streamUrl),
     documents: (m.documents ?? []).flatMap((d) => { const url = httpUrl(d.url); return url ? [{ title: d.title, type: d.type ?? null, url, copy: copies?.get(d.url) ?? null }] : []; }),
+    source: source ?? null,
     join: joinOf(m, stage),
     hasVideo: !!rec?.video && stage !== "cancelled", hasTranscript: !!rec?.files.transcript && stage !== "cancelled",
     poster: rec?.public && rec.files.thumb && stage !== "cancelled" ? `/media/${encodeURIComponent(rec.slug)}/${encodeURIComponent(rec.files.thumb)}` : null,
@@ -131,12 +134,12 @@ export function recordingOf(jobs: Job[], recs: Map<string, Recording>): Recordin
   return [...mine].reverse().find((r) => r.video) ?? mine.at(-1);
 }
 
-export function publicChange(c: MeetingChange, m: { slug: string; title: string }): PublicChange | null {
+export function publicChange(c: MeetingChange, m: { slug: string; title: string }, source: string | null = null): PublicChange | null {
   if (!PUBLIC_KINDS.includes(c.kind)) return null;
   const s = (r: Record<string, unknown> | null, k: string): string | null => (typeof r?.[k] === "string" ? r[k] as string : null);
   const d = c.kind.startsWith("document_") ? (c.after ?? c.before) : null;
   return {
-    at: c.at, kind: c.kind as PublicChangeKind, meeting: { id: m.slug, title: m.title },
+    at: c.at, kind: c.kind as PublicChangeKind, meeting: { id: m.slug, title: m.title, source },
     from: s(c.before, "start"), to: s(c.after, "start"),
     doc: d && typeof d.title === "string" ? { title: d.title, type: typeof d.type === "string" ? d.type : null,
       url: c.kind === "document_removed" ? null : httpUrl(typeof d.url === "string" ? d.url : undefined) } : null,
@@ -146,11 +149,12 @@ export function publicChange(c: MeetingChange, m: { slug: string; title: string 
 /** One recording as /api/recordings gives it (public fields only). */
 export const recordingView = (r: Recording | undefined): PublicRecording | null => (r ? toPublic(r) : null);
 
-export interface ListQuery { scope: "upcoming" | "past"; body?: string; from?: Date; to?: Date; q?: string; limit: number; offset: number }
+export interface ListQuery { scope: "upcoming" | "past"; body?: string; source?: string; from?: Date; to?: Date; q?: string; limit: number; offset: number }
 
 export function filterMeetings(all: PublicMeeting[], q: ListQuery, now: number): { meetings: PublicMeeting[]; total: number } {
   const needle = q.q?.trim().toLowerCase();
   let list = all.filter((p) => (q.scope === "upcoming") === isUpcoming(p, now));
+  if (q.source) list = list.filter((p) => (p.source ?? "").toLowerCase() === q.source!.toLowerCase());
   if (q.body) list = list.filter((p) => (p.body ?? "").toLowerCase() === q.body!.toLowerCase());
   if (q.from) list = list.filter((p) => Date.parse(p.start) >= q.from!.getTime());
   if (q.to) list = list.filter((p) => Date.parse(p.start) < q.to!.getTime());

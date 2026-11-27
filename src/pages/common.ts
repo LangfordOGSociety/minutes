@@ -360,7 +360,7 @@ function stagePill(stage) {
 }
 
 function meetingCard(m) {
-  var sub = [whenOf(m.start), m.body && m.body !== m.title ? m.body : null, m.duration ? hms(m.duration) : null].filter(Boolean).join(" · ");
+  var sub = [whenOf(m.start), m.source, m.body && m.body !== m.title ? m.body : null, m.duration ? hms(m.duration) : null].filter(Boolean).join(" · ");
   return el("a", { "class": "mcard", href: "/m/" + encodeURIComponent(m.id) },
     m.poster ? el("img", { "class": "p", src: m.poster, alt: "", loading: "lazy", width: "128", height: "72" }) : null,
     el("div", { "class": "b" }, el("div", { "class": "t" }, stagePill(m.stage), m.title), el("div", { "class": "s", text: sub })));

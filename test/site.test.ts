@@ -105,7 +105,7 @@ describe("public meetings API", () => {
     up = (await pub.get("/api/meetings?scope=upcoming")).json;
     assert.deepEqual(up.meetings.map((m: { title: string }) => m.title), ["Council Meeting", "Called off"]);
     const c = up.meetings[0];
-    assert.deepEqual(Object.keys(c).sort(), ["agendaUrl", "body", "cancelled", "documents", "duration", "end", "hasTranscript", "hasVideo", "id", "join", "live", "pageUrl", "poster", "stage", "start", "streamUrl", "title"]);
+    assert.deepEqual(Object.keys(c).sort(), ["agendaUrl", "body", "cancelled", "documents", "duration", "end", "hasTranscript", "hasVideo", "id", "join", "live", "pageUrl", "poster", "source", "stage", "start", "streamUrl", "title"]);
     assert.deepEqual([c.stage, c.body, c.agendaUrl, c.streamUrl], ["upcoming", "Council", "https://city.example/agenda/1", "https://city.example/video/1"]);
     assert.deepEqual(c.documents, [{ title: "Agenda", type: "Agenda", url: "https://city.example/agenda/1", copy: null }]);   // not the javascript: URL
     assert.equal(up.meetings[1].stage, "cancelled");

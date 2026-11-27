@@ -42,6 +42,7 @@ ${PUBLIC_CSS}
   <section>
     <h2>Past meetings</h2>
     <div class="filters">
+      <select id="f-source" aria-label="Municipality" hidden><option value="">All municipalities</option></select>
       <select id="f-body" aria-label="Body"><option value="">All bodies</option></select>
       <input id="f-from" type="date" aria-label="From date">
       <input id="f-to" type="date" aria-label="To date">
@@ -74,10 +75,10 @@ function loadUpcoming() {
   }, function (e) { offline(box, e); });
 }
 
-var shown = 0, haveBodies = false;
+var shown = 0, haveBodies = false, haveSources = false;
 function pastQuery(offset) {
   var q = "scope=past&limit=25&offset=" + offset;
-  [["body", "f-body"], ["from", "f-from"], ["to", "f-to"], ["q", "f-q"]].forEach(function (p) {
+  [["source", "f-source"], ["body", "f-body"], ["from", "f-from"], ["to", "f-to"], ["q", "f-q"]].forEach(function (p) {
     var v = document.getElementById(p[1]).value.trim();
     if (v) q += "&" + p[0] + "=" + encodeURIComponent(v);
   });
@@ -87,6 +88,12 @@ function loadPast(more) {
   var box = document.getElementById("past"), btn = document.getElementById("more");
   var offset = more ? shown : 0;
   return api("GET", "/api/meetings?" + pastQuery(offset)).then(function (d) {
+    if (!haveSources && d.sources && d.sources.length > 1) {
+      haveSources = true;
+      var ssel = document.getElementById("f-source");
+      d.sources.forEach(function (b) { ssel.appendChild(el("option", { value: b, text: b })); });
+      ssel.hidden = false;
+    }
     if (!haveBodies && d.bodies.length) {
       haveBodies = true;
       var sel = document.getElementById("f-body");
@@ -107,14 +114,15 @@ function loadUpdates() {
     if (!cs.length) { fill(box, el("div", { "class": "empty", text: "Nothing has changed lately." })); return; }
     fill.apply(null, [box].concat(cs.map(function (c) {
       return el("div", { "class": "upd" }, el("span", { "class": "w", text: ago(c.at) }),
-        el("span", {}, el("a", { href: "/m/" + encodeURIComponent(c.meeting.id), text: c.meeting.title }), ": " + changeText(c)));
+        el("span", {}, c.meeting.source ? el("span", { "class": "src", text: c.meeting.source + " · " }) : null,
+          el("a", { href: "/m/" + encodeURIComponent(c.meeting.id), text: c.meeting.title }), ": " + changeText(c)));
     })));
   }, function (e) { offline(box, e); });
 }
 
 var timer = null;
 function onFilter() { clearTimeout(timer); timer = setTimeout(function () { loadPast(false); }, 250); }
-["f-body", "f-from", "f-to"].forEach(function (id) { document.getElementById(id).addEventListener("change", function () { loadPast(false); }); });
+["f-source", "f-body", "f-from", "f-to"].forEach(function (id) { document.getElementById(id).addEventListener("change", function () { loadPast(false); }); });
 document.getElementById("f-q").addEventListener("input", onFilter);
 document.getElementById("more").addEventListener("click", function () { loadPast(true); });
 
