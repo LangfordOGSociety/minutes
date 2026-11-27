@@ -164,7 +164,9 @@ export class DocMirror {
           const error = r instanceof Error ? r.message : await this.store(d, r.bytes, now);
           if (error === null) { res.stored++; continue; }
           res.failed++;
-          this.o.db.prepare("UPDATE meeting_documents SET status = 'failed', error = ?, tries = tries + 1, tried_at = ? WHERE id = ?").run(error.slice(0, 300), now.toISOString(), d.id);
+          // A web page (a player or agenda page listed as a "document") won't become a file: don't keep trying.
+          const hopeless = /^a web page, not a document/.test(error) ? MAX_TRIES : 1;
+          this.o.db.prepare("UPDATE meeting_documents SET status = 'failed', error = ?, tries = tries + ?, tried_at = ? WHERE id = ?").run(error.slice(0, 300), hopeless, now.toISOString(), d.id);
           log.warn(`document ${d.title} (${d.url}): ${error}`);
         }
       }
