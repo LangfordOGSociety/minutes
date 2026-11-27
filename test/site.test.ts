@@ -105,7 +105,7 @@ describe("public meetings API", () => {
     const c = up.meetings[0];
     assert.deepEqual(Object.keys(c).sort(), ["agendaUrl", "body", "cancelled", "documents", "duration", "end", "hasTranscript", "hasVideo", "id", "live", "pageUrl", "poster", "stage", "start", "streamUrl", "title"]);
     assert.deepEqual([c.stage, c.body, c.agendaUrl, c.streamUrl], ["upcoming", "Council", "https://city.example/agenda/1", "https://city.example/video/1"]);
-    assert.deepEqual(c.documents, [{ title: "Agenda", type: "Agenda", url: "https://city.example/agenda/1" }]);   // not the javascript: URL
+    assert.deepEqual(c.documents, [{ title: "Agenda", type: "Agenda", url: "https://city.example/agenda/1", copy: null }]);   // not the javascript: URL
     assert.equal(up.meetings[1].stage, "cancelled");
     assert.deepEqual(up.bodies, ["Council"]);                                    // "Committee" isn't public yet
 

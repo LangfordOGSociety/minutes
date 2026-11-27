@@ -21,7 +21,7 @@ const meeting = {
     agendaUrl: { type: ["string", "null"], format: "uri" },
     pageUrl: { type: ["string", "null"], format: "uri", description: "The meeting on the city's own site." },
     streamUrl: { type: ["string", "null"], format: "uri", description: "The city's own live or recorded video page." },
-    documents: { type: "array", items: { type: "object", properties: { title: { type: "string" }, type: { type: ["string", "null"] }, url: { type: "string", format: "uri" } } } },
+    documents: { type: "array", items: { type: "object", properties: { title: { type: "string" }, type: { type: ["string", "null"] }, url: { type: "string", format: "uri" }, copy: { type: ["string", "null"], description: "Path of this site's stored copy, when there is one" } } } },
     hasVideo: { type: "boolean" },
     hasTranscript: { type: "boolean" },
     poster: { type: ["string", "null"], description: "A frame of the recording, a path on this site." },

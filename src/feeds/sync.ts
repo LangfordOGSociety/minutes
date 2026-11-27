@@ -48,7 +48,7 @@ import type { DetectedMeeting, MeetingDocument } from "./types.js";
 const log = logger("feeds");
 
 export type ChangeKind = "added" | "date_changed" | "time_changed" | "link_changed" | "cancelled" | "reinstated" | "removed" | "returned" |
-  "details_changed" | "document_added" | "document_removed" | "document_changed" | "approved" | "rejected" | "merged" | "split";
+  "details_changed" | "document_added" | "document_removed" | "document_changed" | "link_detected" | "link_removed" | "approved" | "rejected" | "merged" | "split";
 
 /** Same documents, by URL, in the same order? */
 function sameDocs(a: MeetingDocument[] | undefined, b: MeetingDocument[] | undefined): boolean {
@@ -388,6 +388,58 @@ export class Sync implements Applier {
     } else if (m.review === "pending") effect += "; waiting for review";
     this.logChange({ meetingId: m.id, feedId: m.feedId ?? null, runId: null, kind: "split", before: { duplicateOf: was?.slug ?? null }, after: null, effect }, new Date());
     return { meeting: this.meetings.get(m.id)!, effect };
+  }
+
+  /**
+   * The documents' text names this meeting's join link (`link`), or no
+   * longer does (null). Recorded whenever the result differs from the last
+   * one recorded (link_detected / link_removed: shown as platform + number,
+   * never the passcode). The meeting's link is set when it has none, or
+   * when it was itself taken from a document earlier; a link the feed gave
+   * is kept. Removed means only recorded: the link is left alone.
+   */
+  documentLink(m: Meeting, link: string | null, docTitle: string | undefined, feed: Feed | undefined, now = new Date()): void {
+    let norm: string | null = null;
+    if (link) { try { norm = checkLink(link).link; } catch { norm = null; } }
+    const shown = norm ? shownLink(norm) : null;
+    const last = this.changes({ meetingId: m.id, kinds: ["link_detected", "link_removed"], limit: 1 })[0];
+    const lastShown = last?.kind === "link_detected" && typeof last.after?.link === "string" ? last.after.link : null;
+    if (shown === lastShown) return;
+    const cur = this.meetings.get(m.id)!;
+    if (!norm || !shown) {
+      if (!lastShown) return;
+      this.logChange({ meetingId: m.id, feedId: m.feedId ?? null, runId: null, kind: "link_removed", before: { link: lastShown },
+        after: null, effect: "the documents no longer name a meeting ID; the meeting's link is unchanged" }, now);
+      return;
+    }
+    const curShown = shownLink(cur.link);
+    let effect: string;
+    if (!cur.link) {
+      cur.link = norm;
+      cur.platform = platformFor(norm)?.id ?? "";
+      this.meetings.save(cur);
+      effect = "set as the meeting's link";
+      try {
+        this.sched.updateMeeting(cur.id, { link: norm });
+        const live = this.meetings.get(cur.id)!;
+        if (feed && !this.sched.activeJobFor(cur.id) && this.wantsCapture(feed, live, now)) effect += `; capture ${this.sched.scheduleMeeting(cur.id).slug} scheduled`;
+      } catch (e) {
+        effect += `, but the capture step failed: ${(e as Error).message}`.slice(0, 200);
+      }
+    } else if (curShown === shown) {
+      effect = "the meeting already has this link";
+    } else if (curShown === lastShown) {
+      // The link came from an earlier document reading: this one replaces it.
+      cur.link = norm;
+      cur.platform = platformFor(norm)?.id ?? "";
+      this.meetings.save(cur);
+      effect = `replaced ${curShown}`;
+      try { this.sched.updateMeeting(cur.id, { link: norm }); } catch (e) { effect += `, but a capture wasn't updated: ${(e as Error).message}`.slice(0, 200); }
+    } else {
+      effect = `kept the existing link (${curShown})`;
+    }
+    this.logChange({ meetingId: m.id, feedId: m.feedId ?? null, runId: null, kind: "link_detected", before: lastShown ? { link: lastShown } : null,
+      after: { link: shown, ...(docTitle ? { document: docTitle } : {}) }, effect }, now);
   }
 
   changes(f: { meetingId?: string; feedId?: string; kinds?: ChangeKind[]; limit?: number }): MeetingChange[] {

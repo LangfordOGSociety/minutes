@@ -188,7 +188,8 @@ function renderLinks(m) {
   fill(box, el("h2", { text: "From the city" }),
     city.length ? wrap("div", { "class": "linkrow" }, city) : null,
     docs.length ? wrap("ul", { "class": "docs" }, docs.map(function (d) {
-      return el("li", {}, ext(d.url, d.title), d.type ? el("span", { "class": "k", text: d.type }) : null);
+      return el("li", {}, ext(d.url, d.title), d.type ? el("span", { "class": "k", text: d.type }) : null,
+        d.copy ? el("a", { "class": "k", href: d.copy, target: "_blank", rel: "noopener", text: "stored copy" }) : null);
     })) : null);
   box.hidden = false;
 }

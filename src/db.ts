@@ -281,6 +281,29 @@ const MIGRATIONS: string[] = [
      key TEXT PRIMARY KEY,
      at  TEXT NOT NULL
    );`,
+
+  // 15: mirrored meeting documents (src/docs.ts): one row per document a feed
+  // lists for a meeting, its stored copy, and the join link its text names.
+  `CREATE TABLE meeting_documents (
+     id           INTEGER PRIMARY KEY AUTOINCREMENT,
+     meeting_id   TEXT NOT NULL REFERENCES meetings(id) ON DELETE CASCADE,
+     url          TEXT NOT NULL,
+     title        TEXT NOT NULL,
+     type         TEXT,
+     status       TEXT NOT NULL DEFAULT 'pending',
+     file         TEXT,
+     name         TEXT,
+     content_type TEXT,
+     bytes        INTEGER,
+     sha256       TEXT,
+     link         TEXT,
+     error        TEXT,
+     tries        INTEGER NOT NULL DEFAULT 0,
+     tried_at     TEXT,
+     fetched_at   TEXT,
+     gone_at      TEXT,
+     UNIQUE (meeting_id, url)
+   );`,
 ];
 
 export function openDb(file: string): DB {
