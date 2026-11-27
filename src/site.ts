@@ -55,11 +55,11 @@ export interface PublicMeeting {
 }
 
 export type PublicChangeKind = "added" | "date_changed" | "time_changed" | "cancelled" | "reinstated" |
-  "document_added" | "document_changed" | "document_removed";
+  "document_added" | "document_changed" | "document_removed" | "transcript_started" | "transcript_done" | "transcript_failed";
 
 /** The kinds of change the public sees. Not link changes, review decisions, merges, feed removals. */
 export const PUBLIC_KINDS: ChangeKind[] = ["added", "date_changed", "time_changed", "cancelled", "reinstated",
-  "document_added", "document_changed", "document_removed"];
+  "document_added", "document_changed", "document_removed", "transcript_started", "transcript_done", "transcript_failed"];
 
 export interface PublicChange {
   at: string;

@@ -48,7 +48,7 @@ import type { DetectedMeeting, MeetingDocument } from "./types.js";
 const log = logger("feeds");
 
 export type ChangeKind = "added" | "date_changed" | "time_changed" | "link_changed" | "cancelled" | "reinstated" | "removed" | "returned" |
-  "details_changed" | "document_added" | "document_removed" | "document_changed" | "link_detected" | "link_removed" | "approved" | "rejected" | "merged" | "split";
+  "details_changed" | "document_added" | "document_removed" | "document_changed" | "link_detected" | "link_removed" | "transcript_started" | "transcript_done" | "transcript_failed" | "approved" | "rejected" | "merged" | "split";
 
 /** Same documents, by URL, in the same order? */
 function sameDocs(a: MeetingDocument[] | undefined, b: MeetingDocument[] | undefined): boolean {
@@ -440,6 +440,22 @@ export class Sync implements Applier {
     }
     this.logChange({ meetingId: m.id, feedId: m.feedId ?? null, runId: null, kind: "link_detected", before: lastShown ? { link: lastShown } : null,
       after: { link: shown, ...(docTitle ? { document: docTitle } : {}) }, effect }, now);
+  }
+
+  /**
+   * A transcription event for a meeting's history (transcript_started /
+   * transcript_done / transcript_failed), at the time it really happened.
+   * Once per `key` (the recording and the moment), however often the status
+   * is looked at; returns whether it was new.
+   */
+  transcriptEvent(m: Meeting, key: string, kind: ChangeKind, at: Date, after: Rec | null, effect: string): boolean {
+    const k = `tevent:${key}`;
+    return tx(this.db, () => {
+      if (this.db.prepare("SELECT 1 FROM ops_notified WHERE key = ?").get(k)) return false;
+      this.logChange({ meetingId: m.id, feedId: m.feedId ?? null, runId: null, kind, before: null, after, effect }, at);
+      this.db.prepare("INSERT INTO ops_notified (key, at) VALUES (?, ?)").run(k, new Date().toISOString());
+      return true;
+    });
   }
 
   changes(f: { meetingId?: string; feedId?: string; kinds?: ChangeKind[]; limit?: number }): MeetingChange[] {

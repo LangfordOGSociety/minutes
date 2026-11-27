@@ -263,6 +263,16 @@ captures).
   replace them, atomically). Refused: no video (404), still being captured
   (409), already working (409), already waiting (409). Admin page: "Retry
   transcript" (failed) / "Transcribe again" (done). Audited transcript.redo.
+- Transcription in the history: `recordTranscripts` (serve.ts, every 2 min
+  with the search sync and on `checkTranscripts()`) reads each recording's
+  transcript.status.json and writes `transcript_started` (status `started`),
+  `transcript_done` (`finished`) and `transcript_failed` (`updated`) to
+  meeting_changes through `Sync.transcriptEvent`, AT THE TIMES THE
+  TRANSCRIBER WROTE (so existing transcripts are backfilled with their real
+  times), once per recording+moment (keys `tevent:...` in ops_notified; a
+  "Transcribe again" is new entries). They are PUBLIC kinds ("Transcription
+  started", "Transcript ready", "Transcription failed", no error text) and
+  /api/changes is sorted by `at`. The live draft isn't an event.
 - `src/ops.ts` messages to the operator (CAPTURE_NOTIFY_URL, ntfy-style;
   `notify(url, text, {priority, tags})`): `Scheduler.onEvent` emits
   started / finished / overdue (a capture still not started 10 min after

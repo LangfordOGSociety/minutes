@@ -377,6 +377,9 @@ function changeText(c) {
     case "document_added": return "Added " + d;
     case "document_changed": return "Updated " + d;
     case "document_removed": return "Removed " + d;
+    case "transcript_started": return "Transcription started";
+    case "transcript_done": return "Transcript ready";
+    case "transcript_failed": return "Transcription failed";
   }
   return c.kind;
 }
