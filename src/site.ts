@@ -25,7 +25,7 @@ export const OVER_AFTER_MS = 4 * 3_600_000;
 /** A finished capture with no video yet is "processing" this long, then "failed". */
 export const STITCH_WAIT_MS = 6 * 3_600_000;
 
-export interface PublicDoc { title: string; type: string | null; url: string }
+export interface PublicDoc { title: string; type: string | null; url: string; copy: string | null }
 
 export interface PublicMeeting {
   id: string;                    // the slug
@@ -93,13 +93,13 @@ export function isUpcoming(p: PublicMeeting, now: number): boolean {
   return p.stage === "cancelled" && Date.parse(p.start) + 2 * 3_600_000 > now;
 }
 
-export function toPublicMeeting(m: Meeting, jobs: Job[], rec: Recording | undefined, now: number): PublicMeeting {
+export function toPublicMeeting(m: Meeting, jobs: Job[], rec: Recording | undefined, now: number, copies?: Map<string, string>): PublicMeeting {
   const stage = stageOf(m, jobs, rec, now);
   return {
     id: m.slug, title: m.title, body: m.body ?? null, start: m.start, end: m.endEst ?? null, stage,
     cancelled: m.status === "cancelled",
     agendaUrl: httpUrl(m.agendaUrl), pageUrl: httpUrl(m.pageUrl), streamUrl: httpUrl(m.streamUrl),
-    documents: (m.documents ?? []).flatMap((d) => { const url = httpUrl(d.url); return url ? [{ title: d.title, type: d.type ?? null, url }] : []; }),
+    documents: (m.documents ?? []).flatMap((d) => { const url = httpUrl(d.url); return url ? [{ title: d.title, type: d.type ?? null, url, copy: copies?.get(d.url) ?? null }] : []; }),
     hasVideo: !!rec?.video && stage !== "cancelled", hasTranscript: !!rec?.files.transcript && stage !== "cancelled",
     poster: rec?.public && rec.files.thumb && stage !== "cancelled" ? `/media/${encodeURIComponent(rec.slug)}/${encodeURIComponent(rec.files.thumb)}` : null,
     duration: rec?.duration ?? null, live: stage === "live",

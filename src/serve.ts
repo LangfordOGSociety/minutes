@@ -66,6 +66,8 @@
  *   PATCH  /api/admin/feeds/:id      same fields, all optional
  *   DELETE /api/admin/feeds/:id
  *   POST   /api/admin/feeds/:id/run  poll now
+ *   POST   /api/admin/documents/run  fetch the meeting documents that are due now (docs.ts)
+ *   GET    /doc/:id/:name            a meeting's stored document (public meetings only)
  *   POST   /api/admin/feeds/preview  {parser, config, feedId?}: fetch + parse (+ diff), nothing saved
  *   GET    /api/admin/feeds/:id/changes  what its runs changed
  *   GET    /api/admin/meetings?view=review|upcoming|recent
@@ -103,6 +105,8 @@ import { Poller, healthOf } from "./feeds/poller.js";
 import { parserById, parsers } from "./feeds/registry.js";
 import { FeedError, Feeds, type Feed } from "./feeds/store.js";
 import { Sync, shownLink } from "./feeds/sync.js";
+import { DocMirror } from "./docs.js";
+import { browserFetcher, type DocFetcher } from "./docfetch.js";
 import { isArchive, platformFor as platformOf } from "./platforms/registry.js";
 import type { Meeting } from "./meetings.js";
 import { ConfigError } from "./feeds/types.js";
@@ -160,6 +164,10 @@ export interface ServeOpts extends Omit<SchedulerOpts, "entry"> {
   backup: Omit<NightlyOpts, "auth" | "notifyUrl"> | null;
   /** Poll feeds on their schedule (off in tests: they use Run now). */
   pollFeeds?: boolean;
+  /** Mirror meeting documents (docs.ts): a fetcher, or false for off (tests). Default: the headed browser on DISPLAY (:99). */
+  docMirror?: DocFetcher | false;
+  /** Read a stored PDF's text (default: pdftotext). */
+  docText?: (file: string) => Promise<string | null>;
 }
 
 const MEDIA_TYPES: Record<string, string> = {
@@ -346,6 +354,8 @@ export interface App {
   tokens: Tokens;
   search: Search;
   alerts: Alerts;
+  /** Mirrored meeting documents and the join links read from them. */
+  docs: DocMirror;
   /** Look at transcript status now and tell the operator about new ones (it also runs by itself). */
   checkTranscripts(): void;
   /** Email alert matches for meetings not handled yet (it also runs after each search index pass). */
@@ -410,6 +420,10 @@ export function createApp(o: ServeOpts, entry: string): App {
   const sync = new Sync(db, sched, o.tz, o.session.notifyUrl);
   const poller = new Poller(feeds, { tz: o.tz }, sync);
   if (o.pollFeeds !== false) poller.start();
+  // Meeting documents are kept (and read for join links) under <out>/.documents, which listRecordings never looks at.
+  const docs = new DocMirror({ db, dir: path.join(o.out, ".documents"), meetings: sched.meetings, sync, feedOf: (id) => feeds.get(id),
+    fetcher: o.docMirror || browserFetcher({ display: process.env.DISPLAY ?? ":99" }), textOf: o.docText });
+  if (o.docMirror !== false) docs.start();
   /** A feed as the admin page sees it. */
   const adminFeed = (f: Feed) => ({ ...f, httpCache: undefined, health: healthOf(f), running: poller.isRunning(f.id),
     parserLabel: parserById(f.parser)?.label ?? f.parser, runs: feeds.runs(f.id, 10) });
@@ -525,7 +539,7 @@ export function createApp(o: ServeOpts, entry: string): App {
       const jobs = jobsBy.get(m.id) ?? [], rec = recordingOf(jobs, recs);
       // Gone from its feed before it happened: nothing to show (a recording keeps it).
       if (m.removedAt && !rec?.video && Date.parse(m.start) > now - OVER_AFTER_MS) continue;
-      entries.push({ m, p: toPublicMeeting(m, jobs, rec, now), rec, jobs });
+      entries.push({ m, p: toPublicMeeting(m, jobs, rec, now, docs.copiesOf(m.id)), rec, jobs });
     }
     // A shared link may carry a capture's folder name (slug-2, or an old recording link).
     const find = (slug: string) => entries.find((e) => e.m.slug === slug)
@@ -705,6 +719,18 @@ export function createApp(o: ServeOpts, entry: string): App {
         openCors(res);
         const r = publicRecordings().find((x) => x.slug === parts[1]);
         return media(parts[1], parts[2], (_, f) => !!r && publicFiles(r).has(f));
+      }
+      if (parts[0] === "doc" && parts.length === 3 && read) {
+        if (!allow("watch")) return;
+        const d = /^\d{1,9}$/.test(parts[1]) ? docs.get(Number(parts[1])) : undefined;
+        const dm = d && sched.meetings.get(d.meetingId);
+        const f = d && docs.filePath(d);
+        if (!d || d.status !== "stored" || !dm || !visible(dm) || !f || !existsSync(f) || parts[2] !== d.name) return send(res, 404, "not found");
+        const inline = /^(application\/pdf|image\/)/.test(d.contentType ?? "");
+        res.writeHead(200, { "Content-Type": d.contentType ?? "application/octet-stream", "Content-Length": String(statSync(f).size), "Cache-Control": "no-cache",
+          "Content-Disposition": `${inline ? "inline" : "attachment"}; filename*=UTF-8''${encodeURIComponent(d.name ?? "document")}`,
+          "X-Content-Type-Options": "nosniff", "Content-Security-Policy": "sandbox; default-src 'none'; style-src 'unsafe-inline'; img-src data:" });
+        return req.method === "HEAD" ? void res.end() : void createReadStream(f).pipe(res);
       }
       if (parts[0] === "api" && parts[1] === "recordings" && parts.length === 2 && read) {
         if (!allow("watch")) return;
@@ -1132,6 +1158,10 @@ export function createApp(o: ServeOpts, entry: string): App {
             return send(res, 200, { names });
           }
         }
+        if (what === "documents" && parts.length === 4 && parts[3] === "run" && method === "POST") {
+          audit.record(actor, "documents.run", { type: "documents", id: "all", label: "meeting documents" }, null, { trigger: "manual" });
+          return send(res, 200, await docs.run());
+        }
         if (what === "feeds") {
           if (parts.length === 3 && read) {
             return send(res, 200, {
@@ -1344,7 +1374,7 @@ export function createApp(o: ServeOpts, entry: string): App {
   });
 
   return {
-    server, accounts, sched, audit, tokens, search, syncSearch, syncThumbs, alerts, processAlerts, checkTranscripts: opsTranscripts,
+    server, accounts, sched, audit, tokens, search, docs, syncSearch, syncThumbs, alerts, processAlerts, checkTranscripts: opsTranscripts,
     async close() {
       server.close();
       server.closeAllConnections();
@@ -1356,6 +1386,7 @@ export function createApp(o: ServeOpts, entry: string): App {
       keeper.stop();
       backups?.stop();
       poller.stop();
+      docs.stop();
       await sched.shutdown();
       db.close();
     },

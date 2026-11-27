@@ -1,6 +1,12 @@
 # Rust transcriber: investigation (#50)
 
-Status: investigation only, nothing built. Written 2026-11-26 from the
+**Decision (2026-11-26): won't do (#50 closed).** Nothing was built. The
+rewrite would not make transcription faster or more accurate, and
+diarization would likely get worse. Reopen only if image size, CI build time
+or memory become a real problem that slimming the Python image can't fix;
+start from the plan below.
+
+Status: investigation only. Written 2026-11-26 from the
 current Python transcriber (`transcriber/transcribe.py`, 785 lines) and web
 research. Numbers marked "reported" are other people's, on similar but not
 identical hardware, and must be re-measured here before deciding anything.

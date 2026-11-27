@@ -280,6 +280,33 @@ captures).
   `notify()` call (login, backups, feeds, ops) also email that address
   (module-level sink, set by createApp, cleared on close). Production had
   no CAPTURE_NOTIFY_URL and no push service in the cluster, hence this.
+- `src/docs.ts` + `src/docfetch.ts` the document mirror (migration 15
+  `meeting_documents`). Every document a feed lists for a meeting (within
+  120 days) is fetched once and stored under `<out>/.documents/<meeting>/
+  <id>-<name>.<ext>` (PDF, Word/Excel/PowerPoint, PNG, JPEG by first
+  bytes, 25 MB; a web page/bot check is a failure, retried 10 min x 2^tries,
+  5 tries; a document the feed drops keeps its copy, `gone_at`). Fetching
+  needs a HEADED browser: Langford's eScribe FileStream.ashx sits behind a
+  Cloudflare check that refuses curl and headless Chromium (verified
+  2026-11-26 from the cluster); headed Chromium on the pod's Xvfb :99 opens
+  a page of the site and `fetch()`es the file from inside it (one origin,
+  one file at a time, 1 s apart, its own user agent, nothing forged; if the
+  check shows up anyway it's a recorded failure). `ServeOpts.docMirror`
+  injects a fake in tests (`false` = off, the test default). `POST /api/
+  admin/documents/run` runs a pass now. The text of each stored PDF
+  (`pdftotext`, poppler-utils in the image) goes through the platforms'
+  `findLink`: the Dec 1 2026 Langford special meeting's Zoom ID is only in
+  its "Dial in Instructions" PDF ("Special Council Meeting ID: 886 0437
+  7392"). `Sync.documentLink` writes `link_detected` / `link_removed` to
+  meeting_changes whenever the result differs from the last recorded one
+  (platform + number only, never the passcode; admin history only, not in
+  the public one), sets the meeting's link and schedules the capture per the
+  feed's policy when it had none, replaces it if an earlier document reading
+  gave it, and never replaces a link the feed gave (recorded "kept the
+  existing link"). Removed = recorded, the link stays. Public: the meeting
+  JSON's documents have `copy` (`/doc/<id>/<name>`, visible meetings only,
+  nosniff + CSP sandbox) and the page shows "stored copy" next to the
+  city's link.
 - `src/recordings.ts` recordings on disk, admin view and public view.
   Public = a job made it, its meeting is public and not cancelled, video or
   live. `publicFiles()` is the only list /media serves from (never

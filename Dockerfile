@@ -53,7 +53,7 @@ RUN set -e; \
     if [ "$(dpkg --print-architecture)" = "amd64" ]; then intel="intel-media-va-driver"; fi; \
     apt-get update; \
     apt-get install -y --no-install-recommends \
-      xvfb x11-utils pulseaudio pulseaudio-utils ffmpeg \
+      xvfb x11-utils pulseaudio pulseaudio-utils ffmpeg poppler-utils \
       mesa-va-drivers $intel; \
     rm -rf /var/lib/apt/lists/* /root/.cache /root/.npm /tmp/*; \
     useradd -m -u 1000 -s /bin/bash pwuser; \
