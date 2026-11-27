@@ -67,7 +67,7 @@ var P = new URLSearchParams(location.search), shown = 0, QS = "";
 function hitCard(h) {
   var text = el("div", { "class": "x" });
   h.parts.forEach(function (p) { text.appendChild(p.hit ? el("mark", { text: p.text }) : document.createTextNode(p.text)); });
-  var meta = [whenOf(h.meeting.start), h.meeting.body && h.meeting.body !== h.meeting.title ? h.meeting.body : null, "at " + hms(h.t), h.speaker].filter(Boolean).join(" · ");
+  var meta = [whenOf(h.meeting.start), h.meeting.source, h.meeting.body && h.meeting.body !== h.meeting.title ? h.meeting.body : null, "at " + hms(h.t), h.speaker].filter(Boolean).join(" · ");
   return el("div", { "class": "hit" }, el("a", { "class": "t", href: h.url, text: h.meeting.title }), el("div", { "class": "m", text: meta }), text);
 }
 

@@ -534,6 +534,8 @@ export function createApp(o: ServeOpts, entry: string): App {
   thumbTimer.unref();
   if (o.thumbnails !== false) setImmediate(() => void syncThumbs());
 
+  /** The feed a meeting came from, by its name: what the public pages call its municipality. */
+  const sourceOf = (m: Meeting): string | null => (m.feedId ? feeds.get(m.feedId)?.name ?? null : null);
   /** Every meeting the public may see, with what became of it (see site.ts). */
   const publicSite = (now = Date.now()) => {
     const recs = new Map<string, Recording>(listRecordings(o.out, sched, o.tz).map((r) => [r.slug, r]));
@@ -545,7 +547,7 @@ export function createApp(o: ServeOpts, entry: string): App {
       const jobs = jobsBy.get(m.id) ?? [], rec = recordingOf(jobs, recs);
       // Gone from its feed before it happened: nothing to show (a recording keeps it).
       if (m.removedAt && !rec?.video && Date.parse(m.start) > now - OVER_AFTER_MS) continue;
-      entries.push({ m, p: toPublicMeeting(m, jobs, rec, now, docs.copiesOf(m.id)), rec, jobs });
+      entries.push({ m, p: toPublicMeeting(m, jobs, rec, now, docs.copiesOf(m.id), sourceOf(m)), rec, jobs });
     }
     // A shared link may carry a capture's folder name (slug-2, or an old recording link).
     const find = (slug: string) => entries.find((e) => e.m.slug === slug)
@@ -765,7 +767,7 @@ export function createApp(o: ServeOpts, entry: string): App {
         const r = search.search(q, { meetingIds: [...byId.keys()], limit: int(sp.get("limit"), 20, 1, 50), offset: Math.max(Number.parseInt(sp.get("offset") ?? "", 10) || 0, 0) });
         return send(res, 200, { query: q, terms: r.terms, total: r.total, hits: r.hits.flatMap((h) => {
           const e = byId.get(h.meetingId);
-          return e ? [{ meeting: { id: e.p.id, title: e.p.title, body: e.p.body, start: e.p.start }, t: Math.floor(h.start), speaker: h.speaker || null, parts: h.parts,
+          return e ? [{ meeting: { id: e.p.id, title: e.p.title, body: e.p.body, source: e.p.source, start: e.p.start }, t: Math.floor(h.start), speaker: h.speaker || null, parts: h.parts,
             url: `/m/${encodeURIComponent(e.p.id)}?t=${Math.floor(h.start)}` }] : [];
         }) });
       }
@@ -782,12 +784,13 @@ export function createApp(o: ServeOpts, entry: string): App {
           const int = (s: string | null, d: number, lo: number, hi: number) => Math.min(Math.max(Number.parseInt(s ?? "", 10) || d, lo), hi);
           const all = site.entries.map((e) => e.p);
           const r = filterMeetings(all, {
-            scope: sp.get("scope") === "past" ? "past" : "upcoming", body: sp.get("body")?.slice(0, 100) || undefined,
+            scope: sp.get("scope") === "past" ? "past" : "upcoming", body: sp.get("body")?.slice(0, 100) || undefined, source: sp.get("source")?.slice(0, 100) || undefined,
             from: day(sp.get("from")), to: day(sp.get("to"), 1), q: sp.get("q")?.slice(0, 100) || undefined,
             limit: int(sp.get("limit"), 50, 1, 200), offset: Math.max(Number.parseInt(sp.get("offset") ?? "", 10) || 0, 0),
           }, site.now);
           const bodies = [...new Set(all.map((p) => p.body).filter((b): b is string => !!b))].sort((a, b) => a.localeCompare(b));
-          return send(res, 200, { ...r, bodies });
+          const sources = [...new Set(all.map((p) => p.source).filter((b): b is string => !!b))].sort((a, b) => a.localeCompare(b));
+          return send(res, 200, { ...r, bodies, sources });
         }
         const e = site.find(rp[2]);
         if (!e) return send(res, 404, { error: "no such meeting" });
@@ -800,7 +803,7 @@ export function createApp(o: ServeOpts, entry: string): App {
         }
         const live = e.jobs.find((j) => j.status === "running" || j.status === "stopping");
         const history = sync.changes({ meetingId: e.m.id, kinds: PUBLIC_KINDS, limit: 100 })
-          .flatMap((c) => publicChange(c, e.m) ?? []);
+          .flatMap((c) => publicChange(c, e.m, e.p.source) ?? []);
         return send(res, 200, { ...e.p, recording: e.rec?.public ? toPublic(e.rec) : null, startedAt: live?.launchedAt ?? null, history });
       }
       if (rp[0] === "api" && rp[1] === "changes" && rp.length === 2 && read) {
@@ -812,7 +815,7 @@ export function createApp(o: ServeOpts, entry: string): App {
         const limit = Math.min(Math.max(Number.parseInt(url.searchParams.get("limit") ?? "", 10) || 30, 1), 100);
         const list = sync.changes({ kinds: PUBLIC_KINDS, limit: 1000 }).flatMap((c) => {
           const m = byId.get(c.meetingId);
-          const pc = m && publicChange(c, m);
+          const pc = m && publicChange(c, m, sourceOf(m));
           // Meetings listed after the fact (history imports) aren't news.
           if (!pc || (pc.kind === "added" && Date.parse(pc.to ?? "") < Date.parse(pc.at))) return [];
           return [pc];

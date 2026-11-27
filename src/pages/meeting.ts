@@ -110,7 +110,7 @@ function banner(m) {
 
 function renderHead(m) {
   var facts = el("div", { "class": "facts" }, stagePill(m.stage), whenOf(m.start),
-    m.body && m.body !== m.title ? " · " + m.body : null, m.duration ? " · " + hms(m.duration) : null);
+    m.source ? " · " + m.source : null, m.body && m.body !== m.title ? " · " + m.body : null, m.duration ? " · " + hms(m.duration) : null);
   fill(document.getElementById("head"), el("h2", { "class": "mtitle", text: m.title }), facts, banner(m));
 }
 

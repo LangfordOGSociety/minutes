@@ -18,6 +18,8 @@ const meeting = {
     end: { type: ["string", "null"], format: "date-time" },
     stage: { type: "string", enum: stage },
     cancelled: { type: "boolean" },
+    source: { type: ["string", "null"], description: "Which municipality or feed the meeting comes from (e.g. Langford Council, Saanich Council); null for one entered by hand." },
+    join: { type: ["object", "null"], description: "How to join an upcoming or live Zoom meeting: its number only, never the passcode.", properties: { platform: { type: "string" }, id: { type: "string" }, url: { type: "string", format: "uri" } } },
     agendaUrl: { type: ["string", "null"], format: "uri" },
     pageUrl: { type: ["string", "null"], format: "uri", description: "The meeting on the city's own site." },
     streamUrl: { type: ["string", "null"], format: "uri", description: "The city's own live or recorded video page." },
@@ -67,13 +69,14 @@ export function openApi(server: string): object {
           parameters: [
             { name: "scope", in: "query", schema: { type: "string", enum: ["upcoming", "past"], default: "upcoming" } },
             { name: "body", in: "query", schema: { type: "string" }, description: "Only this body (council, committee), as named in `bodies`." },
+            { name: "source", in: "query", schema: { type: "string" }, description: "Only this municipality or feed, as named in `sources`." },
             { name: "from", in: "query", schema: { type: "string", format: "date" }, description: "On or after this local day." },
             { name: "to", in: "query", schema: { type: "string", format: "date" }, description: "On or before this local day." },
             { name: "q", in: "query", schema: { type: "string" }, description: "Words in the title or body." },
             { name: "limit", in: "query", schema: { type: "integer", minimum: 1, maximum: 200, default: 50 } },
             { name: "offset", in: "query", schema: { type: "integer", minimum: 0, default: 0 } },
           ],
-          responses: { 200: ok({ type: "object", properties: { meetings: { type: "array", items: meeting }, total: { type: "integer" }, bodies: { type: "array", items: { type: "string" } } } }) },
+          responses: { 200: ok({ type: "object", properties: { meetings: { type: "array", items: meeting }, total: { type: "integer" }, bodies: { type: "array", items: { type: "string" } }, sources: { type: "array", items: { type: "string" } } } }) },
         },
       },
       "/api/v1/meetings/{id}": {
@@ -182,7 +185,7 @@ td:first-child { white-space: nowrap; }
 <h2>Endpoints</h2>
 <table>
 <tr><th>GET</th><th></th></tr>
-<tr><td><code>/api/v1/meetings</code></td><td>List: <code>scope=upcoming|past</code>, <code>body</code>, <code>from</code>, <code>to</code> (local days), <code>q</code>, <code>limit</code> (200 max), <code>offset</code>. Returns <code>{meetings, total, bodies}</code>.</td></tr>
+<tr><td><code>/api/v1/meetings</code></td><td>List: <code>scope=upcoming|past</code>, <code>body</code>, <code>source</code> (municipality), <code>from</code>, <code>to</code> (local days), <code>q</code>, <code>limit</code> (200 max), <code>offset</code>. Returns <code>{meetings, total, bodies, sources}</code>.</td></tr>
 <tr><td><code>/api/v1/meetings/{id}</code></td><td>One meeting with its recording and its history (announced, moved, cancelled, documents).</td></tr>
 <tr><td><code>/api/v1/meetings/{id}/status</code></td><td>Stage (<code>upcoming</code>, <code>live</code>, <code>stitching</code>, <code>video_ready</code>, <code>ready</code>, <code>failed</code>, <code>not_recorded</code>, <code>cancelled</code>) and transcription progress. Small enough to poll.</td></tr>
 <tr><td><code>/api/v1/meetings/{id}/files</code></td><td>The recording's files: video, subtitles (VTT, SRT), transcript (text, JSON), Zoom captions.</td></tr>
