@@ -100,6 +100,7 @@ import { BadRequest, Scheduler, type Job, type SchedulerOpts } from "./jobs.js";
 import type { Mailer } from "./mail.js";
 import { Proxies, SECURITY_HEADERS, embedAncestors, pageCsp } from "./net.js";
 import { EMBED_PAGE } from "./pages/embed.js";
+import { EMBED_LIST_PAGE } from "./pages/embedlist.js";
 import "./feeds/parsers/index.js";
 import { Poller, healthOf } from "./feeds/poller.js";
 import { parserById, parsers } from "./feeds/registry.js";
@@ -458,10 +459,10 @@ export function createApp(o: ServeOpts, entry: string): App {
     log.warn("no BACKUP_DIR: nightly backups are off");
   }
 
-  const pages = Object.fromEntries(Object.entries({ public: PUBLIC_PAGE, admin: ADMIN_PAGE, login: LOGIN_PAGE, feeds: FEEDS_PAGE, meeting: MEETING_PAGE, embed: EMBED_PAGE, search: SEARCH_PAGE, stop: STOP_PAGE }).map(([k, html]) => {
+  const pages = Object.fromEntries(Object.entries({ public: PUBLIC_PAGE, admin: ADMIN_PAGE, login: LOGIN_PAGE, feeds: FEEDS_PAGE, meeting: MEETING_PAGE, embed: EMBED_PAGE, embedlist: EMBED_LIST_PAGE, search: SEARCH_PAGE, stop: STOP_PAGE }).map(([k, html]) => {
     const body = html.replace("__TZ__", JSON.stringify(o.tz));
     return [k, { body, csp: pageCsp(body) }];
-  })) as Record<"public" | "admin" | "login" | "feeds" | "meeting" | "embed" | "search" | "stop", { body: string; csp: string }>;
+  })) as Record<"public" | "admin" | "login" | "feeds" | "meeting" | "embed" | "embedlist" | "search" | "stop", { body: string; csp: string }>;
   const sendPage = (res: http.ServerResponse, p: { body: string; csp: string }) =>
     send(res, 200, p.body, { "Content-Type": "text/html; charset=utf-8", "Content-Security-Policy": p.csp });
 
@@ -871,6 +872,11 @@ export function createApp(o: ServeOpts, entry: string): App {
         ].join("\n");
         const body = pages.meeting.body.replace("__TITLE__", () => esc(title)).replace("__DESC__", () => esc(desc)).replace("__HEAD__", () => head);
         return send(res, 200, body, { "Content-Type": "text/html; charset=utf-8", "Content-Security-Policy": pageCsp(body) });
+      }
+      if (parts[0] === "embed" && parts[1] === "upcoming" && parts.length === 2 && read) {
+        // The next meetings as a list, for other sites' iframes (embedlist.ts); same framing rule as the video.
+        res.removeHeader("X-Frame-Options");
+        return send(res, 200, pages.embedlist.body, { "Content-Type": "text/html; charset=utf-8", "Content-Security-Policy": pageCsp(pages.embedlist.body, frameAncestors) });
       }
       if (parts[0] === "embed" && parts.length === 2 && read) {
         // The video on its own, for other sites' iframes (embed.ts). The one page that may be framed.

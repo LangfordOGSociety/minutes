@@ -24,12 +24,16 @@ export const BASE_CSS = String.raw`
 * { box-sizing: border-box; }
 body { margin: 0; background: var(--bg); color: var(--ink);
   font: 15px/1.45 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; }
-header { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; padding: 20px 24px 8px; }
+header { display: flex; align-items: center; gap: 6px 22px; flex-wrap: wrap; padding: 10px 24px; background: var(--panel); border-bottom: 1px solid var(--line); }
 header h1 { font-size: 18px; margin: 0; letter-spacing: -.01em; }
 header h1 a { color: inherit; text-decoration: none; }
 header .meta { color: var(--muted); font-size: 13px; }
 header .me { margin-left: auto; color: var(--muted); font-size: 13px; }
-@media (max-width: 900px) { header { padding: 16px 16px 4px; } }
+nav.site { display: flex; gap: 4px; flex-wrap: wrap; }
+nav.site a { color: var(--ink); text-decoration: none; padding: 5px 10px; border-radius: 7px; font-size: 14px; }
+nav.site a:hover { background: var(--bg); }
+nav.site a[aria-current] { background: var(--bg); font-weight: 600; box-shadow: inset 0 -2px 0 var(--accent); border-radius: 7px 7px 0 0; }
+@media (max-width: 900px) { header { padding: 8px 16px; } header .me { flex-basis: 100%; margin-left: 0; } }
 section { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; box-shadow: var(--shadow); padding: 16px; min-width: 0; }
 section + section { margin-top: 20px; }
 h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 0 0 12px; font-weight: 600; }
@@ -139,15 +143,28 @@ function api(method, url, body, signIn) {
   });
 }
 
-// Header: who's signed in, links, sign out.
+// Site nav (same on every page) in a <nav> placed before the box; the box
+// holds who is signed in and the account links.
+var NAV = [["Meetings", "/", function (p) { return p === "/" || p.indexOf("/m/") === 0; }],
+  ["Search", "/search", function (p) { return p === "/search"; }],
+  ["Embed & API", "/account#embed", function (p) { return p === "/account"; }]];
+function siteNav(box, extra) {
+  var nav = document.getElementById("sitenav");
+  if (!nav) { nav = el("nav", { "class": "site", id: "sitenav", "aria-label": "Site" }); box.parentNode.insertBefore(nav, box); }
+  var p = location.pathname;
+  var items = NAV.map(function (n) { return [n[0], n[1], n[2](p)]; }).concat(extra || []);
+  fill.apply(null, [nav].concat(items.map(function (n) { return el("a", { href: n[1], text: n[0], "aria-current": n[2] ? "page" : null }); })));
+}
 function renderMe(box, admin) {
+  siteNav(box);
   api("GET", "/api/me").then(function (d) {
     var u = d.user;
+    var isAdmin = !!u && u.caps.indexOf("admin.view") >= 0;
+    if (isAdmin) siteNav(box, [["Admin", "/admin", location.pathname.indexOf("/admin") === 0]]);
     if (!u) { fill(box, el("a", { href: "/login?next=" + encodeURIComponent(location.pathname), text: "Sign in" })); return; }
     var links = [u.email];
     if (!u.verified && d.signup) links.push(el("a", { href: "/account", text: "confirm your email" }));
     if (admin) links.push(el("a", { href: "/", text: "public site" }));
-    else if (u.caps.indexOf("admin.view") >= 0) links.push(el("a", { href: "/admin", text: "admin" }));
     links.push(el("a", { href: "/account", text: "account" }));
     links.push(el("a", { href: "#", text: "sign out", on: { click: function (ev) {
       ev.preventDefault(); api("POST", "/api/logout").then(function () { location.href = admin ? "/login" : "/"; });
@@ -290,6 +307,9 @@ main { max-width: 1100px; margin: 0 auto; padding: 12px 24px 40px; }
 .mcard .b { min-width: 0; flex: 1; }
 @media (max-width: 480px) { .mcard .p { width: 88px; } }
 .mcard:hover, .mcard:focus-visible { border-color: var(--accent); outline: none; }
+.mh { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; margin-bottom: 3px; }
+.mh .pill { margin: 0; }
+.muni { font-size: 12px; font-weight: 700; padding: 2px 8px; border-radius: 999px; background: var(--accent); color: var(--accent-ink); }
 .mcard .t { font-weight: 600; overflow-wrap: anywhere; }
 .mcard .s { color: var(--muted); font-size: 13px; margin-top: 2px; overflow-wrap: anywhere; }
 .s-upcoming { color: var(--accent); } .s-processing { color: var(--warn); } .s-ready { color: var(--ok); }
@@ -360,10 +380,12 @@ function stagePill(stage) {
 }
 
 function meetingCard(m) {
-  var sub = [whenOf(m.start), m.source, m.body && m.body !== m.title ? m.body : null, m.duration ? hms(m.duration) : null].filter(Boolean).join(" · ");
+  var sub = [whenOf(m.start), m.body && m.body !== m.title ? m.body : null, m.duration ? hms(m.duration) : null].filter(Boolean).join(" · ");
   return el("a", { "class": "mcard", href: "/m/" + encodeURIComponent(m.id) },
     m.poster ? el("img", { "class": "p", src: m.poster, alt: "", loading: "lazy", width: "128", height: "72" }) : null,
-    el("div", { "class": "b" }, el("div", { "class": "t" }, stagePill(m.stage), m.title), el("div", { "class": "s", text: sub })));
+    el("div", { "class": "b" },
+      el("div", { "class": "mh" }, m.source ? el("span", { "class": "muni", text: m.source }) : null, stagePill(m.stage)),
+      el("div", { "class": "t", text: m.title }), el("div", { "class": "s", text: sub })));
 }
 
 function changeText(c) {

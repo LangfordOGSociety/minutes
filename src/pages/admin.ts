@@ -19,8 +19,29 @@ export const ADMIN_PAGE = String.raw`<!doctype html>
 <link rel="icon" href="data:,">
 <style>
 ${BASE_CSS}
-main { display: grid; grid-template-columns: minmax(320px, 420px) 1fr; gap: 20px; padding: 12px 24px 40px; align-items: start; }
-@media (max-width: 900px) { main { grid-template-columns: 1fr; padding: 12px 16px 32px; } }
+main { padding: 16px 24px 40px; max-width: 1200px; margin: 0 auto; }
+main[hidden] { display: none !important; }
+main.two { display: grid; grid-template-columns: minmax(320px, 420px) 1fr; gap: 20px; align-items: start; max-width: none; }
+main.two > div > section + section { margin-top: 20px; }
+main.cols { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; align-items: start; }
+main.cols > div > section + section { margin-top: 20px; }
+@media (max-width: 900px) { main, main.two, main.cols { grid-template-columns: 1fr; padding: 12px 16px 32px; } }
+.tabs { display: flex; gap: 4px; flex-wrap: wrap; padding: 0 24px; background: var(--panel); border-bottom: 1px solid var(--line); }
+.tabs a { padding: 10px 14px; text-decoration: none; color: var(--muted); border-bottom: 2px solid transparent; margin-bottom: -1px; font-size: 14px; }
+.tabs a:hover { color: var(--ink); }
+.tabs a[aria-current] { color: var(--ink); font-weight: 600; border-bottom-color: var(--accent); }
+.tabs .badge { display: inline-block; min-width: 18px; padding: 0 5px; margin-left: 6px; border-radius: 999px; background: var(--bad); color: #fff; font-size: 11px; text-align: center; }
+.tabs .badge.n { background: var(--live); }
+.tabs .badge[hidden] { display: none; }
+@media (max-width: 900px) { .tabs { padding: 0 12px; } }
+.ov { display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); gap: 20px; align-items: start; }
+.ov > div > section + section { margin-top: 20px; }
+@media (max-width: 900px) { .ov { grid-template-columns: 1fr; } }
+.ok-line { color: var(--ok); font-weight: 600; }
+.bar { height: 6px; background: var(--line); border-radius: 3px; overflow: hidden; margin-top: 6px; grid-column: 1 / -1; }
+.bar > i { display: block; height: 100%; background: var(--accent); }
+.kv { display: flex; gap: 8px 18px; flex-wrap: wrap; font-size: 13px; color: var(--muted); margin-bottom: 10px; }
+.kv b { color: var(--ink); }
 form .actions { display: flex; gap: 8px; align-items: stretch; }
 form .actions button.primary { flex: 1; }
 #editcancel { margin-top: 14px; }
@@ -48,12 +69,44 @@ label.check[hidden] { display: none; }
 <body>
 <header>
   <h1><a href="/admin">minutes</a> <small class="meta">admin</small></h1>
-  <span class="meta"><a href="/admin/feeds">Feeds</a></span>
-  <span class="meta" id="meta"></span>
   <span class="me" id="me"></span>
 </header>
+<nav class="tabs" id="tabs" aria-label="Admin">
+  <a href="#overview">Overview<span class="badge" id="b-over" hidden></span></a>
+  <a href="#captures">Captures</a>
+  <a href="#recordings">Recordings</a>
+  <a href="#people">People &amp; access</a>
+  <a href="#audit">Audit log</a>
+  <a href="/admin/feeds">Feeds<span class="badge n" id="b-review" hidden></span></a>
+</nav>
 <div id="login" role="status"></div>
-<main>
+
+<main id="t-overview" class="ov">
+  <div>
+    <section>
+      <h2>Right now</h2>
+      <div class="kv" id="meta"></div>
+      <div class="list" id="now"><div class="empty">Loading...</div></div>
+    </section>
+    <section>
+      <h2>Coming up</h2>
+      <div class="list" id="next"><div class="empty">Loading...</div></div>
+    </section>
+  </div>
+  <div>
+    <section>
+      <h2>Needs attention</h2>
+      <div class="list" id="attn"><div class="empty">Loading...</div></div>
+    </section>
+    <section>
+      <h2>Recent activity</h2>
+      <div class="list" id="recent"><div class="empty">Loading...</div></div>
+      <p class="hint"><a href="#audit">Full audit log</a></p>
+    </section>
+  </div>
+</main>
+
+<main id="t-captures" class="two" hidden>
   <div>
     <section>
       <h2 id="formtitle">Schedule a meeting</h2>
@@ -77,39 +130,52 @@ label.check[hidden] { display: none; }
         <div class="msg" id="formmsg" role="status"></div>
       </form>
     </section>
+  </div>
+  <div>
     <section>
       <h2>Captures</h2>
       <div class="list" id="jobs"><div class="empty">Loading...</div></div>
     </section>
+  </div>
+</main>
+
+<main id="t-recordings" hidden>
+  <section id="viewer">
+    <h2 id="viewer-h">Recordings</h2>
+    <div id="player" hidden></div>
+    <div id="live" class="live" hidden></div>
+    <div class="list" id="recs"><div class="empty">Loading...</div></div>
+  </section>
+</main>
+
+<main id="t-people" class="cols" hidden>
+  <div>
     <section>
       <h2>Users</h2>
       <div class="list" id="users"><div class="empty">Loading...</div></div>
       <p class="hint">New admins: <code>minutes user add --admin email</code> on the server, or promote a user here.</p>
     </section>
+  </div>
+  <div>
     <section>
       <h2>API tokens</h2>
       <div class="list" id="tokens"><div class="empty">Loading...</div></div>
       <div class="hint" id="tokusage"></div>
     </section>
-    <section>
-      <h2>Audit log</h2>
-      <form id="auditf" class="auditf" autocomplete="off">
-        <select id="aaction" aria-label="Action"><option value="">All actions</option></select>
-        <input id="aactor" placeholder="Who" aria-label="Who">
-        <input id="atarget" placeholder="What (name, email)" aria-label="What">
-      </form>
-      <div class="list" id="audit"><div class="empty">Loading...</div></div>
-      <button type="button" id="amore" hidden>Older</button>
-    </section>
   </div>
-  <div>
-    <section id="viewer">
-      <h2 id="viewer-h">Recordings</h2>
-      <div id="player" hidden></div>
-      <div id="live" class="live" hidden></div>
-      <div class="list" id="recs"><div class="empty">Loading...</div></div>
-    </section>
-  </div>
+</main>
+
+<main id="t-audit" hidden>
+  <section>
+    <h2>Audit log</h2>
+    <form id="auditf" class="auditf" autocomplete="off">
+      <select id="aaction" aria-label="Action"><option value="">All actions</option></select>
+      <input id="aactor" placeholder="Who" aria-label="Who">
+      <input id="atarget" placeholder="What (name, email)" aria-label="What">
+    </form>
+    <div class="list" id="audit"><div class="empty">Loading...</div></div>
+    <button type="button" id="amore" hidden>Older</button>
+  </section>
 </main>
 <script>
 "use strict";
@@ -219,6 +285,7 @@ function playRec(r) {
 }
 
 function watch(id) {
+  goTab("recordings");
   selectedRec = null;
   document.getElementById("player").hidden = true;
   fill(document.getElementById("player"));
@@ -265,6 +332,7 @@ function stopWatching() {
 
 var LOGIN_TEXT = { ok: "signed in", expired: "EXPIRED", missing: "MISSING", error: "couldn't check", unchecked: "not checked yet" };
 function renderLogin(s) {
+  sessionNow = s;
   var box = document.getElementById("login");
   var bad = s.state === "expired" || s.state === "missing" || s.state === "error";
   box.className = bad ? "bad" : "";
@@ -286,7 +354,7 @@ function cancel(id) { aapi("DELETE", "/api/admin/jobs/" + id).then(refresh, func
 
 function refresh() {
   return Promise.all([aapi("GET", "/api/admin/jobs"), aapi("GET", "/api/admin/recordings")])
-    .then(function (d) { renderJobs(d[0]); renderRecs(d[1]); refreshLogin(); if (!auditOlder) loadAudit(); })
+    .then(function (d) { lastRecs = d[1]; renderJobs(d[0]); renderRecs(d[1]); renderOverview(); refreshLogin(); if (!auditOlder) loadAudit(); })
     .catch(function (e) { fill(document.getElementById("jobs"), el("div", { "class": "empty", text: "Can't reach the server: " + e.message })); });
 }
 
@@ -463,9 +531,100 @@ document.getElementById("auditf").addEventListener("submit", function (ev) { ev.
 renderMe(document.getElementById("me"), true);
 aapi("GET", "/api/admin/info").then(function (i) {
   document.getElementById("tzlabel").textContent = "(" + i.tz + ")";
-  document.getElementById("meta").textContent = "Times in " + i.tz + " · tzdata " + (i.tzdata || "?") +
-    " · joins " + i.leadMinutes + " min early · up to " + i.maxConcurrent + " at once";
+  fill(document.getElementById("meta"),
+    el("span", null, "Times in ", el("b", { text: i.tz })), el("span", null, "tzdata ", el("b", { text: i.tzdata || "?" })),
+    el("span", null, "joins ", el("b", { text: i.leadMinutes + " min" }), " early"), el("span", null, "up to ", el("b", { text: String(i.maxConcurrent) }), " at once"));
 });
+
+// --- tabs: #overview (default), #captures, #recordings, #people, #audit ---
+var TABS = ["overview", "captures", "recordings", "people", "audit"];
+function curTab() { var h = location.hash.slice(1); return TABS.indexOf(h) >= 0 ? h : "overview"; }
+function showTab() {
+  var cur = curTab();
+  TABS.forEach(function (t) { document.getElementById("t-" + t).hidden = t !== cur; });
+  [].forEach.call(document.querySelectorAll("#tabs a[href^='#']"), function (a) {
+    if (a.getAttribute("href") === "#" + cur) a.setAttribute("aria-current", "page"); else a.removeAttribute("aria-current");
+  });
+  if (cur === "audit" && !document.getElementById("audit").childNodes.length) loadAudit();
+}
+function goTab(t) { if (location.hash !== "#" + t) location.hash = "#" + t; else showTab(); }
+window.addEventListener("hashchange", showTab);
+showTab();
+
+// --- overview: what the app is doing now, what needs a person, what's next ---
+var lastRecs = [], feedsNow = [], reviewCount = 0, sessionNow = null;
+function line(pillEl, title, sub, actions, pct) {
+  return el("div", { "class": "row" }, el("div", { "class": "title" }, pillEl, title), actions || el("div", null),
+    sub ? el("div", { "class": "sub", text: sub }) : null,
+    pct !== undefined && pct !== null ? el("div", { "class": "bar", role: "progressbar", "aria-valuenow": String(pct), "aria-valuemin": "0", "aria-valuemax": "100" }, el("i", { style: "width:" + pct + "%" })) : null);
+}
+function renderOverview() {
+  var now = [], next = [], attn = [];
+  var live = lastJobs.filter(function (j) { return j.status === "running" || j.status === "stopping"; });
+  live.forEach(function (j) {
+    var r = lastRecs.filter(function (x) { return x.slug === j.slug; })[0];
+    var sub = (j.status === "stopping" ? "Stopping, stitching the video" : "Recording") + (r ? " · " + r.parts.length + (r.parts.length === 1 ? " part" : " parts") : "") +
+      (j.launchedAt ? " · since " + fmt(j.launchedAt) : "");
+    now.push(line(pill(j.status), j.slug, sub, el("div", { "class": "actions" },
+      el("button", { text: "Watch", on: { click: function () { goTab("recordings"); watch(j.id); } } }))));
+  });
+  lastRecs.forEach(function (r) {
+    var t = r.transcript;
+    if (t && t.status !== "done" && t.status !== "failed") {
+      now.push(line(el("span", { "class": "pill s-queued", text: "transcribing" }), r.slug,
+        (t.stage || "working") + (t.progress !== null && t.progress !== undefined ? " · " + t.progress + "%" : "") + (t.updated ? " · updated " + ago(t.updated) : ""), null, t.progress));
+    } else if (!t && r.video && !r.active && r.public !== undefined) {
+      var waiting = r.video && !r.files.transcript;
+      if (waiting) now.push(line(el("span", { "class": "pill s-scheduled", text: "waiting" }), r.slug, "Video ready, waiting for the transcriber"));
+    }
+  });
+  var feedBusy = feedsNow.filter(function (f) { return f.running; });
+  feedBusy.forEach(function (f) { now.push(line(el("span", { "class": "pill s-running", text: "feed" }), f.name, "Checking for meetings")); });
+  fill.apply(null, [document.getElementById("now")].concat(now.length ? now : [el("div", { "class": "empty", text: "Idle. Nothing is being captured or transcribed." })]));
+
+  lastJobs.filter(function (j) { return j.status === "scheduled" || j.status === "queued"; })
+    .sort(function (a, b) { return a.start.localeCompare(b.start); }).slice(0, 6).forEach(function (j) {
+      next.push(line(pill(j.status), j.slug, fmt(j.start) + " · meeting " + j.meetingId, el("div", { "class": "actions" },
+        el("button", { text: "Edit", on: { click: function () { goTab("captures"); startEdit(j); } } }))));
+    });
+  fill.apply(null, [document.getElementById("next")].concat(next.length ? next : [el("div", { "class": "empty", text: "No captures scheduled." })]));
+
+  var week = Date.now() - 3 * 86400000;
+  if (sessionNow && (sessionNow.state === "expired" || sessionNow.state === "missing" || sessionNow.state === "error"))
+    attn.push(line(el("span", { "class": "pill s-failed", text: "login" }), "Zoom login " + (LOGIN_TEXT[sessionNow.state] || sessionNow.state), sessionNow.detail || ""));
+  lastJobs.filter(function (j) { return (j.status === "failed" || (j.outcome && ["blocked", "invalid_link", "email_required", "not_started", "failed"].indexOf(j.outcome) >= 0)) && new Date(j.endedAt || j.start).getTime() > week; })
+    .forEach(function (j) {
+      attn.push(line(pill(j.outcome || j.status), j.slug, (j.error || "") + (j.error ? " · " : "") + fmt(j.endedAt || j.start), el("div", { "class": "actions" },
+        el("button", { text: "Open", on: { click: function () { goTab("captures"); } } }))));
+    });
+  lastRecs.forEach(function (r) {
+    if (r.transcript && r.transcript.status === "failed") attn.push(line(el("span", { "class": "pill s-failed", text: "transcript" }), r.slug, r.transcript.error || "Transcription failed", el("div", { "class": "actions" },
+      el("button", { text: "Recordings", on: { click: function () { goTab("recordings"); } } }))));
+  });
+  feedsNow.filter(function (f) { return f.health === "failing" || f.health === "unhealthy"; }).forEach(function (f) {
+    attn.push(line(el("span", { "class": "pill s-" + (f.health === "unhealthy" ? "failed" : "stopping"), text: "feed" }), f.name, "Failing" + (f.health === "unhealthy" ? " for over 24 h" : ""), el("div", { "class": "actions" },
+      el("a", { href: "/admin/feeds", text: "Feeds" }))));
+  });
+  if (reviewCount) attn.push(line(el("span", { "class": "pill s-queued", text: "review" }), reviewCount + (reviewCount === 1 ? " meeting" : " meetings") + " waiting for approval", "", el("div", { "class": "actions" },
+    el("a", { href: "/admin/feeds", text: "Review" }))));
+  fill.apply(null, [document.getElementById("attn")].concat(attn.length ? attn : [el("div", { "class": "ok-line", text: "All clear." })]));
+  var b = document.getElementById("b-over");
+  b.hidden = !attn.length; b.textContent = String(attn.length);
+  var br = document.getElementById("b-review");
+  br.hidden = !reviewCount; br.textContent = String(reviewCount);
+}
+function loadOverviewExtra() {
+  aapi("GET", "/api/admin/feeds").then(function (d) { feedsNow = Array.isArray(d) ? d : (d.feeds || []); renderOverview(); }, function () {});
+  aapi("GET", "/api/admin/meetings?view=review").then(function (d) { reviewCount = (Array.isArray(d) ? d : (d.meetings || [])).length; renderOverview(); }, function () {});
+  aapi("GET", "/api/admin/audit?limit=8").then(function (d) {
+    fill.apply(null, [document.getElementById("recent")].concat(d.entries.length ? d.entries.map(function (e) {
+      return el("div", { "class": "row" }, el("div", { "class": "title" }, el("span", { "class": "pill", text: e.action }), e.targetLabel || e.targetType),
+        el("div", null), el("div", { "class": "sub", text: fmt(e.at) + " · " + e.actor }));
+    }) : [el("div", { "class": "empty", text: "Nothing yet." })]));
+  }, function () {});
+}
+loadOverviewExtra();
+setInterval(function () { if (!document.hidden) loadOverviewExtra(); }, 15000);
 refresh();
 setInterval(function () { if (!document.hidden) refresh(); }, 5000);
 </script>
