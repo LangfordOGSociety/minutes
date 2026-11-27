@@ -152,12 +152,13 @@ describe("mirroring and join links", () => {
     src.state.meetings = [{ id: "s3", title: "Council", start, documents: [doc("Agenda", 7)] }];
     await run();
     const m = await meetingOf(admin, "Council");
-    fetcher.files.set("https://city.example/FileStream.ashx?DocumentId=7", { bytes: BOT, contentType: "text/html" });
+    fetcher.files.set("https://city.example/FileStream.ashx?DocumentId=7", new Error("HTTP 403 (the site's bot check, or an error page)"));
     assert.deepEqual(await app.docs.run(), { stored: 0, failed: 1 });
-    let d = app.docs.list(m.id)[0];
+    const d = app.docs.list(m.id)[0];
     assert.equal(d.status, "failed");
     assert.match(d.error!, /bot check/);
     assert.equal(d.file, null);
+    assert.equal(d.tries, 1);
     // Too soon: not tried again.
     fetcher.calls.length = 0;
     await app.docs.run();
@@ -168,6 +169,13 @@ describe("mirroring and join links", () => {
     assert.deepEqual(await app.docs.run(), { stored: 1, failed: 0 });
     assert.equal(app.docs.list(m.id)[0].status, "stored");
     assert.equal(app.docs.list(m.id)[0].error, null);
+    // A web page listed as a document is never going to be a file: one try.
+    src.state.meetings = [{ id: "s3", title: "Council", start, documents: [doc("Agenda", 7), doc("Player", 9)] }];
+    await run();
+    fetcher.files.set("https://city.example/FileStream.ashx?DocumentId=9", { bytes: BOT, contentType: "text/html" });
+    await app.docs.run();
+    const page = app.docs.list(m.id).find((x) => x.title === "Player")!;
+    assert.deepEqual([page.status, page.tries], ["failed", 5]);
     // A different one that never works stops after five tries.
     src.state.meetings = [{ id: "s3", title: "Council", start, documents: [doc("Agenda", 7), doc("Minutes", 8)] }];
     await run();

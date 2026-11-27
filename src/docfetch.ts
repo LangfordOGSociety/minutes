@@ -60,11 +60,18 @@ export function browserFetcher(o: BrowserOpts = {}): DocFetcher {
         if (o.display) env.DISPLAY = o.display;
         browser = await chromium.launch({ headless: !o.display, env });
         const page = await (await browser.newContext()).newPage();
-        await page.goto(o.warmup ?? origin + "/", { waitUntil: "domcontentloaded", timeout: 45_000 });
+        await page.goto(o.warmup ?? origin + "/", { waitUntil: "load", timeout: 45_000 });
+        // The site may show its own "checking your browser" page first; a real browser just waits for it to finish.
+        let title = await page.title();
+        for (let i = 0; i < 20 && /just a moment|verifying your browser|checking your browser/i.test(title); i++) {
+          await new Promise((r) => setTimeout(r, 1000));
+          title = await page.title().catch(() => title);
+        }
+        await new Promise((r) => setTimeout(r, 2000));
         for (const url of urls) {
           try {
             if (new URL(url).origin !== origin) throw new Error("not on the site's own origin");
-            const r = await page.evaluate(async ({ u, max }) => {
+            const get = () => page.evaluate(async ({ u, max }) => {
               const x = await fetch(u, { credentials: "same-origin" });
               const len = Number(x.headers.get("content-length") ?? 0);
               if (len > max) return { status: x.status, type: x.headers.get("content-type") ?? "", tooBig: true as const };
@@ -74,8 +81,10 @@ export function browserFetcher(o: BrowserOpts = {}): DocFetcher {
               for (let i = 0; i < a.length; i += 0x8000) s += String.fromCharCode(...a.subarray(i, i + 0x8000));
               return { status: x.status, type: x.headers.get("content-type") ?? "", b64: btoa(s) };
             }, { u: url, max: MAX_DOC_BYTES });
+            let r = await get();
+            if (!("tooBig" in r) && r.status === 403) { await new Promise((x) => setTimeout(x, 5000)); r = await get(); }   // once more, after the check had time to finish
             if ("tooBig" in r) throw new Error(`larger than ${MAX_DOC_BYTES} bytes`);
-            if (r.status !== 200) throw new Error(`HTTP ${r.status}${/html/i.test(r.type) ? " (the site's bot check, or an error page)" : ""}`);
+            if (r.status !== 200) throw new Error(`HTTP ${r.status}${/html/i.test(r.type) ? ` (the site's bot check, or an error page; the front page said "${title.slice(0, 40)}")` : ""}`);
             out.set(url, { bytes: Buffer.from(r.b64, "base64"), contentType: r.type });
           } catch (e) {
             out.set(url, fail(e));
