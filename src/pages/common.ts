@@ -44,11 +44,13 @@ button.danger { color: var(--bad); }
 .msg { font-size: 13px; margin-top: 10px; min-height: 1em; }
 .msg.err { color: var(--bad); } .msg.ok { color: var(--ok); }
 .list { display: flex; flex-direction: column; gap: 8px; }
-.row { display: grid; grid-template-columns: 1fr auto; gap: 4px 10px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; align-items: center; }
+.row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px 10px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; align-items: center; }
 .row.selected { border-color: var(--accent); }
 .row .title { font-weight: 600; overflow-wrap: anywhere; }
 .row .sub { grid-column: 1 / -1; color: var(--muted); font-size: 13px; overflow-wrap: anywhere; }
-.row .actions { display: flex; gap: 6px; }
+.row .actions { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; min-width: 0; }
+.row .actions select { width: auto; max-width: 12rem; min-width: 0; }
+@media (max-width: 700px) { .row { grid-template-columns: minmax(0, 1fr); } .row .actions { justify-content: flex-start; } .row .actions select { max-width: 100%; } }
 .pill { display: inline-block; font-size: 11px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase;
   padding: 2px 7px; border-radius: 999px; border: 1px solid currentColor; margin-right: 6px; vertical-align: 1px; }
 .s-scheduled, .s-queued { color: var(--accent); } .s-running, .s-live { color: var(--live); } .s-stopping { color: var(--warn); }
