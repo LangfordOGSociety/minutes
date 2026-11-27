@@ -135,6 +135,13 @@ captures).
   is pasted into `public.ts` (`/`) and `admin.ts` (`/admin`); `login.ts`.
   Served with a CSP of their script's sha256 (net.ts `pageCsp`), so no
   eval and no inline handlers: attach listeners in the script.
+  UI redesign 2026-11-26, reasoning in `docs/ui-redesign.md`: every page
+  gets the same nav from `renderMe` (`#sitenav`, Meetings / Search / Embed &
+  API / Admin); `/` has municipality chips (`?m=`), Live now, Upcoming,
+  Recent; `/account` is tabs (`#keys #embed #alerts #password`, API keys
+  first) with an embed builder; `/admin` is tabs (`#overview` default,
+  `#captures #recordings #people #audit`, Feeds is its own page);
+  `/embed/upcoming` (`pages/embedlist.ts`) is the framable upcoming list.
 - `src/site.ts` the public site's model (Phase 3): a meeting row + its
   jobs + its recording folder -> `PublicMeeting` with a `stage` (upcoming,
   live, stitching, video_ready, ready, failed, not_recorded, cancelled;

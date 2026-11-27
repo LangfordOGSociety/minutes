@@ -65,6 +65,7 @@ describe("pages in Chromium", { skip: skipReason() }, () => {
     await page.waitForLoadState();
     await page.waitForSelector("#me a[href='/account']");
     assert.match(await page.textContent("#me") ?? "", /admin@example.com/);
+    await page.click("#tabs a[href='#captures']");
     assert.equal(await page.textContent("#formtitle"), "Schedule a meeting");
 
     // The Secure cookie held, and it's HttpOnly.
@@ -81,6 +82,7 @@ describe("pages in Chromium", { skip: skipReason() }, () => {
     await page.fill("#slug", "council-ui");
     await page.click("#submitbtn");
     await page.waitForSelector("#formmsg.ok");
+    await page.click("#tabs a[href='#audit']");
     await page.waitForSelector("#audit .row:has-text('job.create')");
     const row = await page.textContent("#audit .row:has-text('job.create')") ?? "";
     assert.match(row, /council-ui/);
@@ -151,12 +153,16 @@ describe("public page in Chromium", { skip: skipReason() }, () => {
 
     await page.goto(base + "/");
     await page.waitForSelector("#past .mcard");
-    assert.deepEqual((await page.$$eval("#upcoming .mcard .t", (els) => els.map((e) => e.textContent))).sort(), ["upcomingfailed-d", "upcominglive-e"]);
-    assert.deepEqual(await page.$$eval("#past .mcard .t", (els) => els.map((e) => e.textContent)), ["video + transcriptcouncil-a"]);
+    assert.deepEqual((await page.$$eval("#upcoming .mcard .t", (els) => els.map((e) => e.textContent))).sort(), ["failed-d", "live-e"]);
+    assert.equal(await page.isVisible("#livenow"), false);   // "Live now" only shows when a meeting is live
+    assert.deepEqual(await page.$$eval("#past .mcard .t", (els) => els.map((e) => e.textContent)), ["council-a"]);
+    assert.match(await page.textContent("#past .mcard .mh") ?? "", /video \+ transcript/);
+    assert.match(await page.textContent("#sitenav") ?? "", /Meetings.*Search.*Embed & API/);
     assert.equal(await page.textContent("#me"), "Sign in");
     assert.match(await page.textContent("#updates") ?? "", /Nothing has changed lately|Announced/);
 
     // Filters: a search that matches nothing, then clearing it.
+    await page.click("#filt summary");
     await page.fill("#f-q", "zzz");
     await page.waitForSelector("#past .empty:has-text('No past meetings match')");
     await page.fill("#f-q", "");
@@ -265,6 +271,7 @@ describe("public page in Chromium", { skip: skipReason() }, () => {
     await page.fill("#password", "chair password 12");
     await page.click("#loginform button");
     await page.waitForURL(base + "/admin");
+    await page.click("#tabs a[href='#recordings']");
     await page.click("#recs .row:has-text('council-a') button:has-text('Speakers')");
     await page.waitForSelector("#recs .spk input");
     assert.match(await page.textContent("#recs .spk") ?? "", /Speaker 1 .*Call to order/);
@@ -345,6 +352,7 @@ describe("sign-up and reset in Chromium", { skip: skipReason() }, () => {
     await page.fill("#password", "boss password 1");
     await page.click("#loginform button");
     await page.waitForURL(base + "/admin");
+    await page.click("#tabs a[href='#people']");
     const row = "#users .row:has-text('reader@example.com')";
     await page.waitForSelector(row);
     await page.click(`${row} button:has-text('Make admin')`);
@@ -353,6 +361,7 @@ describe("sign-up and reset in Chromium", { skip: skipReason() }, () => {
     await page.waitForSelector(`${row} button:has-text('Enable')`);
     assert.ok(app.accounts.byEmail("reader@example.com")?.disabledAt);
     assert.equal(await page.isVisible("#users .row:has-text('boss@example.com') button"), false);   // not yourself
+    await page.click("#tabs a[href='#audit']");
     await page.waitForSelector("#audit .row:has-text('user.update')");
   });
   it("alerts: made from a search, listed and deleted on the account page, stopped from the email's link", async () => {
@@ -373,7 +382,7 @@ describe("sign-up and reset in Chromium", { skip: skipReason() }, () => {
     await page.waitForSelector("#alertbox .msg.ok");
     assert.match(await page.textContent("#alertbox") ?? "", /Saved/);
     await page.click("#alertbox button", { force: true }).catch(() => {});    // disabled now: no second alert
-    await page.goto(base + "/account");
+    await page.goto(base + "/account#alerts");
     await page.waitForSelector("#alertlist .tok");
     assert.match(await page.textContent("#alertlist") ?? "", /harbour.*last email none yet/);
     await page.fill("#al-q", "zoning");
@@ -461,5 +470,83 @@ describe("feeds page in Chromium", { skip: skipReason() }, () => {
     assert.match(await page.textContent("#meetings .row:has-text('Council Meeting') table") ?? "", /approved[\s\S]*added/);
     assert.equal(app.sched.list().length, 1);
     assert.deepEqual(errors, []);
+  });
+});
+
+describe("redesigned pages in Chromium", { skip: skipReason() }, () => {
+  let browser: Browser, base: string, app: App, out: string;
+  const cleanups: (() => unknown)[] = [];
+  before(async () => {
+    const hooks: HasAfter = { after: (fn) => cleanups.push(fn) };
+    out = path.join(tmpDir(hooks), "rec");
+    ({ app, base } = await startApp(hooks, out, { secureCookie: false }));
+    fixtures(app, out);
+    browser = await chromium.launch();
+  });
+  after(async () => {
+    await browser?.close();
+    for (const f of cleanups.reverse()) await f();
+  });
+
+  async function signIn(email: string, password: string, next: string) {
+    const page = await (await browser.newContext()).newPage();
+    page.on("dialog", (d) => void d.accept());
+    await page.goto(base + "/login?next=" + encodeURIComponent(next));
+    await page.fill("#email", email);
+    await page.fill("#password", password);
+    await page.click("#loginform button");
+    await page.waitForURL(base + next);
+    return page;
+  }
+
+  it("/embed/upcoming lists the next meetings and may be framed", async () => {
+    const r = await fetch(base + "/embed/upcoming?limit=3");
+    assert.equal(r.status, 200);
+    assert.equal(r.headers.get("x-frame-options"), null);
+    assert.match(r.headers.get("content-security-policy") ?? "", /frame-ancestors/);
+    const page = await (await browser.newContext()).newPage();
+    await page.goto(base + "/embed/upcoming?limit=3&theme=dark&title=0");
+    await page.waitForSelector(".mcard");
+    assert.equal(await page.getAttribute("html", "data-theme"), "dark");
+    assert.equal(await page.getAttribute(".mcard", "target"), "_blank");
+    assert.equal(await page.isHidden("#h"), true);
+    await page.goto(base + "/embed/upcoming?source=Nowhere");
+    await page.waitForSelector(".empty:has-text('No upcoming meetings')");
+  });
+
+  it("account: tabs, an embed builder for a meeting and for the upcoming list", async () => {
+    await app.accounts.create({ email: "embedder@example.com", role: "user", password: "embedder password", verified: true });
+    const page = await signIn("embedder@example.com", "embedder password", "/account");
+    await page.waitForSelector("#tokens:not([hidden])");           // API keys first
+    assert.equal(await page.isHidden("#p-embed"), true);
+    assert.match(await page.textContent("#snip") ?? "", /Authorization: Bearer mnt_/);
+    await page.click("#tabs a[href='#embed']");
+    await page.waitForSelector("#p-embed:not([hidden])");
+    assert.equal(await page.isHidden("#tokens"), true);
+    await page.selectOption("#em-m", "council-a");
+    await page.check("#em-tr");
+    assert.match(await page.inputValue("#em-code"), /\/embed\/council-a\?transcript=1" width="640" height="640"/);
+    assert.match(await page.inputValue("#up-code"), /\/embed\/upcoming\?limit=5" width="420"/);
+    await page.fill("#up-n", "3");
+    await page.selectOption("#up-th", "dark");
+    assert.match(await page.inputValue("#up-code"), /\/embed\/upcoming\?limit=3&theme=dark" width="420" height="322"/);
+    // The tab is a link: a fresh load of /account#embed opens it.
+    await page.goto(base + "/account#embed");
+    await page.waitForSelector("#p-embed:not([hidden])");
+  });
+
+  it("admin: tabs, and an overview of what is running and what needs attention", async () => {
+    await app.accounts.create({ email: "ops@example.com", role: "admin", password: "ops password 1", verified: true });
+    const page = await signIn("ops@example.com", "ops password 1", "/admin");
+    await page.waitForSelector("#now .row, #now .empty");
+    assert.equal(await page.isVisible("#t-overview"), true);
+    assert.equal(await page.isHidden("#t-people"), true);
+    await page.waitForSelector("#next .row:has-text('live-e')");   // scheduled capture listed under Coming up
+    await page.click("#tabs a[href='#people']");
+    await page.waitForSelector("#users .row:has-text('ops@example.com')");
+    assert.equal(await page.isHidden("#t-overview"), true);
+    await page.click("#tabs a[href='#audit']");
+    await page.waitForSelector("#t-audit:not([hidden])");
+    assert.match(await page.textContent("#sitenav") ?? "", /Admin/);
   });
 });

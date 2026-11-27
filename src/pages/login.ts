@@ -58,11 +58,35 @@ label.check input { width: auto; }
 .tok button { margin-top: 6px; padding: 4px 10px; font-size: 13px; }
 .newtok { border: 1px solid var(--ok); border-radius: 8px; padding: 10px; margin-top: 12px; }
 .newtok input { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+main.wide { max-width: 760px; margin-top: 4vh; }
+header.site { display: flex; align-items: center; gap: 6px 22px; flex-wrap: wrap; padding: 10px 24px; background: var(--panel); border-bottom: 1px solid var(--line); }
+header.site h1 { margin: 0; }
+header.site .me { margin-left: auto; color: var(--muted); font-size: 13px; }
+nav.site { display: flex; gap: 4px; flex-wrap: wrap; }
+nav.site a { color: var(--ink); text-decoration: none; padding: 5px 10px; border-radius: 7px; font-size: 14px; }
+nav.site a:hover { background: var(--bg); }
+nav.site a[aria-current] { background: var(--bg); font-weight: 600; box-shadow: inset 0 -2px 0 var(--accent); border-radius: 7px 7px 0 0; }
+@media (max-width: 900px) { header.site { padding: 8px 16px; } header.site .me { flex-basis: 100%; margin-left: 0; } }
+.tabs { display: flex; gap: 4px; margin: 16px 0 12px; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+.tabs[hidden] { display: none; }
+.tabs a { padding: 8px 14px; text-decoration: none; color: var(--muted); border-bottom: 2px solid transparent; margin-bottom: -1px; }
+.tabs a[aria-current] { color: var(--ink); font-weight: 600; border-bottom-color: var(--accent); }
+textarea { width: 100%; font: 12px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; padding: 8px; border: 1px solid var(--line); border-radius: 7px; background: var(--bg); color: var(--ink); resize: vertical; }
+pre.snip { background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 10px; font-size: 12px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
+.opts { display: flex; flex-wrap: wrap; gap: 4px 18px; margin-top: 8px; }
+.grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 0 12px; }
+@media (max-width: 520px) { .grid2 { grid-template-columns: 1fr; } }
+.actions { display: flex; gap: 10px; align-items: center; margin-top: 8px; flex-wrap: wrap; }
+.sub { margin-top: 22px; padding-top: 4px; border-top: 1px solid var(--line); }
 </style>
 </head>
 <body>
-<main>
+<header class="site">
   <h1><a href="/">minutes</a></h1>
+  <nav class="site" id="sitenav" aria-label="Site"></nav>
+  <span class="me" id="me"></span>
+</header>
+<main id="main">
 
   <section id="signin" hidden>
     <h2>Sign in</h2>
@@ -138,7 +162,42 @@ label.check input { width: auto; }
     <p><a href="/" id="home">Continue</a></p>
   </section>
 
-  <section id="alerts" hidden>
+  <nav class="tabs" id="tabs" aria-label="Account" hidden></nav>
+
+  <section id="p-embed" hidden>
+    <h2>Embed a meeting</h2>
+    <p class="hint">Put one meeting's video on your own site. Embeds are public: visitors don't need an account or a key.</p>
+    <label for="em-m">Meeting</label>
+    <select id="em-m"></select>
+    <div class="opts">
+      <label class="check"><input type="checkbox" id="em-tr"> Transcript</label>
+      <label class="check"><input type="checkbox" id="em-ch"> Chapters</label>
+      <label class="check"><input type="checkbox" id="em-ti" checked> Title bar</label>
+    </div>
+    <div class="grid2">
+      <div><label for="em-th">Theme</label><select id="em-th"><option value="">Match the visitor</option><option value="light">Light</option><option value="dark">Dark</option></select></div>
+      <div><label for="em-t">Start at <small>(1:30)</small></label><input id="em-t" maxlength="12" placeholder="optional"></div>
+    </div>
+    <label for="em-code">Embed code</label>
+    <textarea id="em-code" readonly rows="3"></textarea>
+    <div class="actions"><button type="button" id="em-copy">Copy code</button><a id="em-open" target="_blank" rel="noopener">Preview</a></div>
+    <div class="hint" id="em-link"></div>
+
+    <h2 class="sub">Embed upcoming meetings</h2>
+    <p class="hint">A list of what's next, kept current by itself.</p>
+    <div class="grid2">
+      <div><label for="up-s">Municipality</label><select id="up-s"><option value="">All</option></select></div>
+      <div><label for="up-b">Body</label><select id="up-b"><option value="">All</option></select></div>
+      <div><label for="up-n">How many</label><input id="up-n" type="number" min="1" max="20" value="5"></div>
+      <div><label for="up-th">Theme</label><select id="up-th"><option value="">Match the visitor</option><option value="light">Light</option><option value="dark">Dark</option></select></div>
+    </div>
+    <label for="up-code">Embed code</label>
+    <textarea id="up-code" readonly rows="3"></textarea>
+    <div class="actions"><button type="button" id="up-copy">Copy code</button><a id="up-open" target="_blank" rel="noopener">Preview</a></div>
+    <p class="hint">Also available: <code>/oembed?url=</code> for sites that support oEmbed, and the JSON API with a key (API keys tab).</p>
+  </section>
+
+  <section id="p-alerts" hidden>
     <h2>Email alerts</h2>
     <p class="hint">Get an email when a word or phrase comes up in a <b>new</b> meeting's transcript, with a link to the moment. Up to 10. You can also make one from a <a href="/search">search</a>.</p>
     <div id="alertlist"></div>
@@ -172,6 +231,9 @@ label.check input { width: auto; }
     </form>
     <h2 style="margin-top:20px">Your usage, last 30 days</h2>
     <div class="hint" id="usage">Loading...</div>
+    <h2 style="margin-top:20px">Use a key</h2>
+    <pre class="snip" id="snip"></pre>
+    <p class="hint">Full reference: <a href="/api/docs">API docs</a>.</p>
   </section>
 
   <section id="verify" hidden>
@@ -222,7 +284,7 @@ function api(method, url, body) {
 function $(id) { return document.getElementById(id); }
 function show(id, on) { $(id).hidden = !on; }
 function msg(id, cls, text) { var m = $(id); m.className = "msg" + (cls ? " " + cls : ""); m.textContent = text; }
-var PANES = ["signin", "signup", "forgot", "account", "alerts", "tokens", "verify", "change"];
+var PANES = ["signin", "signup", "forgot", "account", "p-alerts", "tokens", "p-embed", "verify", "change"];
 function only(ids) { PANES.forEach(function (p) { show(p, ids.indexOf(p) >= 0); }); }
 
 // --- email alerts ---
@@ -323,22 +385,142 @@ function signedOut(pane) {
   if (pane === "signin") $("email").focus();
 }
 
+// --- site header: the same nav as every other page ---
+function drawHeader(user) {
+  var items = [["Meetings", "/"], ["Search", "/search"], ["Embed & API", "/account#embed"]];
+  if (user && user.caps.indexOf("admin.view") >= 0) items.push(["Admin", "/admin"]);
+  var nav = $("sitenav"); nav.replaceChildren();
+  items.forEach(function (x) {
+    var a = h("a", "", x[0]); a.href = x[1];
+    if (x[1].indexOf("/account") === 0 && location.pathname === "/account") a.setAttribute("aria-current", "page");
+    nav.appendChild(a);
+  });
+  var me = $("me"); me.replaceChildren();
+  if (!user) { if (location.pathname === "/account") return; var si = h("a", "", "Sign in"); si.href = "/login"; me.appendChild(si); return; }
+  me.appendChild(document.createTextNode(user.email + " \u00b7 "));
+  var ac = h("a", "", "account"); ac.href = "/account"; me.appendChild(ac);
+  me.appendChild(document.createTextNode(" \u00b7 "));
+  var so = h("a", "", "sign out"); so.href = "#";
+  so.addEventListener("click", function (ev) { ev.preventDefault(); api("POST", "/api/logout").then(function () { location.replace("/login"); }); });
+  me.appendChild(so);
+}
+
+// --- embed builders ---
+var embedLoaded = false;
+function embedBase() { return location.origin; }
+function iframeCode(src, w, hgt, title) {
+  return '<iframe src="' + src + '" width="' + w + '" height="' + hgt + '" frameborder="0" allow="fullscreen" allowfullscreen title="' + title.replace(/"/g, "&quot;") + '"></iframe>';
+}
+function drawMeetingEmbed() {
+  var sel = $("em-m");
+  if (!sel.value) { $("em-code").value = ""; return; }
+  var q = [];
+  if ($("em-tr").checked) q.push("transcript=1");
+  if ($("em-ch").checked) q.push("chapters=1");
+  if (!$("em-ti").checked) q.push("title=0");
+  if ($("em-th").value) q.push("theme=" + $("em-th").value);
+  var t = $("em-t").value.trim();
+  if (t) q.push("t=" + encodeURIComponent(t));
+  var src = embedBase() + "/embed/" + encodeURIComponent(sel.value) + (q.length ? "?" + q.join("&") : "");
+  var title = sel.options[sel.selectedIndex].getAttribute("data-title") || "Meeting";
+  $("em-code").value = iframeCode(src, 640, $("em-tr").checked ? 640 : 360, title);
+  $("em-open").href = src;
+  $("em-link").textContent = "Meeting page: " + embedBase() + "/m/" + sel.value;
+}
+function drawUpcomingEmbed() {
+  var q = [];
+  if ($("up-s").value) q.push("source=" + encodeURIComponent($("up-s").value));
+  if ($("up-b").value) q.push("body=" + encodeURIComponent($("up-b").value));
+  var n = Math.min(Math.max(parseInt($("up-n").value, 10) || 5, 1), 20);
+  q.push("limit=" + n);
+  if ($("up-th").value) q.push("theme=" + $("up-th").value);
+  var src = embedBase() + "/embed/upcoming?" + q.join("&");
+  $("up-code").value = iframeCode(src, 420, 70 + n * 84, "Upcoming meetings");
+  $("up-open").href = src;
+}
+function copyFrom(id, btn) {
+  var v = $(id); v.select();
+  if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(v.value).then(function () { btn.textContent = "Copied"; }, function () { btn.textContent = "Press Ctrl+C"; });
+  else btn.textContent = "Press Ctrl+C";
+}
+function loadEmbed() {
+  if (embedLoaded) return;
+  embedLoaded = true;
+  Promise.all([api("GET", "/api/meetings?scope=upcoming&limit=20"), api("GET", "/api/meetings?scope=past&limit=50")]).then(function (r) {
+    var sel = $("em-m");
+    [["Recent", r[1].meetings], ["Upcoming", r[0].meetings]].forEach(function (g) {
+      if (!g[1].length) return;
+      var og = document.createElement("optgroup"); og.label = g[0];
+      g[1].forEach(function (m) {
+        var o = h("option", "", (m.source ? m.source + ": " : "") + m.title + " (" + day(m.start) + ")");
+        o.value = m.id; o.setAttribute("data-title", m.title); og.appendChild(o);
+      });
+      sel.appendChild(og);
+    });
+    if (!sel.options.length) { var none = h("option", "", "No meetings published yet"); none.value = ""; sel.appendChild(none); }
+    (r[1].sources || []).forEach(function (x) { var o = h("option", "", x); o.value = x; $("up-s").appendChild(o); });
+    (r[1].bodies || []).forEach(function (x) { var o = h("option", "", x); o.value = x; $("up-b").appendChild(o); });
+    drawMeetingEmbed(); drawUpcomingEmbed();
+  }, function () {});
+}
+["em-m", "em-tr", "em-ch", "em-ti", "em-th"].forEach(function (id) { $(id).addEventListener("change", drawMeetingEmbed); });
+$("em-t").addEventListener("input", drawMeetingEmbed);
+["up-s", "up-b", "up-n", "up-th"].forEach(function (id) { $(id).addEventListener("input", drawUpcomingEmbed); });
+$("em-copy").addEventListener("click", function () { copyFrom("em-code", $("em-copy")); });
+$("up-copy").addEventListener("click", function () { copyFrom("up-code", $("up-copy")); });
+$("snip").textContent = "curl -H \"Authorization: Bearer mnt_YOUR_KEY\" \\\n  " + location.origin + "/api/v1/meetings?scope=upcoming";
+
+// --- account tabs (#keys, #embed, #alerts, #password) ---
+var curUser = null, TAB_PANE = { keys: "tokens", embed: "p-embed", alerts: "p-alerts", password: "change" };
+function availableTabs(user, onAccount) {
+  var t = [];
+  if (!onAccount || user.mustChangePassword) return t;
+  if (user.caps.indexOf("tokens.own") >= 0) t.push(["keys", "API keys"]);
+  t.push(["embed", "Embed"]);
+  if (signupOpen && user.caps.indexOf("alerts.own") >= 0) t.push(["alerts", "Alerts"]);
+  t.push(["password", "Password"]);
+  return t;
+}
+function showTabs() {
+  var user = curUser, onAccount = location.pathname === "/account";
+  var tabs = availableTabs(user, onAccount);
+  var want = location.hash.slice(1);
+  var cur = tabs.filter(function (x) { return x[0] === want; })[0] || tabs[0];
+  var panes = ["account"];
+  if (user.mustChangePassword) panes.push("change");
+  else if (cur) panes.push(TAB_PANE[cur[0]]);
+  if (!user.verified && !user.mustChangePassword && signupOpen) panes.push("verify");
+  only(panes);
+  $("main").className = onAccount ? "wide" : "";
+  var nav = $("tabs");
+  nav.replaceChildren();
+  tabs.forEach(function (x) {
+    var a = h("a", "", x[1]); a.href = "#" + x[0];
+    if (cur && cur[0] === x[0]) a.setAttribute("aria-current", "page");
+    nav.appendChild(a);
+  });
+  nav.hidden = !tabs.length;
+  if (cur && cur[0] === "keys") loadTokens();
+  if (cur && cur[0] === "embed") loadEmbed();
+  if (cur && cur[0] === "alerts") loadAlerts();
+}
+// The tab names are also section ids (#embed, #alerts): the browser scrolls to that section and hides the header. Stay at the top.
+function toTop() { window.scrollTo(0, 0); setTimeout(function () { window.scrollTo(0, 0); }, 0); }
+window.addEventListener("hashchange", function () { if (curUser) { showTabs(); toTop(); } });
+
 function render(user, setupNeeded) {
   var onAccount = location.pathname === "/account";
+  drawHeader(user);
   if (!user) {
+    curUser = null; $("tabs").hidden = true; $("main").className = "";
     show("setup", !!setupNeeded);
     signedOut(location.hash === "#signup" && signupOpen ? "signup" : location.hash === "#forgot" && signupOpen ? "forgot" : "signin");
     return;
   }
-  var panes = ["account"];
-  var tokens = onAccount && !user.mustChangePassword && user.caps.indexOf("tokens.own") >= 0;
-  if (tokens) { panes.push("tokens"); loadTokens(); }
-  var alertsOn = onAccount && !user.mustChangePassword && signupOpen && user.caps.indexOf("alerts.own") >= 0;
-  if (alertsOn) { panes.push("alerts"); loadAlerts(); }
-  if (!user.verified && !user.mustChangePassword && signupOpen) panes.push("verify");
-  if (user.mustChangePassword || onAccount) panes.push("change");
-  only(panes);
-  $("who").textContent = (user.name ? user.name + " · " : "") + user.email + " (" + user.role + (user.verified ? "" : ", email not confirmed") + ")";
+  curUser = user;
+  showTabs();
+  if (onAccount) toTop();
+  $("who").textContent = (user.name ? user.name + " \u00b7 " : "") + user.email + " (" + user.role + (user.verified ? "" : ", email not confirmed") + ")";
   show("denied", params.get("denied") === "1");
   $("home").href = next;
   show("changehint", user.mustChangePassword);
