@@ -3,7 +3,7 @@
  * password change, the admin page. Needs Playwright's Chromium.
  */
 import assert from "node:assert/strict";
-import { existsSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import http from "node:http";
 import type { AddressInfo } from "node:net";
 import path from "node:path";
@@ -198,9 +198,11 @@ describe("public page in Chromium", { skip: skipReason() }, () => {
   it("the share box: permalink, embed code with the chosen options", async () => {
     const page = await (await browser.newContext()).newPage();
     await page.goto(base + "/m/council-a?t=5");
-    await page.waitForSelector("#share input[type=text]");
+    await page.waitForSelector("#share .sharebox");
+    assert.equal(await page.isVisible("#share input[type=text]"), false, "closed until asked for");
+    await page.click("#share .sharebox > summary");
     assert.equal(await page.inputValue("#share input[type=text]"), base + "/m/council-a");
-    await page.click("#share summary");
+    await page.click("#share .embed > summary");
     assert.match(await page.inputValue("#share textarea"), /^<iframe src="http:\/\/127\.0\.0\.1:\d+\/embed\/council-a" width="640" height="360" /);
     await page.check("#share .opt:has-text('transcript') input");
     await page.check("#share .opt:has-text('chapters') input");
@@ -622,6 +624,44 @@ describe("redesigned pages in Chromium", { skip: skipReason() }, () => {
     const shown = (await admin.locator("#jobs .row .title[title='live-e']").textContent()) ?? "";
     assert.match(shown, /Evening hearing/);
     assert.doesNotMatch(shown, /live-e/);
+  });
+
+  it("meeting page: documents before sharing, one title, a speaker's lines grouped, a calendar entry for what's coming", async () => {
+    const dir = path.join(out, "council-a");
+    writeFileSync(path.join(dir, "council-a.transcript.json"), JSON.stringify({ model: "m", segments: [
+      { start: 1, text: "Call to order.", label: "Speaker 1" }, { start: 5, text: "Roll call.", label: "Speaker 1" }, { start: 9, text: "Quorum present.", label: "Speaker 1" },
+      { start: 20, text: "I move the agenda.", label: "Speaker 2" }] }));
+    const page = await (await browser.newContext({ viewport: { width: 1280, height: 900 } })).newPage();
+    await page.goto(base + "/m/council-a");
+    await page.waitForSelector(".tline");
+    // Section order: what the city published comes before the share box.
+    assert.equal(await page.evaluate(() => { const l = document.getElementById("links")!, s = document.getElementById("share")!; return !!(l.compareDocumentPosition(s) & Node.DOCUMENT_POSITION_FOLLOWING); }), true);
+    // The title is on the page once (the player has no heading of its own).
+    assert.equal(await page.locator("#player h3").count(), 0);
+    // A speaker's next lines don't repeat the name (kept in the markup, hidden), and a search shows every name.
+    assert.equal(await page.locator(".tline.same").count(), 2);
+    assert.equal(await page.locator(".tline.same .tw").first().evaluate((e) => getComputedStyle(e).visibility), "hidden");
+    await page.fill(".thead input", "roll");
+    assert.equal(await page.locator(".tline.same .tw").first().evaluate((e) => getComputedStyle(e).visibility), "visible");
+    // The footnote is plain; the technical detail is behind a disclosure.
+    assert.match(await page.textContent(".transcript .hint:not(summary)") ?? "", /Made automatically/);
+    assert.equal(await page.isVisible(".techdetails .hint:has-text('Whisper')"), false);
+    // A meeting still to come: copy link and a calendar entry, no embed controls.
+    await page.goto(base + "/m/live-e");
+    await page.waitForSelector("#share .share-row");
+    assert.equal(await page.locator("#share details").count(), 0);
+    const [download] = await Promise.all([page.waitForEvent("download"), page.click("#share button:has-text('Add to calendar')")]);
+    const ics = readFileSync((await download.path())!, "utf8");
+    assert.match(ics, /BEGIN:VEVENT[\s\S]*DTSTART:\d{8}T\d{6}Z[\s\S]*DTEND:\d{8}T\d{6}Z[\s\S]*SUMMARY:.+[\s\S]*END:VEVENT/);
+    assert.match(ics, /\r\n$/);
+    assert.match(download.suggestedFilename(), /\.ics$/);
+    // On a phone the sign-in stays on the brand's row, with the navigation below it.
+    const phone = await (await browser.newContext({ viewport: { width: 390, height: 800 } })).newPage();
+    await phone.goto(base + "/m/council-a");
+    await phone.waitForSelector("#me a");
+    const y = await phone.evaluate(() => ({ brand: document.querySelector("header h1")!.getBoundingClientRect().top, me: document.getElementById("me")!.getBoundingClientRect().top,
+      nav: document.getElementById("sitenav")!.getBoundingClientRect().top }));
+    assert.ok(Math.abs(y.brand - y.me) < 12 && y.nav > y.me + 10, JSON.stringify(y));
   });
 });
 

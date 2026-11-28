@@ -33,7 +33,8 @@ nav.site { display: flex; gap: 4px; flex-wrap: wrap; }
 nav.site a { color: var(--ink); text-decoration: none; padding: 5px 10px; border-radius: 7px; font-size: 14px; }
 nav.site a:hover { background: var(--bg); }
 nav.site a[aria-current] { background: var(--bg); font-weight: 600; box-shadow: inset 0 -2px 0 var(--accent); border-radius: 7px 7px 0 0; }
-@media (max-width: 900px) { header { padding: 8px 16px; } header .me { flex-basis: 100%; margin-left: 0; } }
+/* Narrow displays: the brand and the sign-in on one row, the navigation on its own row below (it scrolls sideways if it must). */
+@media (max-width: 900px) { header { padding: 8px 16px; } header h1 { order: 1; } header .me { order: 2; flex: 1 1 auto; margin-left: auto; text-align: right; } nav.site { order: 3; flex-basis: 100%; flex-wrap: nowrap; overflow-x: auto; } nav.site a { white-space: nowrap; } }
 section { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; box-shadow: var(--shadow); padding: 16px; min-width: 0; }
 section + section { margin-top: 20px; }
 h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 0 0 12px; font-weight: 600; }
@@ -77,7 +78,7 @@ a { color: var(--accent); }
 .thead { display: flex; gap: 10px; align-items: center; justify-content: space-between; flex-wrap: wrap; margin-bottom: 8px; }
 .thead h4 { margin: 0; font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
 .thead input { width: auto; flex: 1 1 200px; max-width: 320px; padding: 6px 10px; }
-.tlist { max-height: 46vh; overflow: auto; border: 1px solid var(--line); border-radius: 8px; }
+.tlist { max-height: min(62vh, 560px); overflow: auto; border: 1px solid var(--line); border-radius: 8px; }
 .tline { display: grid; grid-template-columns: 4.2em minmax(0, 9em) 1fr; gap: 10px; width: 100%; text-align: left;
   border: 0; border-bottom: 1px solid var(--line); border-radius: 0; padding: 7px 10px; background: transparent; font-size: 14px; }
 .tline:last-child { border-bottom: 0; }
@@ -87,6 +88,11 @@ a { color: var(--accent); }
 .tline .tw { color: hsl(var(--h, 220) 60% 36%); font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 @media (prefers-color-scheme: dark) { .tline .tw { color: hsl(var(--h, 220) 70% 72%); } }
 .tline .tx { overflow-wrap: anywhere; }
+/* A speaker's next lines don't repeat the name; a search shows every name again so a hit still says who spoke. */
+.tline.same .tw { visibility: hidden; }
+.tlist.filtered .tline.same .tw { visibility: visible; }
+.tlist details, .techdetails { margin-top: 6px; }
+.player-title .links { margin-left: auto; }
 .live-t { max-height: 320px; overflow-y: auto; }
 .live-t .tline { grid-template-columns: 6.5em 1fr; cursor: default; }
 .live-h { font-size: 14px; margin: 14px 0 6px; }
@@ -314,7 +320,7 @@ function play(r, base, box, extraLinks, o) {
   }
   var tpanel = el("div", { "class": "transcript" });
   fill(box,
-    o.bare ? null : el("div", { "class": "player-title" }, el("h3", { text: r.title || r.slug }), links),
+    o.bare ? null : el("div", { "class": "player-title" }, o.noTitle ? null : el("h3", { text: r.title || r.slug }), links),
     v, qsel, showChapters ? chapters : null, o.transcript === false ? null : tpanel);
   box.hidden = false;
   if (o.transcript === false) return v;
@@ -333,9 +339,12 @@ function loadTranscript(url, v, box) {
     var hues = {}, nh = 0;
     function who(sg) { return sg.label || sg.zoom_speaker || ""; }
     function hue(name) { if (!(name in hues)) hues[name] = Math.round((nh++ * 137.5 + 210) % 360); return hues[name]; }
+    var prevWho = null;
     var rows = segs.map(function (sg) {
       var w = who(sg);
-      var row = el("button", { "class": "tline", type: "button", on: { click: function () { v.currentTime = sg.start; v.play(); } } },
+      var same = prevWho !== null && w === prevWho && w !== "";
+      prevWho = w;
+      var row = el("button", { "class": "tline" + (same ? " same" : ""), type: "button", on: { click: function () { v.currentTime = sg.start; v.play(); } } },
         el("span", { "class": "tt", text: hms(sg.start) }),
         w ? el("span", { "class": "tw", text: w, style: "--h: " + hue(w) }) : null,
         el("span", { "class": "tx", text: (sg.text || "").trim() }));
@@ -343,6 +352,7 @@ function loadTranscript(url, v, box) {
     });
     search.addEventListener("input", function () {
       var q = search.value.trim().toLowerCase();
+      list.classList.toggle("filtered", !!q);
       rows.forEach(function (row) {
         var hit = !q || (row._seg.text || "").toLowerCase().indexOf(q) >= 0 || who(row._seg).toLowerCase().indexOf(q) >= 0;
         row.hidden = !hit;
@@ -361,10 +371,12 @@ function loadTranscript(url, v, box) {
     fill(box,
       el("div", { "class": "thead" }, el("h4", { text: "Transcript" }), search),
       segs.length ? list : el("div", { "class": "hint", text: "No speech was found." }),
-      el("div", { "class": "hint", text: "Whisper " + (t.model || "") + " transcript. " +
-        (t.diarization ? t.diarization.speakers_found + " voices found (pyannote); a voice shows a Zoom name only when one participant matched one voice."
-                       : "Names are Zoom's active-speaker label, not voice ID.") +
-        (t.names_applied ? " Some speaker names were added by hand." : "") + " Times in " + TZ + "." }));
+      el("div", { "class": "hint", text: "Made automatically: words and speaker labels can be wrong, so check the video before quoting. Times in " + TZ + "." +
+        (t.names_applied ? " Some speaker names were added by hand." : "") }),
+      el("details", { "class": "techdetails" }, el("summary", { "class": "hint", text: "How it was made" }),
+        el("div", { "class": "hint", text: "Whisper " + (t.model || "") + " transcript. " +
+          (t.diarization ? t.diarization.speakers_found + " voices found (pyannote); a voice shows a Zoom name only when one participant matched one voice."
+                         : "Names are Zoom's active-speaker label, not voice ID.") })));
   }, function (e) { fill(box, el("div", { "class": "hint", text: "Couldn't load the transcript: " + e.message })); });
 }
 

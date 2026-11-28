@@ -29,6 +29,8 @@ __HEAD__
 ${BASE_CSS}
 ${PUBLIC_CSS}
 #player[hidden], #livebox[hidden] { display: none; }
+.sharebox > summary, .histbox > summary { cursor: pointer; font-weight: 600; font-size: 14px; }
+.sharebox[open] > summary, .histbox[open] > summary { margin-bottom: 10px; }
 .adminbox { border: 1px dashed var(--line, #8886); border-radius: 10px; padding: 10px 14px; }
 .adminbox h2 { font-size: 14px; margin: 0 0 8px; }
 .adminbox .btns { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
@@ -49,8 +51,8 @@ ${PUBLIC_CSS}
   <section id="adminbox" hidden></section>
   <section id="player" hidden></section>
   <section id="livebox" hidden></section>
-  <section id="share" hidden></section>
   <section id="links" hidden></section>
+  <section id="share" hidden></section>
   <section id="history" hidden></section>
 </main>
 <script>
@@ -124,8 +126,7 @@ function banner(m) {
 }
 
 function renderHead(m) {
-  var facts = el("div", { "class": "facts" }, stagePill(m.stage), whenOf(m.start),
-    m.source ? " · " + m.source : null, m.body && m.body !== m.title ? " · " + m.body : null, m.duration ? " · " + hms(m.duration) : null);
+  var facts = el("div", { "class": "facts" }, m.source ? muniBadge(m) : null, stagePill(m.stage), whenOf(m.start), m.body && m.body !== m.title ? " · " + m.body : null, m.duration ? " · " + hms(m.duration) : null);
   fill(document.getElementById("head"), el("h2", { "class": "mtitle", text: m.title }), facts, banner(m));
 }
 
@@ -138,7 +139,7 @@ function renderEmbedded(m, box) {
     var frame = youtubeFrame(m.embed.id, { title: m.title, start: startT });
     var links = el("span", { "class": "links" }, el("a", { href: "https://www.youtube.com/watch?v=" + encodeURIComponent(m.embed.id), target: "_blank", rel: "noopener", text: "Watch on YouTube" }));
     yt = { id: m.embed.id, v: frame.v, tkey: null, links: links, panel: el("div", { "class": "transcript" }) };
-    fill(box, el("div", { "class": "player-title" }, el("h3", { text: m.title }), links), el("div", { "class": "ytbox" }, frame.frame), yt.panel);
+    fill(box, el("div", { "class": "player-title" }, links), el("div", { "class": "ytbox" }, frame.frame), yt.panel);
   }
   var key = f.transcript ? f.transcript : "note:" + (r && r.transcript ? r.transcript.status + ":" + r.transcript.progress : "none");
   if (key !== yt.tkey) {
@@ -161,7 +162,7 @@ function renderPlayer(m) {
   yt = null;
   if (!m.hasVideo || !m.recording || !m.recording.video) { box.hidden = true; fill(box); return; }
   var v = box.querySelector("video"), t = v ? v.currentTime : startT, playing = v ? !v.paused : false;
-  play(m.recording, "/media/", box);
+  play(m.recording, "/media/", box, null, { noTitle: true });   // the title is already at the top of the page
   if (t) {
     v = box.querySelector("video");
     v.addEventListener("loadedmetadata", function () { v.currentTime = t; if (playing) v.play(); }, { once: true });
@@ -202,7 +203,7 @@ function renderShare(m) {
   var linkIn = el("input", { type: "text", readonly: "", value: link, "aria-label": "Link to this meeting" });
   var copyBtn = el("button", { text: "Copy link", on: { click: function () { copy(linkIn.value, copyBtn, linkIn); } } });
   var atBtn = m.hasVideo ? el("button", { text: "Copy link at current time", on: { click: function () {
-    var v = document.querySelector("#player video"), s = v ? Math.floor(v.currentTime) : 0;
+    var v = document.querySelector("#player video"), s = v ? Math.floor(v.currentTime) : (yt ? Math.floor(yt.v.currentTime) : 0);
     linkIn.value = link + (s ? "?t=" + s : "");
     copy(linkIn.value, atBtn, linkIn);
   } } }) : null;
@@ -223,12 +224,34 @@ function renderShare(m) {
   }
   snippet();
   var copyCode = el("button", { text: "Copy code", on: { click: function () { copy(code.value, copyCode, code); } } });
-  fill(box, el("h2", { text: "Share" }),
-    el("div", { "class": "share-row" }, linkIn, copyBtn, atBtn),
-    el("details", { "class": "embed" }, el("summary", { text: "Embed on your site" }),
-      el("div", { "class": "hint", text: "Paste into a page to show the video there. It updates by itself, and plays the same captions." }),
-      opt("transcript", "Include the transcript"), opt("chapters", "Include chapters"), code, el("div", {}, copyCode)));
+  var soon = (m.stage === "upcoming" || m.stage === "live") && !m.cancelled;
+  var calBtn = soon ? el("button", { text: "Add to calendar", on: { click: function () { downloadCalendar(m, link); } } }) : null;
+  if (!m.hasVideo) {
+    // Nothing to embed yet: just the link, and the calendar entry for a meeting still to come.
+    fill(box, el("div", { "class": "share-row" }, linkIn, copyBtn, calBtn));
+  } else {
+    fill(box, el("details", { "class": "sharebox" }, el("summary", { text: "Share and embed" }),
+      el("div", { "class": "share-row" }, linkIn, copyBtn, atBtn, calBtn),
+      el("details", { "class": "embed" }, el("summary", { text: "Embed on your site" }),
+        el("div", { "class": "hint", text: "Paste into a page to show the video there. It updates by itself, and plays the same captions." }),
+        opt("transcript", "Include the transcript"), opt("chapters", "Include chapters"), code, el("div", {}, copyCode))));
+  }
   box.hidden = false;
+}
+
+// A calendar entry (.ics) for a meeting that is coming up: built here, nothing is sent anywhere.
+function icsText(s) { return String(s).replace(/\\/g, "\\\\").replace(/;/g, "\\;").replace(/,/g, "\\,").replace(/\r?\n/g, "\\n"); }
+function downloadCalendar(m, link) {
+  function stamp(iso) { return new Date(iso).toISOString().replace(/[-:]|\.\d{3}/g, ""); }
+  var end = m.end || new Date(Date.parse(m.start) + 2 * 3600000).toISOString();
+  var lines = ["BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//minutes//meetings//EN", "CALSCALE:GREGORIAN", "BEGIN:VEVENT",
+    "UID:" + m.id + "@" + location.host, "DTSTAMP:" + stamp(new Date().toISOString()), "DTSTART:" + stamp(m.start), "DTEND:" + stamp(end),
+    "SUMMARY:" + icsText((m.source ? m.source + ": " : "") + m.title), "URL:" + link,
+    "DESCRIPTION:" + icsText("Video and transcript: " + link + (m.join ? "\nJoin on " + m.join.platform + ": " + m.join.url : "")), "END:VEVENT", "END:VCALENDAR"];
+  var blob = new Blob([lines.join("\r\n") + "\r\n"], { type: "text/calendar" });
+  var a = el("a", { href: URL.createObjectURL(blob), download: m.id + ".ics" });
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(function () { URL.revokeObjectURL(a.href); }, 5000);
 }
 
 function renderLinks(m) {
@@ -246,12 +269,19 @@ function renderLinks(m) {
   box.hidden = false;
 }
 
+// What changed since the meeting was announced: closed until asked for (it is the least-read part of the page), and it keeps its
+// open or closed state when the page refreshes itself.
+var historyOpen = false;
 function renderHistory(m) {
   var box = document.getElementById("history");
   if (!m.history.length) { box.hidden = true; fill(box); return; }
-  fill(box, el("h2", { text: "History" }), wrap("div", {}, m.history.map(function (c) {
-    return el("div", { "class": "upd" }, el("span", { "class": "w", text: whenOf(c.at) }), el("span", { text: changeText(c) }));
-  })), el("div", { "class": "hint", text: "Changes found on the city's own site, newest first. Times in " + TZ + "." }));
+  var d = el("details", { "class": "histbox" }, el("summary", { text: "History (" + m.history.length + (m.history.length === 1 ? " change)" : " changes)") }),
+    wrap("div", {}, m.history.map(function (c) {
+      return el("div", { "class": "upd" }, el("span", { "class": "w", text: whenOf(c.at) }), el("span", { text: changeText(c) }));
+    })), el("div", { "class": "hint", text: "Changes found on the city's own site, newest first. Times in " + TZ + "." }));
+  d.open = historyOpen;
+  d.addEventListener("toggle", function () { historyOpen = d.open; });
+  fill(box, d);
   box.hidden = false;
 }
 

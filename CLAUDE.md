@@ -165,6 +165,15 @@ captures).
   join-link chip sees a Teams link kept as a document; the Feeds page lists
   a meeting under review only in the review queue; "Same as..." is
   "Merge into...".
+  Meeting page (same review): order is player, From the city, Share (a
+  closed "Share and embed", just the link for a meeting with nothing to
+  embed yet, plus Add to calendar: an .ics built in the page), History (a
+  closed `<details>` that keeps its state across refreshes); no second
+  title above the player; the municipality badge in the header; a
+  speaker's consecutive transcript lines don't repeat the name
+  (`.tline.same`, shown again while searching); the transcript note is
+  plain and the model/diarization detail is a disclosure. Narrow screens:
+  brand and sign-in on one row, nav below (`common.ts` header CSS).
 - Scale (`docs/scaling.md`, `test/scale.test.ts`, 3000 meetings): `serve.ts`
   keeps the recordings list and the public model in snapshots (rebuilt on
   `Meetings.version` / `Scheduler.version` changes, after any write request,
