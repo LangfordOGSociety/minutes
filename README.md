@@ -274,15 +274,24 @@ Live Granicus events are expected to work the same way as a live stream but
 haven't been tried on a real meeting yet.
 
 **YouTube.** A meeting whose link is a YouTube video or live link
-(`https://www.youtube.com/watch?v=...`, `youtu.be/...`, `/live/...`) is
-recorded from its stream with yt-dlp (no browser, no Xvfb, no login): it
-waits while the stream is upcoming, records while it's live (a late start
-still gets the beginning of the stream, as far back as YouTube keeps it)
-and stops when it ends. Schedule it like any meeting on `/admin`, or let a
-feed find the link. yt-dlp is a pinned binary in the image
-(`YT_DLP_VERSION` in the Dockerfile); when YouTube changes and captures
-start failing, bumping it is the first thing to try. `YOUTUBE_MAX_HEIGHT`
-(default 1080) caps the quality.
+(`https://www.youtube.com/watch?v=...`, `youtu.be/...`, `/live/...`) shows
+YouTube's own player on its page (and in `/embed/<slug>`): the video is
+embedded, not copied or stored. For the transcript and the speaker labels the
+server still needs the sound, so it follows the stream with yt-dlp (no
+browser, no Xvfb, no login) and keeps only the audio: it waits while the
+stream is upcoming, records while it's live (a late start still gets the
+beginning of the stream, as far back as YouTube keeps it) and stops when it
+ends. The sound is never served, and is deleted as soon as the transcript is
+done (`KEEP_AUDIO_DAYS=3` keeps it that long, for transcribing again; a
+transcript made from deleted sound can't be redone). The transcript beside the
+embedded player follows it and seeks it. `YOUTUBE_RECORD=video` records the
+picture too, played from here instead of YouTube. Schedule one like any
+meeting on `/admin`, or let a feed find the link. yt-dlp is a pinned binary
+in the image (`YT_DLP_VERSION` in the Dockerfile); when YouTube changes and
+captures start failing, bumping it is the first thing to try.
+`YOUTUBE_MAX_HEIGHT` (default 1080) only matters with `YOUTUBE_RECORD=video`.
+A YouTube meeting we missed live gets its embed but no transcript: fetching the
+sound of a finished stream is not built.
 
 **API.** `/api/v1` (docs at `/api/docs`, OpenAPI at
 `/api/v1/openapi.json`) lists meetings, their status, history and files with
@@ -336,6 +345,7 @@ to date: new ones, moved times, join links published late, cancellations.
 |---|---|---|
 | eScribe meetings portal | Langford and many others | the portal URL, e.g. `https://pub-langford.escribemeetings.com`; optionally the meeting types to keep |
 | PrimeGov public portal | Saanich (agendas) and others | the portal URL, e.g. `https://saanichca.primegov.com`; optionally title words to keep; timezone |
+| CivicWeb portal | Colwood and others on `*.civicweb.net` | the portal URL, e.g. `https://colwood.civicweb.net`; optionally title words to keep; timezone. Reads the portal's own JSON (times, agendas, minutes); the meeting's YouTube stream becomes its join link once the city sets it up |
 | Granicus (MediaManager) | sites that list meetings on Granicus | the site URL, e.g. `https://saanich.ca.granicus.com`, view id (1), timezone |
 | iCalendar (.ics) | any calendar feed | the `.ics` URL |
 | Web page (CSS selectors) | a page that lists meetings | the URL plus selectors for each row, its title, date (and time), link |
@@ -382,7 +392,20 @@ Saanich: PrimeGov, `https://saanichca.primegov.com`, timezone
 `America/Vancouver`, policy *list only*: it meets in person and streams
 on Granicus, which isn't a capture platform yet, so its meetings are listed
 with their agendas, documents and video but not recorded. (Its Granicus
-site lists no upcoming meetings any more; PrimeGov is the source.)
+site lists no upcoming meetings any more; PrimeGov is the source.) Its
+meetings are on Microsoft Teams, and the join links are on the city's own
+schedule page, not in the agendas: put that page's address in "Meeting links
+page" and each link is matched to its meeting and shown as its join link.
+
+Colwood: CivicWeb, `https://colwood.civicweb.net`, timezone
+`America/Vancouver`, folder prefix `colwood`, policy *wait for review* at
+first. Its council meetings stream on YouTube; the portal says which video
+belongs to which meeting once the city has set it up, so no separate YouTube
+feed is needed (and one would list each meeting twice). The meeting page
+embeds the YouTube video; we keep only its sound long enough for the
+transcript and the speaker labels (see below), not the video. Capturing that
+sound from a YouTube stream has not been verified from the homelab's address
+(see the YouTube notes above).
 
 ## Hardware encoding
 

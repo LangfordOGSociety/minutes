@@ -1,0 +1,110 @@
+[
+ {
+  "ExternalCalendar": false,
+  "Id": 3841,
+  "MeetingDate": "2026-12-14",
+  "MeetingDateTime": "2026-12-14 18:30",
+  "MeetingLocation": "3300 Wishart Road Council Chambers Colwood BC",
+  "MeetingTime": "06:30 PM",
+  "Name": "Notice of Committee of the Whole Meeting - 14 Dec 2026",
+  "Published": false,
+  "TypeId": 66,
+  "VideoIcon": ""
+ },
+ {
+  "ExternalCalendar": false,
+  "Id": 3840,
+  "MeetingDate": "2026-12-14",
+  "MeetingDateTime": "2026-12-14 18:30",
+  "MeetingLocation": "3300 Wishart Road Council Chambers Colwood BC",
+  "MeetingTime": "06:30 PM",
+  "Name": "Special Committee of the Whole - 14 Dec 2026",
+  "Published": false,
+  "TypeId": 48,
+  "VideoIcon": ""
+ },
+ {
+  "ExternalCalendar": false,
+  "Id": 3735,
+  "MeetingDate": "2026-12-14",
+  "MeetingDateTime": "2026-12-14 18:30",
+  "MeetingLocation": "3300 Wishart Road  Council Chambers  Colwood BC",
+  "MeetingTime": "06:30 PM",
+  "Name": "Council - 14 Dec 2026",
+  "Published": false,
+  "TypeId": 3,
+  "VideoIcon": ""
+ },
+ {
+  "ExternalCalendar": false,
+  "Id": 3775,
+  "MeetingDate": "2026-11-25",
+  "MeetingDateTime": "2026-11-25 14:00",
+  "MeetingLocation": "3300 Wishart Road Council Chambers Colwood BC",
+  "MeetingTime": "02:00 PM",
+  "Name": "CANCELLED - Capital West Accessibility Advisory Committee - 25 Nov 2026",
+  "Published": true,
+  "TypeId": 74,
+  "VideoIcon": ""
+ },
+ {
+  "ExternalCalendar": false,
+  "Id": 3734,
+  "MeetingDate": "2026-11-23",
+  "MeetingDateTime": "2026-11-23 18:30",
+  "MeetingLocation": "3300 Wishart Road  Council Chambers  Colwood BC",
+  "MeetingTime": "06:30 PM",
+  "Name": "Council - 23 Nov 2026",
+  "Published": true,
+  "TypeId": 3,
+  "VideoIcon": "<em class='video-event glyphicon glyphicon-facetime-video' data-id='3734' aria-label='Includes Video' style='position: absolute; right: 0px; top: 9px; margin: 0 0 0 0.4em; text-indent: 0em;'></em>"
+ },
+ {
+  "ExternalCalendar": false,
+  "Id": 3839,
+  "MeetingDate": "2026-11-09",
+  "MeetingDateTime": "2026-11-09 13:00",
+  "MeetingLocation": "3300 Wishart Road Council Chambers Colwood BC",
+  "MeetingTime": "01:00 PM",
+  "Name": "Notice of In-Camera Meeting - 09 Nov 2026",
+  "Published": true,
+  "TypeId": 66,
+  "VideoIcon": ""
+ },
+ {
+  "ExternalCalendar": false,
+  "Id": 3733,
+  "MeetingDate": "2026-11-02",
+  "MeetingDateTime": "2026-11-02 18:30",
+  "MeetingLocation": "3300 Wishart Road  Council Chambers  Colwood BC",
+  "MeetingTime": "06:30 PM",
+  "Name": "Inaugural Meeting of Council - 02 Nov 2026",
+  "Published": true,
+  "TypeId": 3,
+  "VideoIcon": "<em class='video-event glyphicon glyphicon-facetime-video' data-id='3733' aria-label='Includes Video' style='position: absolute; right: 0px; top: 9px; margin: 0 0 0 0.4em; text-indent: 0em;'></em>"
+ },
+ {
+  "ExternalCalendar": false,
+  "Id": 3759,
+  "MeetingDate": "2026-02-18",
+  "MeetingDateTime": "2026-02-18 18:00",
+  "MeetingLocation": "3300 Wishart Road Council Chambers Colwood BC",
+  "MeetingTime": "06:00 PM",
+  "Name": "RESCHEDULED Special Council - 2026 Budget -18 Feb 2026",
+  "Published": true,
+  "TypeId": 3,
+  "VideoIcon": ""
+ },
+ {
+  "ExternalCalendar": false,
+  "Id": 3758,
+  "MeetingDate": "2026-02-11",
+  "MeetingDateTime": "2026-02-11 18:00",
+  "MeetingLocation": "3300 Wishart Road  Council Chambers  Colwood BC",
+  "MeetingTime": "06:00 PM",
+  "Name": "POSTPONED - Special Council - 2026 Service Review and Budget  11 Feb 2026",
+  "Published": true,
+  "TypeId": 3,
+  "VideoIcon": ""
+ }
+]

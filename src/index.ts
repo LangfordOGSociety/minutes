@@ -320,6 +320,12 @@ if (process.argv[2] === "serve") {
     const d = Number.parseInt(v, 10);
     return d >= 1 && d <= 3650 ? d : fail("KEEP_PARTS_DAYS: a number of days, 1 or more");
   };
+  // KEEP_AUDIO_DAYS: how long the sound of a YouTube meeting stays after its transcript is done (default 0: deleted at once).
+  const keepAudioEnv = (v: string | undefined): number | undefined => {
+    if (!v?.trim()) return undefined;
+    const d = Number.parseInt(v, 10);
+    return d >= 0 && d <= 3650 ? d : fail("KEEP_AUDIO_DAYS: a number of days (0 = delete at once)");
+  };
   const rate = (name: string) => { try { return parseRate(env[name]); } catch (e) { return fail(`${name}: ${(e as Error).message}`); } };
   if (v.auth && !existsSync(v.auth)) fail(`--auth file not found: ${v.auth}`);
   if (!v.auth) console.error("warning: no --auth session; Zoom blocks anonymous web-client joins (see `minutes login`)");
@@ -334,6 +340,7 @@ if (process.argv[2] === "serve") {
     downloadBps: rate("DOWNLOAD_MAX_BPS"), tokenDownloadBps: rate("DOWNLOAD_TOKEN_BPS"),
     renditions: renditionsEnv(env.RENDITIONS),
     keepPartsDays: keepPartsEnv(env.KEEP_PARTS_DAYS),
+    keepAudioDays: keepAudioEnv(env.KEEP_AUDIO_DAYS),
     out: v.out!, auth: v.auth ?? null, defaultName: v.name!,
     leadMs: n("lead-min", v["lead-min"]) * 60_000, noShowMs: n("no-show-min", v["no-show-min"]) * 60_000,
     maxConcurrent: n("max-jobs", v["max-jobs"], 1),

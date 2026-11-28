@@ -99,7 +99,7 @@ import { NightlyBackup, type NightlyOpts } from "./backup.js";
 import { openDb } from "./db.js";
 import { BadRequest, Scheduler, type Job, type SchedulerOpts } from "./jobs.js";
 import type { Mailer } from "./mail.js";
-import { Proxies, SECURITY_HEADERS, embedAncestors, pageCsp } from "./net.js";
+import { Proxies, SECURITY_HEADERS, YOUTUBE_FRAME, embedAncestors, pageCsp } from "./net.js";
 import { EMBED_PAGE } from "./pages/embed.js";
 import { EMBED_LIST_PAGE } from "./pages/embedlist.js";
 import "./feeds/parsers/index.js";
@@ -121,7 +121,7 @@ import { OVER_AFTER_MS, PUBLIC_KINDS, filterMeetings, publicChange, recordingOf,
 import type { Recording } from "./recordings.js";
 import { zonedTime } from "./feeds/time.js";
 import { platformFor } from "./platforms/registry.js";
-import { pruneParts } from "./parts.js";
+import { deleteAudio, pruneParts } from "./parts.js";
 import { Renditions } from "./renditions.js";
 import { FILE_RE, listRecordings, publicFiles, toPublic } from "./recordings.js";
 import { SessionKeeper, type KeeperOpts } from "./session.js";
@@ -159,6 +159,8 @@ export interface ServeOpts extends Omit<SchedulerOpts, "entry"> {
   thumbnails?: boolean;
   /** Heights of the smaller copies made of each recording for slow connections, best first (default 720, 480, 360; `false` = none; renditions.ts). */
   renditions?: number[] | false;
+  /** How many days to keep the sound of a YouTube meeting after its transcript is done, for transcribing again (default 0: delete at once; parts.ts). */
+  keepAudioDays?: number;
   /** Delete a recording's raw capture parts once its MP4 is verified and this many days old (parts.ts). Unset = keep them. */
   keepPartsDays?: number;
   /** How long the recordings list and the public model are kept before being rebuilt, in ms (default 5000; 0 = rebuild every time,
@@ -599,7 +601,7 @@ export function createApp(o: ServeOpts, entry: string): App {
   /** Poster images: a frame of each recording's video, made one at a time in the background. */
   const thumbs = new Thumbs();
   const syncThumbs = (): Promise<number> => {
-    const todo = listRecordings(o.out, sched, o.tz).filter((r) => r.video && !r.files.thumb)
+    const todo = listRecordings(o.out, sched, o.tz).filter((r) => r.video && !r.audioOnly && !r.files.thumb)
       .map((r) => ({ slug: r.slug, video: path.join(o.out, r.slug, r.video!), dest: path.join(o.out, r.slug, `${r.slug}.jpg`), duration: r.duration }));
     return todo.length ? thumbs.run(todo).catch((e) => { log.warn("making posters failed", e); return 0; }) : Promise.resolve(0);
   };
@@ -616,7 +618,7 @@ export function createApp(o: ServeOpts, entry: string): App {
   };
   const syncRenditions = (): Promise<number> => {
     if (o.renditions === false || closed || captureBusy()) return Promise.resolve(0);
-    const todo = listRecordings(o.out, sched, o.tz).filter((r) => r.video && r.public)
+    const todo = listRecordings(o.out, sched, o.tz).filter((r) => r.video && r.public && !r.audioOnly)
       .map((r) => ({ slug: r.slug, video: r.video!, dir: path.join(o.out, r.slug), duration: r.duration, have: r.renditions.map((x) => x.height) }));
     return renditions.run(todo, () => closed || captureBusy()).then((n) => { if (n) epoch++; return n; }, (e) => { log.warn("making smaller copies failed", e); return 0; });
   };
@@ -639,6 +641,21 @@ export function createApp(o: ServeOpts, entry: string): App {
   const partsTimer = setInterval(() => void syncParts(), 3_600_000);
   partsTimer.unref();
   if (o.keepPartsDays) setTimeout(() => void syncParts(), 120_000).unref();
+
+  /** The sound of YouTube meetings, once their transcripts are done (parts.ts deleteAudio): nothing of YouTube's video is kept. */
+  const syncAudio = () => {
+    if (closed) return;
+    try {
+      for (const r of listRecordings(o.out, sched, o.tz)) {
+        if (!r.audioOnly || r.audioGone || r.active || r.transcript?.status !== "done" || sched.activeSlugs().has(r.slug)) continue;
+        const freed = deleteAudio({ out: o.out, slug: r.slug, days: o.keepAudioDays ?? 0 });
+        if (freed !== null) epoch++;
+      }
+    } catch (e) { log.warn("deleting the sound of finished transcripts failed", e); }
+  };
+  const audioTimer = setInterval(syncAudio, 5 * 60_000);
+  audioTimer.unref();
+  setTimeout(syncAudio, 60_000).unref();
 
   /** The feed a meeting came from, by its name: what the public pages call its municipality. */
   const sourceOf = (m: Meeting): string | null => (m.feedId ? feeds.get(m.feedId)?.name ?? null : null);
@@ -949,7 +966,11 @@ export function createApp(o: ServeOpts, entry: string): App {
         const img = b && rec?.files.thumb ? `${b}/media/${encodeURIComponent(rec.slug)}/${encodeURIComponent(rec.files.thumb)}` : "";
         // Structured data (schema.org) so search engines can show the video or the event.
         const isoDur = (s: number) => `PT${s >= 3600 ? `${Math.floor(s / 3600)}H` : ""}${Math.floor((s % 3600) / 60)}M${s % 60}S`;
-        const ld = !b ? null : e.p.hasVideo && rec?.video
+        const ld = !b ? null : e.p.embed && !(rec?.video && !rec.audioOnly)
+          ? { "@context": "https://schema.org", "@type": "VideoObject", name: e.m.title, description: desc, uploadDate: e.m.start, inLanguage: "en",
+              ...(rec?.duration ? { duration: isoDur(rec.duration) } : {}), embedUrl: `https://www.youtube.com/embed/${encodeURIComponent(e.p.embed.id)}`,
+              thumbnailUrl: `https://i.ytimg.com/vi/${encodeURIComponent(e.p.embed.id)}/hqdefault.jpg` }
+          : e.p.hasVideo && rec?.video
           ? { "@context": "https://schema.org", "@type": "VideoObject", name: e.m.title, description: desc, uploadDate: e.m.start, inLanguage: "en",
               ...(rec.duration ? { duration: isoDur(rec.duration) } : {}), embedUrl: `${b}/embed/${encodeURIComponent(e.m.slug)}`,
               contentUrl: `${b}/media/${encodeURIComponent(rec.slug)}/${encodeURIComponent(rec.video)}`, ...(img ? { thumbnailUrl: img } : {}) }
@@ -964,7 +985,7 @@ export function createApp(o: ServeOpts, entry: string): App {
           ...(ld ? [`<script type="application/ld+json">${JSON.stringify(ld).replace(/</g, "\\u003c")}</script>`] : []),
         ].join("\n");
         const body = pages.meeting.body.replace("__TITLE__", () => esc(title)).replace("__DESC__", () => esc(desc)).replace("__HEAD__", () => head);
-        return send(res, 200, body, { "Content-Type": "text/html; charset=utf-8", "Content-Security-Policy": pageCsp(body) });
+        return send(res, 200, body, { "Content-Type": "text/html; charset=utf-8", "Content-Security-Policy": pageCsp(body, "'none'", YOUTUBE_FRAME) });
       }
       if (parts[0] === "embed" && parts[1] === "upcoming" && parts.length === 2 && read) {
         // The next meetings as a list, for other sites' iframes (embedlist.ts); same framing rule as the video.
@@ -977,7 +998,7 @@ export function createApp(o: ServeOpts, entry: string): App {
         if (!e) return send(res, 404, "not found");
         res.removeHeader("X-Frame-Options");
         const body = pages.embed.body.replace("__TITLE__", () => esc(e.m.title)).replace("__SLUG__", () => JSON.stringify(e.m.slug).replace(/</g, "\\u003c"));
-        return send(res, 200, body, { "Content-Type": "text/html; charset=utf-8", "Content-Security-Policy": pageCsp(body, frameAncestors) });
+        return send(res, 200, body, { "Content-Type": "text/html; charset=utf-8", "Content-Security-Policy": pageCsp(body, frameAncestors, YOUTUBE_FRAME) });
       }
       if (parts[0] === "oembed" && parts.length === 1 && read) {
         // oEmbed (JSON): paste a meeting's link into a site that supports it and get the player.
@@ -1263,6 +1284,7 @@ export function createApp(o: ServeOpts, entry: string): App {
           // stay in place, and are replaced one by one, atomically, as the new ones are written.
           const rec = listRecordings(o.out, sched, o.tz).find((r) => r.slug === id);   // fresh: this decides a write
           if (!rec?.video) return send(res, 404, { error: "that recording has no video to transcribe" });
+          if (rec.audioGone) return send(res, 409, { error: "the sound of this YouTube meeting was deleted once its transcript was done (KEEP_AUDIO_DAYS), so there is nothing to transcribe again" });
           if (sched.isActive(id)) return send(res, 409, { error: "that recording is still being captured" });
           const st = rec.transcript?.status;
           if (st && st !== "done" && st !== "failed") return send(res, 409, { error: `the transcriber is already working on it (${st})` });
@@ -1583,6 +1605,7 @@ export function createApp(o: ServeOpts, entry: string): App {
       clearInterval(thumbTimer);
       clearInterval(renditionTimer);
       clearInterval(partsTimer);
+      clearInterval(audioTimer);
       keeper.stop();
       backups?.stop();
       poller.stop();

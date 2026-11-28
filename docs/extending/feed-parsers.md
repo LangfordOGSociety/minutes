@@ -6,7 +6,7 @@ database, no scheduling, no files. Diffing, history, review, dedup and
 captures are core code (`src/feeds/sync.ts`), so a parser bug can't cancel
 a capture except through what it returns, and the sync guards that too.
 
-Built in: `ical`, `html`, `escribe`, `granicus`, `primegov`
+Built in: `ical`, `html`, `escribe`, `granicus`, `primegov`, `civicweb`
 (`minutes feed parsers`). Read the closest one first.
 
 ## The interface (`src/feeds/types.ts`)

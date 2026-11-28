@@ -21,7 +21,7 @@ const meeting = (o: Partial<Meeting> = {}): Meeting => ({ id: "m", title: "Counc
   status: "scheduled", visibility: "public", slug: "council", createdAt: "", updatedAt: "", ...o });
 const job = (status: Job["status"], o: Partial<Job> = {}): Job => ({ id: "j", meetingRef: "m", link: "", start: "", slug: "council", name: "", status, createdAt: "", ...o });
 const rec = (o: Partial<Recording> = {}): Recording => ({ slug: "council", title: "", public: true, scheduledStart: null, outcome: "", active: false, video: null,
-  videoBytes: null, duration: null, parts: [], chapters: [], transcript: null, renditions: [], files: {}, ...o });
+  videoBytes: null, audioOnly: false, audioGone: false, duration: null, parts: [], chapters: [], transcript: null, renditions: [], files: {}, ...o });
 
 describe("stages", () => {
   const at = (hours: number) => new Date(NOW + hours * H).toISOString();
@@ -105,7 +105,7 @@ describe("public meetings API", () => {
     up = (await pub.get("/api/meetings?scope=upcoming")).json;
     assert.deepEqual(up.meetings.map((m: { title: string }) => m.title), ["Council Meeting", "Called off"]);
     const c = up.meetings[0];
-    assert.deepEqual(Object.keys(c).sort(), ["agendaUrl", "body", "cancelled", "documents", "duration", "end", "hasTranscript", "hasVideo", "id", "join", "live", "pageUrl", "poster", "source", "sourceColor", "stage", "start", "streamUrl", "title"]);
+    assert.deepEqual(Object.keys(c).sort(), ["agendaUrl", "body", "cancelled", "documents", "duration", "embed", "end", "hasTranscript", "hasVideo", "id", "join", "live", "pageUrl", "poster", "source", "sourceColor", "stage", "start", "streamUrl", "title"]);
     assert.deepEqual([c.stage, c.body, c.agendaUrl, c.streamUrl], ["upcoming", "Council", "https://city.example/agenda/1", "https://city.example/video/1"]);
     assert.deepEqual(c.documents, [{ title: "Agenda", type: "Agenda", url: "https://city.example/agenda/1", copy: null }]);   // not the javascript: URL
     assert.equal(up.meetings[1].stage, "cancelled");
