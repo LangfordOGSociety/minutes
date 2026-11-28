@@ -32,7 +32,7 @@ h1 a { color: inherit; text-decoration: none; }
 section { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 18px; }
 section + section { margin-top: 16px; }
 section[hidden], form[hidden], p[hidden], label[hidden], input[hidden] { display: none; }
-h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 0 0 8px; font-weight: 600; }
+h2 { font-size: 16px; color: var(--ink); margin: 0 0 8px; font-weight: 650; }
 label { display: block; font-size: 13px; font-weight: 600; margin: 12px 0 4px; }
 input { width: 100%; padding: 9px 10px; border: 1px solid var(--line); border-radius: 7px; background: var(--bg); color: var(--ink); font: inherit; }
 input:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
@@ -154,12 +154,7 @@ pre.snip { background: var(--bg); border: 1px solid var(--line); border-radius: 
   </section>
 
   <section id="account" hidden>
-    <div class="row">
-      <div><h2>Signed in</h2><div id="who"></div></div>
-      <button type="button" id="logout">Sign out</button>
-    </div>
-    <p class="msg err" id="denied" hidden>This account can't open that page.</p>
-    <p><a href="/" id="home">Continue</a></p>
+    <p class="msg err" id="denied" hidden>This account can't open that page. <a href="/" id="home">Go to the meetings</a></p>
   </section>
 
   <nav class="tabs" id="tabs" aria-label="Account" hidden></nav>
@@ -486,7 +481,7 @@ function showTabs() {
   var tabs = availableTabs(user, onAccount);
   var want = location.hash.slice(1);
   var cur = tabs.filter(function (x) { return x[0] === want; })[0] || tabs[0];
-  var panes = ["account"];
+  var panes = params.get("denied") === "1" ? ["account"] : [];   // the header already says who is signed in
   if (user.mustChangePassword) panes.push("change");
   else if (cur) panes.push(TAB_PANE[cur[0]]);
   if (!user.verified && !user.mustChangePassword && signupOpen) panes.push("verify");
@@ -520,7 +515,6 @@ function render(user, setupNeeded) {
   curUser = user;
   showTabs();
   if (onAccount) toTop();
-  $("who").textContent = (user.name ? user.name + " \u00b7 " : "") + user.email + " (" + user.role + (user.verified ? "" : ", email not confirmed") + ")";
   show("denied", params.get("denied") === "1");
   $("home").href = next;
   show("changehint", user.mustChangePassword);
@@ -618,10 +612,6 @@ $("changeform").addEventListener("submit", function (ev) {
     msg("changemsg", "ok", "Password changed. Other sessions were signed out.");
     if (location.pathname !== "/account") location.replace(next); else render(d.user, false);
   }, function (e) { msg("changemsg", "err", e.message); });
-});
-
-$("logout").addEventListener("click", function () {
-  api("POST", "/api/logout").then(function () { location.replace("/login"); });
 });
 
 api("GET", "/api/me").then(function (d) { signupOpen = !!d.signup; render(d.user, d.setupNeeded); },

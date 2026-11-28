@@ -184,6 +184,10 @@ Mail goes out over SMTP with implicit TLS:
 `minutes mail-test you@example.com` sends a test message. Without
 `SMTP_URL`, sign-up and reset are off and admins make accounts.
 
+Every public page has a footer. Set `CONTACT_URL` (a `mailto:` or `https://`
+address, e.g. `mailto:transcripts@example.org`) to add a "Report a mistake"
+link to it; without it the link is left out.
+
 Every admin change (schedule, edit, cancel, stop, record again, Zoom login
 check), every password change, and every `minutes user` command lands in
 the **audit log** on the admin page: who (the account, or `cli`), from

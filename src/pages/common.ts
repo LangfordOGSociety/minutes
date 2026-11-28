@@ -29,14 +29,17 @@ header h1 { font-size: 18px; margin: 0; letter-spacing: -.01em; }
 header h1 a { color: inherit; text-decoration: none; }
 header .meta { color: var(--muted); font-size: 13px; }
 header .me { margin-left: auto; color: var(--muted); font-size: 13px; }
+#sitefoot { border-top: 1px solid var(--line); margin-top: 32px; padding: 20px 24px 28px; color: var(--muted); font-size: 13px; }
+#sitefoot .foot { max-width: 1050px; margin: 0 auto; } #sitefoot p { margin: 0 0 6px; max-width: 70ch; }
 nav.site { display: flex; gap: 4px; flex-wrap: wrap; }
 nav.site a { color: var(--ink); text-decoration: none; padding: 5px 10px; border-radius: 7px; font-size: 14px; }
 nav.site a:hover { background: var(--bg); }
 nav.site a[aria-current] { background: var(--bg); font-weight: 600; box-shadow: inset 0 -2px 0 var(--accent); border-radius: 7px 7px 0 0; }
-@media (max-width: 900px) { header { padding: 8px 16px; } header .me { flex-basis: 100%; margin-left: 0; } }
+/* Narrow displays: the brand and the sign-in on one row, the navigation on its own row below (it scrolls sideways if it must). */
+@media (max-width: 900px) { header { padding: 8px 16px; } header h1 { order: 1; } header .me { order: 2; flex: 1 1 auto; margin-left: auto; text-align: right; } nav.site { order: 3; flex-basis: 100%; flex-wrap: nowrap; overflow-x: auto; } nav.site a { white-space: nowrap; } }
 section { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; box-shadow: var(--shadow); padding: 16px; min-width: 0; }
 section + section { margin-top: 20px; }
-h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 0 0 12px; font-weight: 600; }
+h2 { font-size: 16px; color: var(--ink); margin: 0 0 12px; font-weight: 650; }
 label { display: block; font-size: 13px; font-weight: 600; margin: 10px 0 4px; }
 label small { font-weight: 400; color: var(--muted); }
 input, select { width: 100%; padding: 8px 10px; border: 1px solid var(--line); border-radius: 7px; background: var(--bg); color: var(--ink); font: inherit; }
@@ -55,7 +58,7 @@ button.danger { color: var(--bad); }
 .row .actions { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; min-width: 0; }
 .row .actions select { width: auto; max-width: 12rem; min-width: 0; }
 @media (max-width: 700px) { .row { grid-template-columns: minmax(0, 1fr); } .row .actions { justify-content: flex-start; } .row .actions select { max-width: 100%; } }
-.pill { display: inline-block; font-size: 11px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase;
+.pill { display: inline-block; font-size: 12px; font-weight: 600;
   padding: 2px 7px; border-radius: 999px; border: 1px solid currentColor; margin-right: 6px; vertical-align: 1px; }
 .s-scheduled, .s-queued { color: var(--accent); } .s-running, .s-live { color: var(--live); } .s-stopping { color: var(--warn); }
 .s-done, .s-ended { color: var(--ok); } .s-failed, .s-blocked, .s-interrupted, .s-invalid_link, .s-email_required { color: var(--bad); } .s-cancelled, .s-stopped { color: var(--muted); }
@@ -75,9 +78,9 @@ a { color: var(--accent); }
 .links { font-size: 14px; }
 .transcript { margin-top: 14px; }
 .thead { display: flex; gap: 10px; align-items: center; justify-content: space-between; flex-wrap: wrap; margin-bottom: 8px; }
-.thead h4 { margin: 0; font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
+.thead h4 { margin: 0; font-size: 15px; color: var(--ink); font-weight: 650; }
 .thead input { width: auto; flex: 1 1 200px; max-width: 320px; padding: 6px 10px; }
-.tlist { max-height: 46vh; overflow: auto; border: 1px solid var(--line); border-radius: 8px; }
+.tlist { max-height: min(62vh, 560px); overflow: auto; border: 1px solid var(--line); border-radius: 8px; }
 .tline { display: grid; grid-template-columns: 4.2em minmax(0, 9em) 1fr; gap: 10px; width: 100%; text-align: left;
   border: 0; border-bottom: 1px solid var(--line); border-radius: 0; padding: 7px 10px; background: transparent; font-size: 14px; }
 .tline:last-child { border-bottom: 0; }
@@ -87,6 +90,11 @@ a { color: var(--accent); }
 .tline .tw { color: hsl(var(--h, 220) 60% 36%); font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 @media (prefers-color-scheme: dark) { .tline .tw { color: hsl(var(--h, 220) 70% 72%); } }
 .tline .tx { overflow-wrap: anywhere; }
+/* A speaker's next lines don't repeat the name; a search shows every name again so a hit still says who spoke. */
+.tline.same .tw { visibility: hidden; }
+.tlist.filtered .tline.same .tw { visibility: visible; }
+.tlist details, .techdetails { margin-top: 6px; }
+.player-title .links { margin-left: auto; }
 .live-t { max-height: 320px; overflow-y: auto; }
 .live-t .tline { grid-template-columns: 6.5em 1fr; cursor: default; }
 .live-h { font-size: 14px; margin: 14px 0 6px; }
@@ -95,6 +103,7 @@ a { color: var(--accent); }
 
 /** Helpers. Needs a global TZ (server timezone) defined before it. */
 export const BASE_JS = String.raw`
+var CONTACT = __CONTACT__;   // where to report a mistake (CONTACT_URL), or ""
 function el(tag, attrs) {
   var e = document.createElement(tag);
   if (attrs) for (var k in attrs) {
@@ -116,7 +125,7 @@ function fill(node) {
   node.replaceChildren.apply(node, kids);
   return node;
 }
-function pill(status) { return el("span", { "class": "pill s-" + status, text: status }); }
+function pill(status) { return el("span", { "class": "pill s-" + status, text: String(status).replace(/_/g, " ") }); }
 var fmtDT = new Intl.DateTimeFormat(undefined, { timeZone: TZ, weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
 var fmtClock = new Intl.DateTimeFormat(undefined, { timeZone: TZ, hour: "numeric", minute: "2-digit", second: "2-digit" });
 function fmt(iso) { return iso ? fmtDT.format(new Date(iso)) : "?"; }
@@ -150,7 +159,7 @@ function api(method, url, body, signIn) {
 // holds who is signed in and the account links.
 var NAV = [["Meetings", "/", function (p) { return p === "/" || p.indexOf("/m/") === 0; }],
   ["Search", "/search", function (p) { return p === "/search"; }],
-  ["Embed & API", "/account#embed", function (p) { return p === "/account"; }]];
+  ["For developers", "/account#embed", function (p) { return p === "/account"; }]];
 function siteNav(box, extra) {
   var nav = document.getElementById("sitenav");
   if (!nav) { nav = el("nav", { "class": "site", id: "sitenav", "aria-label": "Site" }); box.parentNode.insertBefore(nav, box); }
@@ -158,8 +167,19 @@ function siteNav(box, extra) {
   var items = NAV.map(function (n) { return [n[0], n[1], n[2](p)]; }).concat(extra || []);
   fill.apply(null, [nav].concat(items.map(function (n) { return el("a", { href: n[1], text: n[0], "aria-current": n[2] ? "page" : null }); })));
 }
+// The page's foot: what the site is, where the data and the embeds are, and (if the operator set one) where to report a mistake.
+function renderFooter() {
+  if (document.getElementById("sitefoot")) return;
+  var links = [el("a", { href: "/search", text: "Search transcripts" }), el("a", { href: "/account#embed", text: "Embed and API for developers" }), el("a", { href: "/api/docs", text: "API documentation" })];
+  if (CONTACT) links.push(el("a", { href: CONTACT, text: "Report a mistake" }));
+  var nav = el("div", { "class": "footlinks" });
+  links.forEach(function (a, i) { if (i) nav.appendChild(document.createTextNode(" · ")); nav.appendChild(a); });
+  document.body.appendChild(el("footer", { id: "sitefoot" },
+    el("div", { "class": "foot" }, el("p", { text: "Public meetings of the municipalities listed here, recorded and transcribed automatically. Transcripts can contain mistakes: check the video before quoting." }), nav)));
+}
 function renderMe(box, admin) {
   siteNav(box);
+  if (!admin) renderFooter();
   api("GET", "/api/me").then(function (d) {
     var u = d.user;
     var isAdmin = !!u && u.caps.indexOf("admin.view") >= 0;
@@ -314,7 +334,7 @@ function play(r, base, box, extraLinks, o) {
   }
   var tpanel = el("div", { "class": "transcript" });
   fill(box,
-    o.bare ? null : el("div", { "class": "player-title" }, el("h3", { text: r.title || r.slug }), links),
+    o.bare ? null : el("div", { "class": "player-title" }, o.noTitle ? null : el("h3", { text: r.title || r.slug }), links),
     v, qsel, showChapters ? chapters : null, o.transcript === false ? null : tpanel);
   box.hidden = false;
   if (o.transcript === false) return v;
@@ -333,9 +353,12 @@ function loadTranscript(url, v, box) {
     var hues = {}, nh = 0;
     function who(sg) { return sg.label || sg.zoom_speaker || ""; }
     function hue(name) { if (!(name in hues)) hues[name] = Math.round((nh++ * 137.5 + 210) % 360); return hues[name]; }
+    var prevWho = null;
     var rows = segs.map(function (sg) {
       var w = who(sg);
-      var row = el("button", { "class": "tline", type: "button", on: { click: function () { v.currentTime = sg.start; v.play(); } } },
+      var same = prevWho !== null && w === prevWho && w !== "";
+      prevWho = w;
+      var row = el("button", { "class": "tline" + (same ? " same" : ""), type: "button", on: { click: function () { v.currentTime = sg.start; v.play(); } } },
         el("span", { "class": "tt", text: hms(sg.start) }),
         w ? el("span", { "class": "tw", text: w, style: "--h: " + hue(w) }) : null,
         el("span", { "class": "tx", text: (sg.text || "").trim() }));
@@ -343,6 +366,7 @@ function loadTranscript(url, v, box) {
     });
     search.addEventListener("input", function () {
       var q = search.value.trim().toLowerCase();
+      list.classList.toggle("filtered", !!q);
       rows.forEach(function (row) {
         var hit = !q || (row._seg.text || "").toLowerCase().indexOf(q) >= 0 || who(row._seg).toLowerCase().indexOf(q) >= 0;
         row.hidden = !hit;
@@ -361,10 +385,12 @@ function loadTranscript(url, v, box) {
     fill(box,
       el("div", { "class": "thead" }, el("h4", { text: "Transcript" }), search),
       segs.length ? list : el("div", { "class": "hint", text: "No speech was found." }),
-      el("div", { "class": "hint", text: "Whisper " + (t.model || "") + " transcript. " +
-        (t.diarization ? t.diarization.speakers_found + " voices found (pyannote); a voice shows a Zoom name only when one participant matched one voice."
-                       : "Names are Zoom's active-speaker label, not voice ID.") +
-        (t.names_applied ? " Some speaker names were added by hand." : "") + " Times in " + TZ + "." }));
+      el("div", { "class": "hint", text: "Made automatically: words and speaker labels can be wrong, so check the video before quoting. Times in " + TZ + "." +
+        (t.names_applied ? " Some speaker names were added by hand." : "") }),
+      el("details", { "class": "techdetails" }, el("summary", { "class": "hint", text: "How it was made" }),
+        el("div", { "class": "hint", text: "Whisper " + (t.model || "") + " transcript. " +
+          (t.diarization ? t.diarization.speakers_found + " voices found (pyannote); a voice shows a Zoom name only when one participant matched one voice."
+                         : "Names are Zoom's active-speaker label, not voice ID.") })));
   }, function (e) { fill(box, el("div", { "class": "hint", text: "Couldn't load the transcript: " + e.message })); });
 }
 
@@ -411,6 +437,9 @@ main { max-width: 1100px; margin: 0 auto; padding: 12px 24px 40px; }
 .mh .pill { margin: 0; }
 .muni { font-size: 12px; font-weight: 700; padding: 2px 8px; border-radius: 999px; background: var(--accent); color: var(--accent-ink); }
 .mcard .t { font-weight: 600; overflow-wrap: anywhere; }
+/* A meeting with nothing to watch (cancelled, not recorded) reads quieter than one with a video. */
+.mcard.quiet { background: transparent; }
+.mcard.quiet .t { font-weight: 500; color: var(--muted); }
 .mcard .s { color: var(--muted); font-size: 13px; margin-top: 2px; overflow-wrap: anywhere; }
 .s-upcoming { color: var(--accent); } .s-processing { color: var(--warn); } .s-ready { color: var(--ok); }
 .s-nofile { color: var(--muted); }
@@ -475,6 +504,7 @@ var STAGES = { upcoming: ["upcoming", "upcoming"], live: ["live", "live"], stitc
   video_ready: ["video", "ready"], ready: ["video + transcript", "ready"], failed: ["not recorded", "nofile"],
   not_recorded: ["not recorded", "nofile"], cancelled: ["cancelled", "cancelled"] };
 function stagePill(stage) {
+  if (stage === "upcoming") return null;   // the date and the "Upcoming" heading already say so; a pill is for what is different (live, cancelled, video)
   var s = STAGES[stage] || [stage, "nofile"];
   return el("span", { "class": "pill s-" + s[1], text: s[0] });
 }
@@ -492,7 +522,8 @@ function muniBadge(m) {
 
 function meetingCard(m) {
   var sub = [whenOf(m.start), m.body && m.body !== m.title ? m.body : null, m.duration ? hms(m.duration) : null].filter(Boolean).join(" · ");
-  return el("a", { "class": "mcard", href: "/m/" + encodeURIComponent(m.id) },
+  var quiet = m.stage === "cancelled" || m.stage === "not_recorded" || m.stage === "failed";
+  return el("a", { "class": "mcard" + (quiet ? " quiet" : ""), href: "/m/" + encodeURIComponent(m.id) },
     m.poster ? el("img", { "class": "p", src: m.poster, alt: "", loading: "lazy", width: "128", height: "72" }) : null,
     el("div", { "class": "b" },
       el("div", { "class": "mh" }, m.source ? muniBadge(m) : null, stagePill(m.stage)),
@@ -500,7 +531,7 @@ function meetingCard(m) {
 }
 
 function changeText(c) {
-  var d = c.doc ? c.doc.title + (c.doc.type ? " (" + c.doc.type + ")" : "") : "";
+  var d = c.doc ? c.doc.title : "";   // the feed's own kind ("AgendaCover") is an internal label: the title says what it is
   switch (c.kind) {
     case "added": return "Announced for " + whenOf(c.to);
     case "date_changed": return "Moved from " + whenOf(c.from) + " to " + whenOf(c.to);

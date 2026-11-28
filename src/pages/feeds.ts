@@ -19,8 +19,24 @@ export const FEEDS_PAGE = String.raw`<!doctype html>
 <link rel="icon" href="data:,">
 <style>
 ${BASE_CSS}
-main { display: grid; grid-template-columns: minmax(320px, 440px) 1fr; gap: 20px; padding: 12px 24px 40px; align-items: start; }
-@media (max-width: 900px) { main { grid-template-columns: 1fr; padding: 12px 16px 32px; } }
+main { padding: 16px 24px 40px; max-width: 1200px; margin: 0 auto; }
+main > section + section { margin-top: 20px; }
+@media (max-width: 900px) { main { padding: 12px 16px 32px; } }
+.tabs { display: flex; gap: 4px; flex-wrap: wrap; padding: 0 24px; background: var(--panel); border-bottom: 1px solid var(--line); }
+.tabs a { padding: 10px 14px; text-decoration: none; color: var(--muted); border-bottom: 2px solid transparent; margin-bottom: -1px; font-size: 14px; }
+.tabs a:hover { color: var(--ink); }
+.tabs a[aria-current] { color: var(--ink); font-weight: 600; border-bottom-color: var(--accent); }
+.tabs .badge { display: inline-block; min-width: 18px; padding: 0 5px; margin-left: 6px; border-radius: 999px; background: var(--live); color: #fff; font-size: 11px; text-align: center; }
+.tabs .badge[hidden] { display: none; }
+@media (max-width: 900px) { .tabs { padding: 0 12px; flex-wrap: nowrap; overflow-x: auto; } .tabs a { white-space: nowrap; } }
+.sechead { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; }
+.sechead h2 { margin-bottom: 12px; }
+#formbox { border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; margin-bottom: 14px; max-width: 640px; background: var(--bg); }
+#formbox[hidden] { display: none; }
+#formbox h3 { margin: 0 0 8px; font-size: 16px; }
+details.adv > summary { cursor: pointer; font-size: 14px; color: var(--muted); margin: 14px 0 4px; }
+label.check { display: flex; align-items: center; gap: 8px; font-weight: normal; }
+label.check input { width: auto; margin: 0; }
 textarea { width: 100%; min-height: 80px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 7px; background: var(--bg); color: var(--ink); font: inherit; }
 .actions-row { display: flex; gap: 8px; margin-top: 14px; flex-wrap: wrap; }
 .actions-row button { flex: 1; }
@@ -31,8 +47,6 @@ table.list th, table.list td { text-align: left; padding: 6px 8px; border-bottom
 table.list th { color: var(--muted); font-weight: 600; }
 .tag { display: inline-block; font-size: 11px; padding: 1px 6px; border-radius: 999px; border: 1px solid currentColor; }
 .links-line a { overflow-wrap: anywhere; }
-nav.sub { padding: 0 24px; font-size: 13px; color: var(--muted); }
-@media (max-width: 900px) { nav.sub { padding: 0 16px; } }
 #preview[hidden], #runsbox[hidden] { display: none; }
 .muni { font-size: 12px; font-weight: 700; padding: 2px 8px; border-radius: 999px; background: var(--accent); color: var(--accent-ink); }
 .colorrow { display: flex; gap: 10px; align-items: center; }
@@ -42,14 +56,22 @@ nav.sub { padding: 0 24px; font-size: 13px; color: var(--muted); }
 </head>
 <body>
 <header>
-  <h1><a href="/admin">minutes</a> <small class="meta">admin · feeds</small></h1>
+  <h1><a href="/admin">minutes</a> <small class="meta">admin</small></h1>
   <span class="me" id="me"></span>
 </header>
-<nav class="sub"><a href="/admin">Captures</a> · <b>Feeds</b></nav>
+<nav class="tabs" id="tabs" aria-label="Admin">
+  <a href="/admin#overview">Overview</a>
+  <a href="/admin#captures">Captures</a>
+  <a href="/admin#recordings">Recordings</a>
+  <a href="/admin#people">People &amp; access</a>
+  <a href="/admin#audit">Audit log</a>
+  <a href="/admin/feeds" aria-current="page">Feeds<span class="badge" id="b-review" hidden></span></a>
+</nav>
 <main>
-  <div>
     <section>
-      <h2 id="formtitle">Add a feed</h2>
+      <div class="sechead"><h2>Feeds</h2><button type="button" id="addbtn">Add a feed</button></div>
+      <div id="formbox" hidden>
+      <h3 id="formtitle">Add a feed</h3>
       <form id="form" autocomplete="off">
         <label for="f-name">Name</label>
         <input id="f-name" name="name" required maxlength="100" placeholder="Langford council">
@@ -63,29 +85,27 @@ nav.sub { padding: 0 24px; font-size: 13px; color: var(--muted); }
           <span id="f-colorpv" class="muni">Name</span>
           <button type="button" id="f-colornone">No color</button>
         </div>
-        <label for="f-prefix">Folder prefix <small>(recordings are named prefix-title-date)</small></label>
-        <input id="f-prefix" name="slugPrefix" required maxlength="40" pattern="[A-Za-z0-9][A-Za-z0-9._\-]{0,39}" placeholder="langford">
         <label for="f-policy">New meetings</label>
         <select id="f-policy" name="policy">
           <option value="review">Wait for my review (recommended for a new feed)</option>
           <option value="auto">Record automatically when there's a supported link</option>
           <option value="list_only">List only, never record</option>
         </select>
-        <label for="f-interval">Check every <small>(minutes; every 5 on a meeting day)</small></label>
-        <input id="f-interval" name="intervalMin" type="number" min="5" max="1440" value="60">
-        <label class="check"><input type="checkbox" id="f-enabled" name="enabled" checked> Enabled</label>
+        <details class="adv" id="advbox"><summary>Advanced settings</summary>
+          <label for="f-prefix">Folder prefix <small>(recordings are named prefix-title-date; blank: the first word of the name)</small></label>
+          <input id="f-prefix" name="slugPrefix" maxlength="40" pattern="[A-Za-z0-9][A-Za-z0-9._\-]{0,39}" placeholder="langford">
+          <label for="f-interval">Check every <small>(minutes; every 5 on a meeting day)</small></label>
+          <input id="f-interval" name="intervalMin" type="number" min="5" max="1440" value="60">
+          <label class="check"><input type="checkbox" id="f-enabled" name="enabled" checked> Enabled</label>
+        </details>
         <div class="actions-row">
           <button type="button" id="previewbtn">Preview</button>
           <button class="primary" type="submit" id="savebtn" style="margin-top:0">Add feed</button>
-          <button type="button" id="cancelbtn" hidden>Cancel edit</button>
+          <button type="button" id="cancelbtn">Cancel</button>
         </div>
         <div class="msg" id="formmsg" role="status"></div>
       </form>
-    </section>
-  </div>
-  <div>
-    <section>
-      <h2>Feeds</h2>
+      </div>
       <div class="list" id="feeds"><div class="empty">Loading...</div></div>
     </section>
     <section>
@@ -104,7 +124,6 @@ nav.sub { padding: 0 24px; font-size: 13px; color: var(--muted); }
       <div class="player-title"><h3 id="runstitle">Runs</h3><button type="button" id="runsclose">Close</button></div>
       <div id="runsbody"></div>
     </section>
-  </div>
 </main>
 <script>
 "use strict";
@@ -162,16 +181,20 @@ function setColor(hex) {
 $("f-color").addEventListener("input", function () { setColor($("f-color").value); });
 $("f-colornone").addEventListener("click", function () { setColor(""); });
 $("f-name").addEventListener("input", function () { $("f-colorpv").textContent = $("f-name").value || "Name"; });
+// The folder prefix defaults to the first word of the name ("Colwood Council" -> "colwood").
+function prefixOf(name) { var w = (name.toLowerCase().match(/[a-z0-9]+/) || [""])[0]; return w; }
 function formBody() {
-  return { name: $("f-name").value, parser: $("f-parser").value, config: config(), slugPrefix: $("f-prefix").value, color: colorOn ? $("f-color").value : "",
+  return { name: $("f-name").value, parser: $("f-parser").value, config: config(), slugPrefix: $("f-prefix").value.trim() || prefixOf($("f-name").value), color: colorOn ? $("f-color").value : "",
     policy: $("f-policy").value, intervalMin: $("f-interval").value, enabled: $("f-enabled").checked };
 }
 
 function setMode(f) {
   editing = f || null;
+  $("formbox").hidden = !f;   // the form is open while editing, closed otherwise ("Add a feed" opens it)
+  $("advbox").open = !!f;
   $("formtitle").textContent = f ? "Edit " + f.name : "Add a feed";
   $("savebtn").textContent = f ? "Save" : "Add feed";
-  $("cancelbtn").hidden = !f;
+  $("cancelbtn").hidden = false;
   $("f-name").value = f ? f.name : "";
   $("f-parser").value = f ? f.parser : (PARSERS[0] ? PARSERS[0].id : "");
   $("f-parser").disabled = false;
@@ -188,7 +211,7 @@ var HEALTH = { ok: "healthy", failing: "failing", unhealthy: "failing for over 2
 function render() {
   var box = $("feeds");
   fill(box);
-  if (!FEEDS.length) { box.appendChild(el("div", { "class": "empty", text: PARSERS.length ? "No feeds yet. Add one on the left." : "No feed parsers are installed." })); return; }
+  if (!FEEDS.length) { box.appendChild(el("div", { "class": "empty", text: PARSERS.length ? "No feeds yet. Choose Add a feed above." : "No feed parsers are installed." })); return; }
   FEEDS.forEach(function (f) {
     var last = f.runs[0];
     var sub = f.parserLabel + " · " + f.policy.replace("_", " ") + " · every " + f.intervalMin + " min" +
@@ -198,7 +221,7 @@ function render() {
       el("button", { text: f.running ? "Running..." : "Run now", disabled: f.running ? "" : null, on: { click: function (ev) { runNow(f, ev.target); } } }),
       el("button", { text: "Preview", on: { click: function () { preview(f.parser, f.config, f); } } }),
       el("button", { text: "Runs", on: { click: function () { showRuns(f); } } }),
-      el("button", { text: "Edit", on: { click: function () { setMode(f); window.scrollTo({ top: 0, behavior: "smooth" }); } } }),
+      el("button", { text: "Edit", on: { click: function () { setMode(f); $("formbox").scrollIntoView({ behavior: "smooth", block: "start" }); } } }),
       el("button", { "class": "danger", text: "Delete", on: { click: function () {
         if (confirm("Delete the feed " + f.name + "? Meetings it found stay.")) aapi("DELETE", "/api/admin/feeds/" + f.id).then(load, function (e) { alert(e.message); });
       } } }));
@@ -287,12 +310,12 @@ function meetingRow(m, inQueue) {
     actions.appendChild(el("button", { text: "Approve", on: { click: act("approve") } }));
     actions.appendChild(el("button", { "class": "danger", text: "Reject", on: { click: act("reject") } }));
   }
-  if (!inQueue) {
-    if (m.duplicateOf) actions.appendChild(el("button", { text: "Split", on: { click: act("split") } }));
+  {
+    if (m.duplicateOf) { if (!inQueue) actions.appendChild(el("button", { text: "Split", on: { click: act("split") } })); }
     else {
       var near = MEETINGS.filter(function (x) { return x.id !== m.id && !x.duplicateOf && Math.abs(Date.parse(x.start) - Date.parse(m.start)) < 86400000; });
       if (near.length) {
-        var sel = el("select", { "aria-label": "Same meeting as" }, el("option", { value: "", text: "Same as..." }));
+        var sel = el("select", { "aria-label": "Merge into another meeting" }, el("option", { value: "", text: "Merge into..." }));
         near.forEach(function (x) { sel.appendChild(el("option", { value: x.id, text: x.title + " · " + fmt(x.start) + (x.feedName ? " · " + x.feedName : "") })); });
         sel.addEventListener("change", function () {
           if (sel.value && confirm("Treat " + m.title + " as the same meeting? It won't be captured itself.")) act("merge", { into: sel.value })();
@@ -301,11 +324,11 @@ function meetingRow(m, inQueue) {
         actions.appendChild(sel);
       }
     }
-    if (!m.duplicateOf) {
+    if (!m.duplicateOf && !inQueue) {
       actions.appendChild(el("button", { text: m.visibility === "hidden" ? "Show publicly" : "Hide", title: "Admin-only override: a hidden meeting is not on the public site",
         on: { click: act(m.visibility === "hidden" ? "show" : "hide") } }));
     }
-    actions.appendChild(el("button", { text: "History", on: { click: function () {
+    if (!inQueue) actions.appendChild(el("button", { text: "History", on: { click: function () {
       if (hist.childNodes.length) { fill(hist); return; }
       aapi("GET", "/api/admin/meetings/" + m.id + "/changes").then(function (cs) {
         fill(hist, cs.length ? changeTable(cs) : el("div", { "class": "hint", text: "No changes recorded." }));
@@ -343,13 +366,16 @@ function msgFor(m, text) {
 }
 function loadMeetings() {
   return Promise.all([aapi("GET", "/api/admin/meetings?view=upcoming"), aapi("GET", "/api/admin/meetings?view=review")]).then(function (d) {
-    MEETINGS = d[0];
+    MEETINGS = d[0];   // every upcoming meeting, for "Merge into..."
     var box = $("meetings"), q = $("review");
     fill(box); fill(q);
     if (!d[1].length) q.appendChild(el("div", { "class": "empty", text: "Nothing waiting for review." }));
     d[1].forEach(function (m) { q.appendChild(meetingRow(m, true)); });
-    if (!MEETINGS.length) box.appendChild(el("div", { "class": "empty", text: "No upcoming meetings." }));
-    MEETINGS.forEach(function (m) { box.appendChild(meetingRow(m, false)); });
+    var badge = $("b-review"); badge.hidden = !d[1].length; badge.textContent = String(d[1].length);
+    // A meeting waiting for review is in the review queue above: it is not listed a second time here.
+    var listed = MEETINGS.filter(function (m) { return m.review !== "pending"; });
+    if (!listed.length) box.appendChild(el("div", { "class": "empty", text: "No other upcoming meetings." }));
+    listed.forEach(function (m) { box.appendChild(meetingRow(m, false)); });
   }).catch(function (e) { fill($("meetings"), el("div", { "class": "msg err", text: "Can't show meetings: " + e.message })); });
 }
 
@@ -383,6 +409,7 @@ function load(skipMeetings) {
 
 $("f-parser").addEventListener("change", function () { renderFields(null); });
 $("cancelbtn").addEventListener("click", function () { setMode(null); });
+$("addbtn").addEventListener("click", function () { setMode(null); $("formbox").hidden = false; $("f-name").focus(); });
 $("previewclose").addEventListener("click", function () { $("preview").hidden = true; });
 $("runsclose").addEventListener("click", function () { $("runsbox").hidden = true; });
 $("previewbtn").addEventListener("click", function () {

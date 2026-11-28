@@ -326,6 +326,12 @@ if (process.argv[2] === "serve") {
     const d = Number.parseInt(v, 10);
     return d >= 0 && d <= 3650 ? d : fail("KEEP_AUDIO_DAYS: a number of days (0 = delete at once)");
   };
+  // CONTACT_URL: where to report a mistake (shown in every page's footer): a mailto: or https:// address.
+  const contactEnv = (v: string | undefined): string | undefined => {
+    const s = v?.trim();
+    if (!s) return undefined;
+    return /^(mailto:[^\s<>"]+|https:\/\/[^\s<>"]+)$/i.test(s) ? s : fail("CONTACT_URL: a mailto: or https:// address");
+  };
   const rate = (name: string) => { try { return parseRate(env[name]); } catch (e) { return fail(`${name}: ${(e as Error).message}`); } };
   if (v.auth && !existsSync(v.auth)) fail(`--auth file not found: ${v.auth}`);
   if (!v.auth) console.error("warning: no --auth session; Zoom blocks anonymous web-client joins (see `minutes login`)");
@@ -339,6 +345,7 @@ if (process.argv[2] === "serve") {
     mailer, publicUrl: env.PUBLIC_URL, embedOrigins: env.EMBED_ORIGINS, operatorEmail: env.OPERATOR_EMAIL || undefined,
     downloadBps: rate("DOWNLOAD_MAX_BPS"), tokenDownloadBps: rate("DOWNLOAD_TOKEN_BPS"),
     renditions: renditionsEnv(env.RENDITIONS),
+    contactUrl: contactEnv(env.CONTACT_URL),
     keepPartsDays: keepPartsEnv(env.KEEP_PARTS_DAYS),
     keepAudioDays: keepAudioEnv(env.KEEP_AUDIO_DAYS),
     out: v.out!, auth: v.auth ?? null, defaultName: v.name!,

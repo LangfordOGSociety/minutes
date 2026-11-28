@@ -156,6 +156,43 @@ captures).
   first) with an embed builder; `/admin` is tabs (`#overview` default,
   `#captures #recordings #people #audit`, Feeds is its own page);
   `/embed/upcoming` (`pages/embedlist.ts`) is the framable upcoming list.
+  Review 2026-11-28 quick fixes: the public history never lists a "Join
+  link" document and drops add/remove flaps of one document within 24 h
+  (`site.ts collapseDocFlaps`); history and "From the city" show document
+  titles, not the feed's type names; an upcoming card has no "Upcoming"
+  pill; admin captures/recordings are named `source: title` (folder name as
+  tooltip and small text; `jobView`/`recView` in serve.ts); the admin's
+  join-link chip sees a Teams link kept as a document; the Feeds page lists
+  a meeting under review only in the review queue; "Same as..." is
+  "Merge into...".
+  Meeting page (same review): order is player, From the city, Share (a
+  closed "Share and embed", just the link for a meeting with nothing to
+  embed yet, plus Add to calendar: an .ics built in the page), History (a
+  closed `<details>` that keeps its state across refreshes); no second
+  title above the player; the municipality badge in the header; a
+  speaker's consecutive transcript lines don't repeat the name
+  (`.tline.same`, shown again while searching); the transcript note is
+  plain and the model/diarization detail is a disclosure. Narrow screens:
+  brand and sign-in on one row, nav below (`common.ts` header CSS).
+  Batch 3: headings and pills are sentence case (no tracked uppercase); the
+  nav item is "For developers" (was "Embed & API"); `renderFooter()` (in
+  `renderMe`, public pages only) adds a footer, with "Report a mistake" when
+  `CONTACT_URL` is set (`__CONTACT__` is filled per page like `__TZ__`);
+  home updates are grouped (`groupUpdates`: documents of one meeting are one
+  line, "transcription started" is dropped) and the box starts closed on a
+  phone; cancelled / not recorded cards read quieter (`.mcard.quiet`);
+  `/search` has example chips, a municipality filter (`/api/search?source=`)
+  and the badge on each hit.
+  Admin batch: Feeds (`/admin/feeds`) shares the admin header and tab bar
+  (its add/edit form is folded away behind "Add a feed", advanced settings
+  folded again, folder prefix defaults to the first word of the name); one
+  content width; tab bar scrolls sideways on a phone; the Zoom login
+  banner shows on Overview and Captures only; Overview has a Feeds card and
+  the settings line moved to its foot; the audit log and Recent activity
+  read as sentences (`describeAudit` in admin.ts: raw fields, action code
+  and IP are behind "Details"); capture outcomes are in plain words;
+  revoked/expired API keys are folded away; the account page has no
+  "Signed in / Continue" card.
 - Scale (`docs/scaling.md`, `test/scale.test.ts`, 3000 meetings): `serve.ts`
   keeps the recordings list and the public model in snapshots (rebuilt on
   `Meetings.version` / `Scheduler.version` changes, after any write request,

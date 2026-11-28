@@ -117,7 +117,7 @@ import { ADMIN_PAGE } from "./pages/admin.js";
 import { LOGIN_PAGE } from "./pages/login.js";
 import { PUBLIC_PAGE } from "./pages/public.js";
 import { MEETING_PAGE } from "./pages/meeting.js";
-import { OVER_AFTER_MS, PUBLIC_KINDS, filterMeetings, publicChange, recordingOf, toPublicMeeting, visible, type PublicMeeting } from "./site.js";
+import { OVER_AFTER_MS, PUBLIC_KINDS, collapseDocFlaps, filterMeetings, publicChange, recordingOf, teamsJoin, toPublicMeeting, visible, type PublicMeeting } from "./site.js";
 import type { Recording } from "./recordings.js";
 import { zonedTime } from "./feeds/time.js";
 import { platformFor } from "./platforms/registry.js";
@@ -150,6 +150,8 @@ export interface ServeOpts extends Omit<SchedulerOpts, "entry"> {
   trustedProxies?: string;
   /** Outgoing mail (mail.ts). Without it, sign-up and password reset are off. */
   mailer?: Mailer | null;
+  /** Where a reader reports a mistake (a `mailto:` or https address): shown in every page's footer when set. */
+  contactUrl?: string;
   /** The site's address, for links in emails and in page metadata (canonical, previews, oEmbed). */
   publicUrl?: string;
   /** Download speed caps in bytes/second (#36; throttle.ts): all API downloads together, and each token. 0 or unset = unlimited. */
@@ -272,6 +274,12 @@ function adminJob(j: Job) {
 
 /** A join link as admins may see it: platform + meeting number, a URL
  *  without the passcode, and whether a passcode is on file. Null = none. */
+/** A join link that came as a document (Microsoft Teams, from a city's schedule page): shown like any other join link. */
+function teamsLinkOf(m: Meeting) {
+  const t = teamsJoin(m);
+  return t ? { label: t.platform + (t.id ? " " + t.id : ""), url: t.url, passcode: /[?&]p=/.test(t.url) } : null;
+}
+
 function joinLinkOf(link: string | undefined) {
   if (!link) return null;
   const p = platformOf(link);
@@ -449,12 +457,16 @@ export function createApp(o: ServeOpts, entry: string): App {
     const det = sync.changes({ meetingId: m.id, kinds: ["link_detected"], limit: 1 })[0];
     return det && det.after?.link === shownLink(m.link) ? String(det.after.document ?? "a document") : null;
   };
+  /** A capture as the admin page shows it: the meeting's title and municipality beside the folder name. */
+  const jobView = (j: Job) => { const m = sched.meetings.get(j.meetingRef); return { ...adminJob(j), title: m?.title ?? null, source: m ? sourceOf(m) : null }; };
+  /** A recording as the admin page shows it: with its municipality. */
+  const recView = <R extends { slug: string }>(r: R) => { const j = sched.jobBySlug(r.slug), m = j ? sched.meetings.get(j.meetingRef) : undefined; return { ...r, source: m ? sourceOf(m) : null }; };
   /** A meeting as the admin sees it: the link only as platform + number. */
   const adminMeeting = (m: Meeting) => {
     const job = sched.activeJobFor(m.id) ?? sched.jobsOf(m.id).at(-1);
     const dup = m.duplicateOf ? sched.meetings.get(m.duplicateOf) : undefined;
     return { id: m.id, title: m.title, body: m.body ?? null, start: m.start, slug: m.slug, status: m.status, review: m.review ?? null,
-      removedAt: m.removedAt ?? null, visibility: m.visibility, link: shownLink(m.link), joinLink: joinLinkOf(m.link), joinSource: joinSourceOf(m), streamUrl: m.streamUrl ?? null,
+      removedAt: m.removedAt ?? null, visibility: m.visibility, link: shownLink(m.link), joinLink: joinLinkOf(m.link) ?? teamsLinkOf(m), joinSource: joinSourceOf(m), streamUrl: m.streamUrl ?? null,
       agendaUrl: m.agendaUrl ?? null, pageUrl: m.pageUrl ?? null,
       feedId: m.feedId ?? null, feedName: m.feedId ? feeds.get(m.feedId)?.name ?? "(deleted feed)" : null,
       duplicateOf: dup ? { id: dup.id, title: dup.title, slug: dup.slug, start: dup.start } : null,
@@ -475,7 +487,7 @@ export function createApp(o: ServeOpts, entry: string): App {
   }
 
   const pages = Object.fromEntries(Object.entries({ public: PUBLIC_PAGE, admin: ADMIN_PAGE, login: LOGIN_PAGE, feeds: FEEDS_PAGE, meeting: MEETING_PAGE, embed: EMBED_PAGE, embedlist: EMBED_LIST_PAGE, search: SEARCH_PAGE, stop: STOP_PAGE }).map(([k, html]) => {
-    const body = html.replace("__TZ__", JSON.stringify(o.tz));
+    const body = html.replace("__TZ__", JSON.stringify(o.tz)).replace("__CONTACT__", () => JSON.stringify(o.contactUrl ?? "").replace(/</g, "\\u003c"));
     return [k, { body, csp: pageCsp(body) }];
   })) as Record<"public" | "admin" | "login" | "feeds" | "meeting" | "embed" | "embedlist" | "search" | "stop", { body: string; csp: string }>;
   const sendPage = (res: http.ServerResponse, p: { body: string; csp: string }) =>
@@ -887,16 +899,16 @@ export function createApp(o: ServeOpts, entry: string): App {
           const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s ?? "");
           return m ? zonedTime(o.tz, +m[1], +m[2], +m[3] + plus) : undefined;
         };
-        const from = day(sp.get("from")), to = day(sp.get("to"), 1), body = sp.get("body")?.slice(0, 100).toLowerCase();
+        const from = day(sp.get("from")), to = day(sp.get("to"), 1), body = sp.get("body")?.slice(0, 100).toLowerCase(), source = sp.get("source")?.slice(0, 100).toLowerCase();
         syncSearch();
         const site = publicSite();
         const eligible = site.entries.filter((e) => e.rec?.public && e.rec.files.transcript
-          && (!body || (e.m.body ?? "").toLowerCase() === body) && (!from || Date.parse(e.m.start) >= from.getTime()) && (!to || Date.parse(e.m.start) < to.getTime()));
+          && (!body || (e.m.body ?? "").toLowerCase() === body) && (!source || (e.p.source ?? "").toLowerCase() === source) && (!from || Date.parse(e.m.start) >= from.getTime()) && (!to || Date.parse(e.m.start) < to.getTime()));
         const byId = new Map(eligible.map((e) => [e.m.id, e]));
         const r = search.search(q, { meetingIds: [...byId.keys()], limit: int(sp.get("limit"), 20, 1, 50), offset: Math.max(Number.parseInt(sp.get("offset") ?? "", 10) || 0, 0) });
         return send(res, 200, { query: q, terms: r.terms, total: r.total, hits: r.hits.flatMap((h) => {
           const e = byId.get(h.meetingId);
-          return e ? [{ meeting: { id: e.p.id, title: e.p.title, body: e.p.body, source: e.p.source, start: e.p.start }, t: Math.floor(h.start), speaker: h.speaker || null, parts: h.parts,
+          return e ? [{ meeting: { id: e.p.id, title: e.p.title, body: e.p.body, source: e.p.source, sourceColor: e.p.sourceColor, start: e.p.start }, t: Math.floor(h.start), speaker: h.speaker || null, parts: h.parts,
             url: `/m/${encodeURIComponent(e.p.id)}?t=${Math.floor(h.start)}` }] : [];
         }) });
       }
@@ -932,8 +944,8 @@ export function createApp(o: ServeOpts, entry: string): App {
             transcript: t ? { status: t.status, stage: t.stage, progress: t.progress } : null });
         }
         const live = e.jobs.find((j) => j.status === "running" || j.status === "stopping");
-        const history = sync.changes({ meetingId: e.m.id, kinds: PUBLIC_KINDS, limit: 100 })
-          .flatMap((c) => publicChange(c, e.m, e.p.source) ?? []);
+        const history = collapseDocFlaps(sync.changes({ meetingId: e.m.id, kinds: PUBLIC_KINDS, limit: 100 })
+          .flatMap((c) => publicChange(c, e.m, e.p.source) ?? []));
         return send(res, 200, { ...e.p, recording: e.rec?.public ? toPublic(e.rec) : null, startedAt: live?.launchedAt ?? null, history });
       }
       if (rp[0] === "api" && rp[1] === "changes" && rp.length === 2 && read) {
@@ -943,13 +955,13 @@ export function createApp(o: ServeOpts, entry: string): App {
         const site = publicSite();
         const byId = new Map(site.entries.map((e) => [e.m.id, e.m]));
         const limit = Math.min(Math.max(Number.parseInt(url.searchParams.get("limit") ?? "", 10) || 30, 1), 100);
-        const list = sync.changes({ kinds: PUBLIC_KINDS, limit: 1000 }).flatMap((c) => {
+        const list = collapseDocFlaps(sync.changes({ kinds: PUBLIC_KINDS, limit: 1000 }).flatMap((c) => {
           const m = byId.get(c.meetingId);
           const pc = m && publicChange(c, m, sourceOf(m));
           // Meetings listed after the fact (history imports) aren't news.
           if (!pc || (pc.kind === "added" && Date.parse(pc.to ?? "") < Date.parse(pc.at))) return [];
           return [pc];
-        });
+        }));
         // Newest first by when it happened (a transcription noticed late keeps its real time).
         list.sort((a, b) => b.at.localeCompare(a.at));
         return send(res, 200, list.slice(0, limit));
@@ -1273,10 +1285,10 @@ export function createApp(o: ServeOpts, entry: string): App {
           // ?limit=N (with ?offset=): the recordings that have something to play or are running, newest first, and the
           // total in X-Total-Count. Without it, everything on disk (the page used to take it all every few seconds).
           const lim = url.searchParams.get("limit");
-          if (lim === null) return send(res, 200, recordings());
+          if (lim === null) return send(res, 200, recordings().map(recView));
           const real = recordings().filter((r) => r.video || r.active || r.parts.length);
           const off = Math.max(Number.parseInt(url.searchParams.get("offset") ?? "", 10) || 0, 0);
-          return send(res, 200, real.slice(off, off + int(lim, 50, 1, 500)), { "X-Total-Count": String(real.length) });
+          return send(res, 200, real.slice(off, off + int(lim, 50, 1, 500)).map(recView), { "X-Total-Count": String(real.length) });
         }
         if (what === "recordings" && parts.length === 5 && sub === "retranscribe" && id && SLUG_RE.test(id) && method === "POST") {
           // Ask the transcriber to do this recording again (after it failed, or the models or vocabulary changed). It watches for
@@ -1538,17 +1550,17 @@ export function createApp(o: ServeOpts, entry: string): App {
           if (parts.length === 3 && read) {
             // ?limit=N: every capture that hasn't finished, and the latest N that have (the page shows ten).
             const all = sched.list(), lim = url.searchParams.get("limit");
-            if (lim === null) return send(res, 200, all.map(adminJob));
+            if (lim === null) return send(res, 200, all.map(jobView));
             const live = (j: Job) => ["scheduled", "queued", "running", "stopping"].includes(j.status);
             const keep = new Set(all.filter((j) => !live(j)).slice(-int(lim, 20, 1, 500)).map((j) => j.id));
-            return send(res, 200, all.filter((j) => live(j) || keep.has(j.id)).map(adminJob), { "X-Total-Count": String(all.length) });
+            return send(res, 200, all.filter((j) => live(j) || keep.has(j.id)).map(jobView), { "X-Total-Count": String(all.length) });
           }
           if (parts.length === 3 && method === "POST") {
             const body = await jsonBody();
             if (!body) return;
             const j = sched.add(body);
             audit.record(actor, "job.create", { type: "job", id: j.id, label: j.slug }, null, jobSnap(j));
-            return send(res, 201, adminJob(j));
+            return send(res, 201, jobView(j));
           }
           const job = id ? sched.get(id) : undefined;
           if (!job) return send(res, 404, { error: "no such job" });
@@ -1558,18 +1570,18 @@ export function createApp(o: ServeOpts, entry: string): App {
             const before = jobSnap(job);
             const j = sched.update(job.id, body);
             audit.record(actor, "job.update", { type: "job", id: j.id, label: j.slug }, before, jobSnap(j));
-            return send(res, 200, adminJob(j));
+            return send(res, 200, jobView(j));
           }
           if (parts.length === 4 && method === "DELETE") {
             const before = jobSnap(job);
             const j = sched.cancel(job.id);
             audit.record(actor, before.status === "running" ? "job.stop" : "job.cancel", { type: "job", id: j.id, label: j.slug }, before, jobSnap(j));
-            return send(res, 200, adminJob(j));
+            return send(res, 200, jobView(j));
           }
           if (parts.length === 5 && sub === "retry" && method === "POST") {
             const j = sched.retry(job.id);
             audit.record(actor, "job.retry", { type: "job", id: j.id, label: j.slug }, null, { ...jobSnap(j), previousAttempt: job.slug });
-            return send(res, 201, adminJob(j));
+            return send(res, 201, jobView(j));
           }
           if (parts.length === 5 && sub === "log" && read) return send(res, 200, tail(path.join(o.out, job.slug, "capture.log")));
           if (parts.length === 5 && sub === "screen" && read) {

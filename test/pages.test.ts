@@ -3,7 +3,7 @@
  * password change, the admin page. Needs Playwright's Chromium.
  */
 import assert from "node:assert/strict";
-import { existsSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import http from "node:http";
 import type { AddressInfo } from "node:net";
 import path from "node:path";
@@ -79,6 +79,7 @@ describe("pages in Chromium", { skip: skipReason() }, () => {
     const local = (n: number) => String(n).padStart(2, "0");
     await page.fill("#link", "https://zoom.us/j/87093163922?pwd=429539");
     await page.fill("#start", `${d.getFullYear()}-${local(d.getMonth() + 1)}-${local(d.getDate())}T19:00`);
+    await page.click("#moreopts > summary");
     await page.fill("#slug", "council-ui");
     await page.click("#submitbtn");
     await page.waitForSelector("#formmsg.ok");
@@ -157,7 +158,7 @@ describe("public page in Chromium", { skip: skipReason() }, () => {
     assert.equal(await page.isVisible("#livenow"), false);   // "Live now" only shows when a meeting is live
     assert.deepEqual(await page.$$eval("#past .mcard .t", (els) => els.map((e) => e.textContent)), ["council-a"]);
     assert.match(await page.textContent("#past .mcard .mh") ?? "", /video \+ transcript/);
-    assert.match(await page.textContent("#sitenav") ?? "", /Meetings.*Search.*Embed & API/);
+    assert.match(await page.textContent("#sitenav") ?? "", /Meetings.*Search.*For developers/);
     assert.equal(await page.textContent("#me"), "Sign in");
     assert.match(await page.textContent("#updates") ?? "", /Nothing has changed lately|Announced/);
 
@@ -198,9 +199,11 @@ describe("public page in Chromium", { skip: skipReason() }, () => {
   it("the share box: permalink, embed code with the chosen options", async () => {
     const page = await (await browser.newContext()).newPage();
     await page.goto(base + "/m/council-a?t=5");
-    await page.waitForSelector("#share input[type=text]");
+    await page.waitForSelector("#share .sharebox");
+    assert.equal(await page.isVisible("#share input[type=text]"), false, "closed until asked for");
+    await page.click("#share .sharebox > summary");
     assert.equal(await page.inputValue("#share input[type=text]"), base + "/m/council-a");
-    await page.click("#share summary");
+    await page.click("#share .embed > summary");
     assert.match(await page.inputValue("#share textarea"), /^<iframe src="http:\/\/127\.0\.0\.1:\d+\/embed\/council-a" width="640" height="360" /);
     await page.check("#share .opt:has-text('transcript') input");
     await page.check("#share .opt:has-text('chapters') input");
@@ -436,10 +439,11 @@ describe("feeds page in Chromium", { skip: skipReason() }, () => {
     await page.waitForURL(base + "/admin/feeds");
     await page.waitForSelector("#feeds .empty");
 
+    await page.click("#addbtn");   // the form is folded away until asked for
     await page.selectOption("#f-parser", "test-json");
     await page.fill("#f-name", "Langford council");
     await page.fill("#cfg-url", src.url);
-    await page.fill("#f-prefix", "langford");
+    // No folder prefix typed: it defaults to the first word of the name ("langford").
     await page.click("#previewbtn");
     await page.waitForSelector("#previewbody table");
     const row = await page.textContent("#previewbody table tr:nth-child(2)") ?? "";
@@ -599,6 +603,188 @@ describe("redesigned pages in Chromium", { skip: skipReason() }, () => {
     await phone.goto(base + "/m/council-a");
     await phone.waitForSelector("#player video");
     assert.match(await phone.getAttribute("#player video", "src") ?? "", /council-a\.480p\.mp4$/);
+  });
+
+  it("quick fixes: no 'Upcoming' pill on upcoming cards, a review meeting listed once, captures named by their meeting", async () => {
+    const page = await (await browser.newContext()).newPage();
+    await page.goto(base + "/");
+    await page.waitForSelector("#upcoming .mcard");
+    assert.equal(await page.locator("#upcoming .pill", { hasText: /^upcoming$/i }).count(), 0);
+    // A meeting waiting for review appears in the queue only, not again under Upcoming meetings.
+    const pending = app.sched.meetings.create({ title: "Parks review", platform: "", link: "", start: new Date(Date.now() + 5 * 86_400_000).toISOString(), slug: "parks-review", review: "pending" });
+    await app.accounts.create({ email: "fixer@example.com", role: "admin", password: "fixer password 1", verified: true });
+    const admin = await signIn("fixer@example.com", "fixer password 1", "/admin/feeds");
+    await admin.waitForSelector("#q-" + pending.id);
+    assert.equal(await admin.locator("#m-" + pending.id).count(), 0);
+    assert.match(await admin.textContent("#q-" + pending.id) ?? "", /Merge into|Approve/);
+    // Captures are named by their meeting, with the folder name as a tooltip.
+    const liveE = app.sched.meetings.get(app.sched.list().find((j) => j.slug === "live-e")!.meetingRef)!;
+    liveE.title = "Evening hearing";
+    app.sched.meetings.save(liveE);
+    await admin.goto(base + "/admin#captures");
+    await admin.waitForSelector("#jobs .row .title[title='live-e']");
+    const shown = (await admin.locator("#jobs .row .title[title='live-e']").textContent()) ?? "";
+    assert.match(shown, /Evening hearing/);
+    assert.doesNotMatch(shown, /live-e/);
+  });
+
+  it("meeting page: documents before sharing, one title, a speaker's lines grouped, a calendar entry for what's coming", async () => {
+    const dir = path.join(out, "council-a");
+    writeFileSync(path.join(dir, "council-a.transcript.json"), JSON.stringify({ model: "m", segments: [
+      { start: 1, text: "Call to order.", label: "Speaker 1" }, { start: 5, text: "Roll call.", label: "Speaker 1" }, { start: 9, text: "Quorum present.", label: "Speaker 1" },
+      { start: 20, text: "I move the agenda.", label: "Speaker 2" }] }));
+    const page = await (await browser.newContext({ viewport: { width: 1280, height: 900 } })).newPage();
+    await page.goto(base + "/m/council-a");
+    await page.waitForSelector(".tline");
+    // Section order: what the city published comes before the share box.
+    assert.equal(await page.evaluate(() => { const l = document.getElementById("links")!, s = document.getElementById("share")!; return !!(l.compareDocumentPosition(s) & Node.DOCUMENT_POSITION_FOLLOWING); }), true);
+    // The title is on the page once (the player has no heading of its own).
+    assert.equal(await page.locator("#player h3").count(), 0);
+    // A speaker's next lines don't repeat the name (kept in the markup, hidden), and a search shows every name.
+    assert.equal(await page.locator(".tline.same").count(), 2);
+    assert.equal(await page.locator(".tline.same .tw").first().evaluate((e) => getComputedStyle(e).visibility), "hidden");
+    await page.fill(".thead input", "roll");
+    assert.equal(await page.locator(".tline.same .tw").first().evaluate((e) => getComputedStyle(e).visibility), "visible");
+    // The footnote is plain; the technical detail is behind a disclosure.
+    assert.match(await page.textContent(".transcript .hint:not(summary)") ?? "", /Made automatically/);
+    assert.equal(await page.isVisible(".techdetails .hint:has-text('Whisper')"), false);
+    // A meeting still to come: copy link and a calendar entry, no embed controls.
+    await page.goto(base + "/m/live-e");
+    await page.waitForSelector("#share .share-row");
+    assert.equal(await page.locator("#share details").count(), 0);
+    const [download] = await Promise.all([page.waitForEvent("download"), page.click("#share button:has-text('Add to calendar')")]);
+    const ics = readFileSync((await download.path())!, "utf8");
+    assert.match(ics, /BEGIN:VEVENT[\s\S]*DTSTART:\d{8}T\d{6}Z[\s\S]*DTEND:\d{8}T\d{6}Z[\s\S]*SUMMARY:.+[\s\S]*END:VEVENT/);
+    assert.match(ics, /\r\n$/);
+    assert.match(download.suggestedFilename(), /\.ics$/);
+    // On a phone the sign-in stays on the brand's row, with the navigation below it.
+    const phone = await (await browser.newContext({ viewport: { width: 390, height: 800 } })).newPage();
+    await phone.goto(base + "/m/council-a");
+    await phone.waitForSelector("#me a");
+    const y = await phone.evaluate(() => ({ brand: document.querySelector("header h1")!.getBoundingClientRect().top, me: document.getElementById("me")!.getBoundingClientRect().top,
+      nav: document.getElementById("sitenav")!.getBoundingClientRect().top }));
+    assert.ok(Math.abs(y.brand - y.me) < 12 && y.nav > y.me + 10, JSON.stringify(y));
+  });
+
+  it("home and search: quieter updates, plain headings, a footer, municipality search", async () => {
+    app.sched.meetings.create({ title: "Cancelled hearing", platform: "", link: "", start: new Date(Date.now() - 3 * 86_400_000).toISOString(), slug: "cancelled-hearing", status: "cancelled" });
+    const page = await (await browser.newContext({ viewport: { width: 1280, height: 900 } })).newPage();
+    await page.goto(base + "/");
+    await page.waitForSelector("#upcoming .mcard");
+    await page.waitForSelector("#past .mcard:has-text('Cancelled hearing')");
+    // Headings and pills are sentence case.
+    assert.equal(await page.locator("h2").first().evaluate((e) => getComputedStyle(e).textTransform), "none");
+    // Updates: a meeting's documents become one line, transcription started is left out, news stays.
+    const lines = await page.evaluate(() => {
+      const m = (id: string) => ({ id, title: id, source: "Langford Council" });
+      const c = (kind: string, at: string, id: string, doc?: string) => ({ kind, at, meeting: m(id), doc: doc ? { title: doc, type: "x", url: null } : null, from: null, to: "2026-12-01T01:30:00Z" });
+      // @ts-expect-error a page global
+      return groupUpdates([c("document_added", "2026-11-27T10:03:00Z", "a", "Agenda (PDF)"), c("document_added", "2026-11-27T10:02:00Z", "a", "Cover"), c("document_added", "2026-11-27T10:01:00Z", "a", "Notice"),
+        c("transcript_started", "2026-11-27T09:00:00Z", "b"), c("transcript_done", "2026-11-27T08:00:00Z", "b"), c("document_added", "2026-11-27T07:00:00Z", "c", "Agenda")]).map((u: { meeting: { id: string }; text: string }) => [u.meeting.id, u.text]);
+    });
+    assert.deepEqual(lines, [["a", "3 documents added or updated"], ["b", "Transcript ready"], ["c", "Added Agenda"]]);
+    // The updates box is open on a wide window and closed on a phone.
+    assert.equal(await page.getAttribute("#updbox", "open") !== null, true);
+    const phone = await (await browser.newContext({ viewport: { width: 390, height: 800 } })).newPage();
+    await phone.goto(base + "/");
+    await phone.waitForSelector("#upcoming .mcard");
+    assert.equal(await phone.getAttribute("#updbox", "open"), null);
+    // A meeting with nothing to watch reads quieter.
+    assert.ok(await page.locator(".mcard.quiet").count() >= 1);
+    // The footer says what the site is and where the developer pages are; no contact link unless the operator set one.
+    assert.match(await page.textContent("#sitefoot") ?? "", /check the video before quoting/);
+    assert.equal(await page.locator("#sitefoot a[href='/account#embed']").count(), 1);
+    assert.equal(await page.locator("#sitefoot a:has-text('Report a mistake')").count(), 0);
+    // Search: examples to click before anything is typed, and a municipality filter.
+    await page.goto(base + "/search");
+    await page.waitForSelector("#tryrow a.chip");
+    assert.ok(await page.locator("#tryrow a.chip").count() >= 4);
+    assert.equal(await page.locator("#source").count(), 1);
+    await page.click("#tryrow a.chip >> nth=0");
+    await page.waitForURL(/\/search\?q=/);
+    assert.equal(await page.isHidden("#tryrow"), true);
+  });
+
+  it("admin: Feeds in the tab shell with the form folded away, readable audit sentences, a tidier overview and people page", async () => {
+    const u = await app.accounts.create({ email: "tidy@example.com", role: "admin", password: "tidy password 1", verified: true });
+    const page = await signIn("tidy@example.com", "tidy password 1", "/admin/feeds");
+    // Feeds sits in the same tab bar as the other admin pages, current there, with the add form closed.
+    await page.waitForSelector("#tabs a[aria-current='page']:has-text('Feeds')");
+    assert.equal(await page.locator("#tabs a").count(), 6);
+    assert.equal(await page.isHidden("#formbox"), true);
+    await page.click("#addbtn");
+    await page.waitForSelector("#formbox:not([hidden])");
+    assert.equal(await page.getAttribute("#advbox", "open"), null, "advanced settings start closed");
+    await page.fill("#f-name", "Colwood Council");
+    assert.equal(await page.evaluate(() => (window as unknown as { formBody(): { slugPrefix: string } }).formBody().slugPrefix), "colwood", "the folder prefix defaults to the first word of the name");
+    await page.click("#cancelbtn");
+    assert.equal(await page.isHidden("#formbox"), true);
+
+    // The audit log reads as sentences, with the raw fields behind Details.
+    const actor = { id: u.id, label: "tidy@example.com", ip: "192.168.1.5" };
+    app.audit.record(actor, "feed.update", { type: "feed", id: "f1", label: "Saanich Council" }, { config: { baseUrl: "https://a.example/" } }, { config: { baseUrl: "https://a.example/", linksUrl: "https://b.example/" } });
+    app.audit.record(actor, "user.update", { type: "user", id: "u9", label: "someone@example.com" }, { role: "user" }, { role: "admin" });
+    await page.goto(base + "/admin#audit");
+    await page.waitForSelector("#audit .row .title:has-text('Made someone@example.com an admin')");
+    assert.match(await page.textContent("#audit") ?? "", /Changed the feed Saanich Council: the meeting links page/);
+    assert.doesNotMatch(await page.textContent("#audit .row .title") ?? "", /feed\.update|user\.update/);
+    assert.equal(await page.locator("#audit details.change-detail[open]").count(), 0);
+    await page.click("#audit .row:has-text('Saanich Council') summary");
+    assert.match(await page.textContent("#audit .row:has-text('Saanich Council') details") ?? "", /192\.168\.1\.5/);
+    // Overview: a feeds card, and the settings line after the columns rather than inside "Right now".
+    await page.goto(base + "/admin#overview");
+    await page.waitForSelector("#feedsum");
+    assert.equal(await page.evaluate(() => !!(document.getElementById("feedsum")!.compareDocumentPosition(document.getElementById("meta")!) & Node.DOCUMENT_POSITION_FOLLOWING)), true);
+    assert.equal(await page.locator("#now #meta").count(), 0);
+    // The Zoom login banner belongs to Overview and Captures only.
+    assert.equal(await page.isVisible("#login"), true);
+    await page.goto(base + "/admin#people");
+    assert.equal(await page.isHidden("#login"), true);
+    // People: a revoked key is folded away until asked for.
+    const t = app.tokens.create(u.id, { label: "old key" });
+    app.tokens.revoke(t.record.id);
+    await page.reload();
+    await page.waitForSelector("#tokens button:has-text('Show 1 revoked or expired key')");
+    assert.equal(await page.locator("#tokens .row .title:has-text('old key')").count(), 0);
+    await page.click("#tokens button:has-text('Show 1 revoked or expired key')");
+    await page.waitForSelector("#tokens .row .title:has-text('old key')");
+  });
+
+  it("account: no 'Signed in / Continue' card (the header says who is signed in)", async () => {
+    await app.accounts.create({ email: "plain@example.com", role: "user", password: "plain password 1", verified: true });
+    const page = await signIn("plain@example.com", "plain password 1", "/account");
+    await page.waitForSelector("#tabs a");
+    assert.equal(await page.isHidden("#account"), true);
+    assert.equal(await page.locator("h2:has-text('Signed in')").count(), 0);
+    assert.equal(await page.isVisible("#home"), false);
+    assert.match(await page.textContent("#me") ?? "", /plain@example\.com/);
+  });
+
+  it("admin on a phone and the leftovers: attention first, optional capture fields folded, plain recording status with a public link", async () => {
+    await app.accounts.create({ email: "phone@example.com", role: "admin", password: "phone password 1", verified: true });
+    const page = await signIn("phone@example.com", "phone password 1", "/admin");
+    await page.setViewportSize({ width: 390, height: 800 });
+    await page.waitForSelector("#feedsum");
+    const top = (sel: string) => page.evaluate((s) => document.querySelector(s)!.getBoundingClientRect().top, sel);
+    const [attn, now, next, feeds, recent] = [await top(".o-attn"), await top(".o-now"), await top(".o-next"), await top(".o-feeds"), await top(".o-recent")];
+    assert.ok(attn < now && now < next && next < feeds && feeds < recent, JSON.stringify({ attn, now, next, feeds, recent }));
+    await page.setViewportSize({ width: 1280, height: 900 });
+    // On a wide window the two columns are as before: attention beside "Right now".
+    const wide = await page.evaluate(() => ({ a: document.querySelector(".o-attn")!.getBoundingClientRect().left, n: document.querySelector(".o-now")!.getBoundingClientRect().left }));
+    assert.ok(wide.a > wide.n + 100, JSON.stringify(wide));
+    // Captures: the optional fields start folded; an edit opens them.
+    await page.goto(base + "/admin#captures");
+    await page.waitForSelector("#moreopts");
+    assert.equal(await page.getAttribute("#moreopts", "open"), null);
+    assert.equal(await page.isVisible("#email"), false);
+    await page.waitForSelector("#jobs .row button:has-text('Edit')");
+    await page.click("#jobs .row button:has-text('Edit')");
+    await page.waitForSelector("#moreopts[open]");
+    // Recordings: "recorded" rather than the raw outcome, and a way to the public page.
+    await page.goto(base + "/admin#recordings");
+    await page.waitForSelector("#recs .row:has-text('council-a')");
+    assert.match(await page.textContent("#recs .row:has-text('council-a') .pill") ?? "", /^recorded$/);
+    assert.equal(await page.locator("#recs .row:has-text('council-a') a:has-text('Public page')").getAttribute("href"), "/m/council-a");
   });
 });
 
