@@ -144,6 +144,18 @@ jobs:
           cache-from: type=registry,ref=${{ env.REPO }}/minutes-transcriber-rocm:buildcache
           cache-to: ${{ steps.daemon.outputs.up != 'true' && format('type=registry,ref={0}/minutes-transcriber-rocm:buildcache,mode=max', env.REPO) || '' }}
 
+      # The GPU encoder: k3s-07's Radeon through VAAPI (Dockerfile.encoder, src/encoder.ts).
+      - name: encoder image (VAAPI)
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: Dockerfile.encoder
+          platforms: linux/amd64
+          push: true
+          tags: ${{ env.REPO }}/minutes-encoder:sha-${{ github.sha }}
+          cache-from: type=registry,ref=${{ env.REPO }}/minutes-encoder:buildcache
+          cache-to: ${{ steps.daemon.outputs.up != 'true' && format('type=registry,ref={0}/minutes-encoder:buildcache,mode=max', env.REPO) || '' }}
+
   release:
     needs: [check, test, images]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'

@@ -4,6 +4,8 @@
 #                        serves the video. Zoom login on `data` (RBD).
 #   minutes-transcriber  WhisperX on k3s-07's Radeon 8060S through ROCm
 #                        (the -rocm image), sharing the GPU with ollama.
+#   minutes-encoder      the smaller copies (720p/480p/360p) of each recording,
+#                        on the same GPU's video encoder through VAAPI.
 #
 # Both mount `recordings` (CephFS, ReadWriteMany): captures write parts and
 # the stitched video, the transcriber reads them (live, too) and writes the
@@ -149,6 +151,9 @@ spec:
             - { name: TRUSTED_PROXIES, value: 10.42.0.0/16 }
             # Nightly after 03:00 local, kept 14 days (BACKUP_KEEP_DAYS).
             - { name: BACKUP_DIR, value: /backups }
+            # The smaller copies of each recording are made by minutes-encoder on
+            # k3s-07's GPU (below), not here: x264 on these cores used all 8.
+            - { name: RENDITIONS, value: "off" }
           resources:
             # x264 1080p30 + Chromium per meeting; two overlapping captures fit.
             # Requests are what's free to reserve on k3s-04; limits use its idle cores.
@@ -240,6 +245,56 @@ spec:
           persistentVolumeClaim: { claimName: recordings }
         - name: models
           persistentVolumeClaim: { claimName: transcriber-models }
+---
+# The smaller copies of each recording (720p, 480p, 360p) for viewers on slow
+# connections, made on k3s-07's Radeon 8060S by its video encoder (VAAPI): about
+# 30x faster than real time and almost no CPU, so neither the web pod's cores nor
+# a capture's are used (x264 on the CPU took all 8 of the web pod's, an hour a
+# meeting). It needs only the render node, so it asks for devic.es/dri-render
+# (shared, 4 on the node), not the amd-gpu slot the transcriber and ollama use.
+# Restarting it abandons a copy in progress, which is made again; it never opens
+# the database and the web server finds the copies by name (src/encoder.ts).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: minutes-encoder
+  namespace: minutes
+  labels: { app: minutes-encoder }
+spec:
+  replicas: 1
+  strategy: { type: Recreate }   # one worker: two would encode the same recording
+  selector:
+    matchLabels: { app: minutes-encoder }
+  template:
+    metadata:
+      labels: { app: minutes-encoder }
+    spec:
+      imagePullSecrets: [{ name: ghcr-pull }]
+      nodeSelector: { kubernetes.io/hostname: k3s-07 }
+      tolerations: [{ key: gpu, operator: Exists }]
+      securityContext:
+        runAsUser: 1000
+        runAsGroup: 1000
+        # 110 = render on k3s-07: owns /dev/dri/renderD128.
+        supplementalGroups: [110]
+        fsGroup: 1000
+        fsGroupChangePolicy: OnRootMismatch
+      containers:
+        - name: encoder
+          image: ghcr.io/langfordogsociety/minutes-encoder:main
+          env:
+            - { name: ENCODER, value: vaapi }          # falls back to x264 on the CPU if the GPU can't be used
+            - { name: RENDITIONS, value: "720,480,360" }
+            - { name: ENCODER_THREADS, value: "4" }    # CPU decoding and scaling: k3s-07's os.cpu_count() sees 28
+            - { name: SCAN_S, value: "120" }
+          resources:
+            requests: { cpu: 500m, memory: 512Mi, devic.es/dri-render: "1" }
+            limits: { cpu: "4", memory: 2Gi, devic.es/dri-render: "1" }
+          volumeMounts:
+            - { name: recordings, mountPath: /recordings }
+      volumes:
+        - name: recordings
+          persistentVolumeClaim: { claimName: recordings }
 ---
 apiVersion: v1
 kind: Service

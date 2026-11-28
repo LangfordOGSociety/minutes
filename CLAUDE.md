@@ -319,7 +319,8 @@ captures).
   `<slug>.720p.mp4`, `.480p`, `.360p` (H.264 + AAC progressive MP4,
   30 fps, faststart), made one at a time at nice 19, never while a capture
   runs or is within 30 min (`captureBusy` in serve.ts), by heights smaller
-  than the source; `RENDITIONS=720,480,360|off`. Found by name when a
+  than the source; `RENDITIONS=720,480,360|off` (the web server's own x264
+  path, 2 threads; the homelab sets `off` and uses the GPU worker below). Found by name when a
   folder is read (`Recording.renditions`, public, in `publicFiles`),
   served by /media, listed by /api/v1 files as `video-smaller`. The
   player's Quality menu (`play()` in common.ts: Auto / Original / sizes,

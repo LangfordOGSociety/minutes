@@ -1,0 +1,33 @@
+# The encoder worker (src/encoder.ts): makes the smaller copies of each recording on
+# the AMD GPU's video encoder through VAAPI. Built for k3s-07's Radeon 8060S (gfx1151;
+# Mesa 25.0 on Debian 13 has its VA driver). Debian 13, not the capture image's
+# Ubuntu 22.04: Mesa 22 predates this GPU.
+#
+#   docker build -f Dockerfile.encoder -t minutes-encoder .
+#   docker run --rm --device /dev/dri/renderD128 --group-add "$(getent group render | cut -d: -f3)" \
+#     -v "$PWD/recordings:/recordings" minutes-encoder
+#
+# No Chromium, no node_modules: the worker imports only Node's own modules.
+FROM node:24-trixie-slim AS build
+WORKDIR /app
+ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
+COPY package.json package-lock.json ./
+RUN npm ci
+COPY tsconfig.json ./
+COPY src ./src
+RUN npm run build
+
+FROM debian:13-slim
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends ffmpeg mesa-va-drivers libva-drm2 vainfo ca-certificates \
+ && rm -rf /var/lib/apt/lists/*
+COPY --from=build /usr/local/bin/node /usr/local/bin/node
+WORKDIR /app
+COPY package.json ./
+COPY --from=build /app/dist ./dist
+# uid 1000 like the other pods: the recordings volume is owned by it.
+RUN useradd --uid 1000 --create-home app
+USER 1000
+ENV RECORDINGS=/recordings
+CMD ["node", "dist/encoder.js"]

@@ -1,6 +1,6 @@
 # Homelab deployment (k3s)
 
-Two Deployments:
+Three Deployments:
 
 - `minutes`: web site, scheduler, captures; streams the video to viewers.
   On the 24-core worker `k3s-04` when it fits. Zoom login on the `data`
@@ -13,7 +13,18 @@ Two Deployments:
   (`TORCH_MIOPEN=0`): its runtime-compiled batch-norm kernel fails on
   gfx1151. Model cache on its own RBD volume, `transcriber-models`.
 
-Both mount `recordings` (CephFS, ReadWriteMany): video parts, stitched
+- `minutes-encoder`: the smaller copies (720p, 480p, 360p) of each recording,
+  made on the same GPU's video encoder through VAAPI, image `minutes-encoder`
+  (`Dockerfile.encoder`, `src/encoder.ts`; Debian 13 for Mesa 25, which has the
+  VA driver for gfx1151). It asks for `devic.es/dri-render` (the render node
+  only, 4 shared slots), not an `amd-gpu` slot, so it doesn't compete with the
+  transcriber and Ollama for those. About 30x faster than real time with almost
+  no CPU (measured on k3s-07, docs/streaming-quality.md); if the GPU can't be
+  used it falls back to x264 on k3s-07's CPU (4 threads) and logs why. The web
+  pod has `RENDITIONS=off`: it only finds the copies by name. A new cluster needs
+  `kubectl apply -k deploy/k8s` once for this Deployment, like the transcriber's.
+
+All mount `recordings` (CephFS, ReadWriteMany): video parts, stitched
 videos, transcripts, `minutes.db`. Measured on the 2026-11-24 meeting (45.8
 min): the three transcription steps took 3.0 min on the GPU vs 70 min on
 k3s-04's CPU (`transcriber/bench.py`, see "Benchmark" below).

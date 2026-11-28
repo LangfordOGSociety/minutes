@@ -8,7 +8,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { describe, it, type TestContext } from "node:test";
 import { publicFiles, toPublic } from "../src/recordings.js";
-import { Renditions, planHeights, renditionFile, targetKbps } from "../src/renditions.js";
+import { Renditions, planHeights, renditionFile, targetKbps, vaapiArgs, vaapiKbps, videoArgs } from "../src/renditions.js";
 import { fixtures, makeRecording } from "./fixtures.js";
 import { need, tmpDir, type HasAfter } from "./helpers.js";
 import { Client, startApp } from "./server.js";
@@ -55,6 +55,29 @@ describe("renditions", () => {
     assert.ok(bytes.indexOf("moov") > 0 && bytes.indexOf("moov") < bytes.indexOf("mdat"));
     // Already there (the next pass lists them): nothing more to make, and nothing probed again.
     assert.equal(await r.run([{ ...task, have: [240, 144] }]), 0);
+  });
+
+  it("the GPU encoder: CPU decoding and scaling, hardware encoding, a bit rate scaled from x264's; the CPU encoder is capped to a few threads", () => {
+    assert.deepEqual([vaapiKbps(720), vaapiKbps(480), vaapiKbps(360)], [501, 223, 126]);
+    const a = vaapiArgs(720, 1080, "/dev/dri/renderD128");
+    assert.deepEqual(a.input, ["-threads", "4", "-vaapi_device", "/dev/dri/renderD128"]);
+    assert.ok(a.output.includes("h264_vaapi") && a.output.includes("501k") && a.output.includes("1002k"));
+    assert.equal(a.output[a.output.indexOf("-vf") + 1], "scale=-2:720,fps=30,format=nv12,hwupload");
+    // A source already at the wanted height (a city's 720p stream) is not scaled at all.
+    assert.equal(vaapiArgs(720, 720, "/dev/dri/renderD128").output[1], "fps=30,format=nv12,hwupload");
+    // x264: the threads and the lookahead are limited, so it can't take every core the container may use.
+    const x = videoArgs(720);
+    assert.deepEqual([x[x.indexOf("-threads") + 1], x[x.indexOf("-filter_threads") + 1], x[x.indexOf("-x264-params") + 1]], ["2", "1", "lookahead-threads=1"]);
+  });
+
+  it("falls back to x264 when the GPU can't be used", { skip: ffmpeg }, async (t) => {
+    const dir = tmpDir(t);
+    const src = path.join(dir, "rec.mp4");
+    execFileSync("ffmpeg", ["-v", "error", "-y", "-f", "lavfi", "-i", "testsrc=size=640x360:rate=30:duration=2", "-c:v", "libx264", src]);
+    const r = new Renditions([240], { encoder: "vaapi", device: "/dev/dri/does-not-exist" });
+    assert.equal(await r.run([{ slug: "rec", video: "rec.mp4", dir, duration: 2, have: [] }]), 1);
+    assert.equal(height(path.join(dir, "rec.240p.mp4")), 240);
+    assert.equal(existsSync(path.join(dir, "rec.240p.mp4.tmp.mp4")), false);
   });
 
   it("are listed on the recording, served by /media, and listed by the API; the original is untouched", async (t) => {
