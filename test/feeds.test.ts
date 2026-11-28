@@ -47,6 +47,20 @@ describe("feed store and context", () => {
     assert.equal(g.lastHash, null);
   });
 
+  it("a feed's badge color: #rrggbb or none, kept when not mentioned", (t) => {
+    const db = openDb(path.join(tmpDir(t), "minutes.db"));
+    t.after(() => db.close());
+    const feeds = new Feeds(db);
+    const ok = { name: "Saanich", parser: "test-json", config: { url: "https://example.com/a" }, slugPrefix: "saanich" };
+    assert.equal(feeds.create(ok).color, null);
+    for (const bad of ["red", "#fff", "#12345g", "url(x)", 5]) assert.throws(() => feeds.create({ ...ok, color: bad }), /color/);
+    const f = feeds.create({ ...ok, color: "#1A7F5A" });
+    assert.equal(f.color, "#1a7f5a");
+    assert.equal(feeds.update(f.id, { name: "Saanich 2" }).color, "#1a7f5a");
+    assert.equal(feeds.get(f.id)!.color, "#1a7f5a");
+    assert.equal(feeds.update(f.id, { color: "" }).color, null);
+  });
+
   it("http: user agent, conditional GET, errors, size cap, http(s) only", async (t) => {
     const src = await fakeSource(t);
     const ctx = feedContext({ tz: "UTC", label: "t" });

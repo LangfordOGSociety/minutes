@@ -14,6 +14,8 @@ export interface Feed {
   parser: string;
   config: Record<string, unknown>;
   slugPrefix: string;
+  /** "#rrggbb" the public site shows the feed's municipality badge in; null = the site's accent. */
+  color: string | null;
   policy: Policy;
   intervalMin: number;
   enabled: boolean;
@@ -46,7 +48,7 @@ export class FeedError extends Error {
 }
 
 type Row = {
-  id: string; name: string; parser: string; config: string; slug_prefix: string; policy: string; interval_min: number;
+  id: string; name: string; parser: string; config: string; slug_prefix: string; color: string | null; policy: string; interval_min: number;
   enabled: number; http_cache: string | null; last_hash: string | null; last_run_at: string | null; last_ok_at: string | null;
   next_run_at: string | null; failures: number; last_error: string | null; created_at: string; updated_at: string;
 };
@@ -54,14 +56,14 @@ type Row = {
 const parse = <T>(s: string | null, d: T): T => { try { return s ? JSON.parse(s) as T : d; } catch { return d; } };
 
 const fromRow = (r: Row): Feed => ({
-  id: r.id, name: r.name, parser: r.parser, config: parse(r.config, {}), slugPrefix: r.slug_prefix,
+  id: r.id, name: r.name, parser: r.parser, config: parse(r.config, {}), slugPrefix: r.slug_prefix, color: r.color,
   policy: r.policy as Policy, intervalMin: r.interval_min, enabled: r.enabled === 1, httpCache: parse(r.http_cache, {}),
   lastHash: r.last_hash, lastRunAt: r.last_run_at, lastOkAt: r.last_ok_at, nextRunAt: r.next_run_at,
   failures: r.failures, lastError: r.last_error, createdAt: r.created_at, updatedAt: r.updated_at,
 });
 
 const toRow = (f: Feed): Row => ({
-  id: f.id, name: f.name, parser: f.parser, config: JSON.stringify(f.config), slug_prefix: f.slugPrefix, policy: f.policy,
+  id: f.id, name: f.name, parser: f.parser, config: JSON.stringify(f.config), slug_prefix: f.slugPrefix, color: f.color, policy: f.policy,
   interval_min: f.intervalMin, enabled: f.enabled ? 1 : 0, http_cache: JSON.stringify(f.httpCache), last_hash: f.lastHash,
   last_run_at: f.lastRunAt, last_ok_at: f.lastOkAt, next_run_at: f.nextRunAt, failures: f.failures, last_error: f.lastError,
   created_at: f.createdAt, updated_at: f.updatedAt,
@@ -70,7 +72,7 @@ const toRow = (f: Feed): Row => ({
 const COLS = Object.keys(toRow({ config: {}, httpCache: {} } as unknown as Feed));
 
 /** What an admin may set; everything checked, nothing applied on error. */
-export interface FeedInput { name?: unknown; parser?: unknown; config?: unknown; slugPrefix?: unknown; policy?: unknown; intervalMin?: unknown; enabled?: unknown }
+export interface FeedInput { name?: unknown; parser?: unknown; config?: unknown; slugPrefix?: unknown; color?: unknown; policy?: unknown; intervalMin?: unknown; enabled?: unknown }
 
 export const RUNS_KEPT = 200;
 
@@ -92,12 +94,18 @@ export class Feeds {
     catch (e) { throw new FeedError(e instanceof ConfigError ? e.message : `config: ${(e as Error).message}`); }
     const slugPrefix = (str(input.slugPrefix) ?? base?.slugPrefix ?? "").toLowerCase();
     if (!SLUG_RE.test(slugPrefix) || slugPrefix.length > 40) throw new FeedError("folder prefix must be letters, digits, '.', '_' or '-' (at most 40), e.g. langford");
+    let color = base?.color ?? null;
+    if (input.color !== undefined) {
+      if (input.color === null || input.color === "") color = null;
+      else if (typeof input.color === "string" && /^#[0-9a-f]{6}$/i.test(input.color.trim())) color = input.color.trim().toLowerCase();
+      else throw new FeedError("color must be like #1a7f5a, or blank for none");
+    }
     const policy = (str(input.policy) ?? base?.policy ?? "review") as Policy;
     if (!POLICIES.includes(policy)) throw new FeedError(`policy must be one of ${POLICIES.join(", ")}`);
     const intervalMin = input.intervalMin === undefined || input.intervalMin === "" ? base?.intervalMin ?? 60 : Number(input.intervalMin);
     if (!Number.isInteger(intervalMin) || intervalMin < 5 || intervalMin > 1440) throw new FeedError("interval must be 5 to 1440 minutes");
     const enabled = input.enabled === undefined ? base?.enabled ?? true : input.enabled === true;
-    return { name, parser: parser.id, config, slugPrefix, policy, intervalMin, enabled };
+    return { name, parser: parser.id, config, slugPrefix, color, policy, intervalMin, enabled };
   }
 
   create(input: FeedInput, now = new Date()): Feed {

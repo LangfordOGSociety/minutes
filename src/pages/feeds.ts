@@ -34,6 +34,10 @@ table.list th { color: var(--muted); font-weight: 600; }
 nav.sub { padding: 0 24px; font-size: 13px; color: var(--muted); }
 @media (max-width: 900px) { nav.sub { padding: 0 16px; } }
 #preview[hidden], #runsbox[hidden] { display: none; }
+.muni { font-size: 12px; font-weight: 700; padding: 2px 8px; border-radius: 999px; background: var(--accent); color: var(--accent-ink); }
+.colorrow { display: flex; gap: 10px; align-items: center; }
+.colorrow input[type=color] { width: 44px; height: 32px; padding: 2px; }
+.swatch { display: inline-block; width: 12px; height: 12px; border-radius: 50%; margin-left: 8px; vertical-align: middle; border: 1px solid var(--line, #8885); }
 </style>
 </head>
 <body>
@@ -53,6 +57,12 @@ nav.sub { padding: 0 24px; font-size: 13px; color: var(--muted); }
         <select id="f-parser" name="parser"></select>
         <div class="field-help" id="parserhelp"></div>
         <div id="fields"></div>
+        <label for="f-color">Badge color <small>(the municipality badge on the public site)</small></label>
+        <div class="colorrow">
+          <input id="f-color" type="color" value="#1a7f5a" aria-label="Badge color">
+          <span id="f-colorpv" class="muni">Name</span>
+          <button type="button" id="f-colornone">No color</button>
+        </div>
         <label for="f-prefix">Folder prefix <small>(recordings are named prefix-title-date)</small></label>
         <input id="f-prefix" name="slugPrefix" required maxlength="40" pattern="[A-Za-z0-9][A-Za-z0-9._\-]{0,39}" placeholder="langford">
         <label for="f-policy">New meetings</label>
@@ -136,8 +146,24 @@ function config() {
   });
   return c;
 }
+var colorOn = false;
+function inkFor(hex) {
+  var n = parseInt(hex.slice(1), 16), r = n >> 16, g = (n >> 8) & 255, b = n & 255;
+  return (r * 299 + g * 587 + b * 114) / 1000 > 150 ? "#111" : "#fff";
+}
+function setColor(hex) {
+  colorOn = !!hex;
+  if (hex) $("f-color").value = hex;
+  var pv = $("f-colorpv");
+  pv.style.background = hex || ""; pv.style.color = hex ? inkFor(hex) : "";
+  pv.textContent = $("f-name").value || "Name";
+  $("f-colornone").hidden = !hex;
+}
+$("f-color").addEventListener("input", function () { setColor($("f-color").value); });
+$("f-colornone").addEventListener("click", function () { setColor(""); });
+$("f-name").addEventListener("input", function () { $("f-colorpv").textContent = $("f-name").value || "Name"; });
 function formBody() {
-  return { name: $("f-name").value, parser: $("f-parser").value, config: config(), slugPrefix: $("f-prefix").value,
+  return { name: $("f-name").value, parser: $("f-parser").value, config: config(), slugPrefix: $("f-prefix").value, color: colorOn ? $("f-color").value : "",
     policy: $("f-policy").value, intervalMin: $("f-interval").value, enabled: $("f-enabled").checked };
 }
 
@@ -150,6 +176,7 @@ function setMode(f) {
   $("f-parser").value = f ? f.parser : (PARSERS[0] ? PARSERS[0].id : "");
   $("f-parser").disabled = false;
   $("f-prefix").value = f ? f.slugPrefix : "";
+  setColor(f && f.color ? f.color : "");
   $("f-policy").value = f ? f.policy : "review";
   $("f-interval").value = f ? f.intervalMin : 60;
   $("f-enabled").checked = f ? f.enabled : true;
@@ -176,7 +203,8 @@ function render() {
         if (confirm("Delete the feed " + f.name + "? Meetings it found stay.")) aapi("DELETE", "/api/admin/feeds/" + f.id).then(load, function (e) { alert(e.message); });
       } } }));
     box.appendChild(el("div", { "class": "row" },
-      el("div", { "class": "title" }, el("span", { "class": "pill h-" + f.health, text: HEALTH[f.health] || f.health }), f.name),
+      el("div", { "class": "title" }, el("span", { "class": "pill h-" + f.health, text: HEALTH[f.health] || f.health }), f.name,
+        f.color ? el("span", { "class": "swatch", title: "Badge color " + f.color, style: "background:" + f.color }) : null),
       actions, el("div", { "class": "sub", text: sub })));
   });
 }

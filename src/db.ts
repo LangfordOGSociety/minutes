@@ -304,6 +304,7 @@ const MIGRATIONS: string[] = [
      gone_at      TEXT,
      UNIQUE (meeting_id, url)
    );`,
+  `ALTER TABLE feeds ADD COLUMN color TEXT;`,
 ];
 
 export function openDb(file: string): DB {

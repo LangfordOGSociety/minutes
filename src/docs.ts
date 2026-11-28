@@ -128,7 +128,7 @@ export class DocMirror {
       if (!m.documents || Date.parse(m.start) < since) continue;
       const listed = new Set<string>();
       for (const d of m.documents) {
-        if (!/^https?:\/\//i.test(d.url)) continue;
+        if (!/^https?:\/\//i.test(d.url) || d.type === "Join link") continue;   // a join link is a web page to open, not a file to keep
         listed.add(d.url);
         ins.run(m.id, d.url, d.title, d.type ?? null);
         db.prepare("UPDATE meeting_documents SET title = ?, type = ?, gone_at = NULL WHERE meeting_id = ? AND url = ?").run(d.title, d.type ?? null, m.id, d.url);
