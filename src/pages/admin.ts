@@ -37,9 +37,16 @@ main.cols > div > section + section { margin-top: 20px; }
 .ov { display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); gap: 20px; align-items: start; }
 .ov > div > section + section { margin-top: 20px; }
 .ovmeta { grid-column: 1 / -1; margin: 0; }
+details.moreopts > summary { cursor: pointer; font-size: 14px; color: var(--muted); margin: 12px 0 4px; }
 .change-detail summary { cursor: pointer; font-size: 13px; color: var(--muted); }
 .audit-who { color: var(--muted); }
-@media (max-width: 900px) { .ov { grid-template-columns: 1fr; } }
+@media (max-width: 900px) {
+  .ov { grid-template-columns: 1fr; }
+  /* One column on a phone, in the order that matters: what needs a person, what is happening, what is next. */
+  .ov > div { display: contents; }
+  .ov > div > section + section { margin-top: 0; }
+  .ov .o-attn { order: 1; } .ov .o-now { order: 2; } .ov .o-next { order: 3; } .ov .o-feeds { order: 4; } .ov .o-recent { order: 5; } .ovmeta { order: 6; }
+}
 .ok-line { color: var(--ok); font-weight: 600; }
 .bar { height: 6px; background: var(--line); border-radius: 3px; overflow: hidden; margin-top: 6px; grid-column: 1 / -1; }
 .bar > i { display: block; height: 100%; background: var(--accent); }
@@ -87,26 +94,26 @@ label.check[hidden] { display: none; }
 
 <main id="t-overview" class="ov">
   <div>
-    <section>
+    <section class="o-now">
       <h2>Right now</h2>
       <div class="list" id="now"><div class="empty">Loading...</div></div>
     </section>
-    <section>
+    <section class="o-next">
       <h2>Coming up</h2>
       <div class="list" id="next"><div class="empty">Loading...</div></div>
     </section>
-    <section>
+    <section class="o-feeds">
       <h2>Feeds</h2>
       <div class="list" id="feedsum"><div class="empty">Loading...</div></div>
       <p class="hint"><a href="/admin/feeds">Manage feeds and review new meetings</a></p>
     </section>
   </div>
   <div>
-    <section>
+    <section class="o-attn">
       <h2>Needs attention</h2>
       <div class="list" id="attn"><div class="empty">Loading...</div></div>
     </section>
-    <section>
+    <section class="o-recent">
       <h2>Recent activity</h2>
       <div class="list" id="recent"><div class="empty">Loading...</div></div>
       <p class="hint"><a href="#audit">Full audit log</a></p>
@@ -125,13 +132,15 @@ label.check[hidden] { display: none; }
         <small>Only a Zoom ID and passcode? Use https://zoom.us/j/ID?pwd=PASSCODE. A YouTube or Granicus video is recorded from its stream, not a browser. A Granicus <b>clip</b> (an archived meeting, <code>.../player/clip/123</code>) is imported at once: give the meeting's own date as the start.</small>
         <label for="start">Start time <small id="tzlabel"></small></label>
         <input id="start" name="start" type="datetime-local" required>
-        <label for="slug">Name <small>(folder and file name, optional)</small></label>
-        <input id="slug" name="slug" placeholder="council-2026-11-16" pattern="[A-Za-z0-9][A-Za-z0-9._\-]{0,79}">
-        <label for="name">Shown in Zoom as <small>(optional)</small></label>
-        <input id="name" name="name" placeholder="Recorder" maxlength="64">
-        <label for="email">Email <small>(optional, typed only if the host requires one; the host sees it)</small></label>
-        <input id="email" name="email" type="email" maxlength="254" placeholder="Only used if Zoom asks">
-        <label class="check" id="clearemailrow" hidden><input type="checkbox" id="clearemail" name="clearemail"> Remove the saved email</label>
+        <details id="moreopts" class="moreopts"><summary>More options</summary>
+          <label for="slug">Name <small>(folder and file name, optional)</small></label>
+          <input id="slug" name="slug" placeholder="council-2026-11-16" pattern="[A-Za-z0-9][A-Za-z0-9._\-]{0,79}">
+          <label for="name">Shown in Zoom as <small>(optional)</small></label>
+          <input id="name" name="name" placeholder="Recorder" maxlength="64">
+          <label for="email">Email <small>(optional, typed only if the host requires one; the host sees it)</small></label>
+          <input id="email" name="email" type="email" maxlength="254" placeholder="Only used if Zoom asks">
+          <label class="check" id="clearemailrow" hidden><input type="checkbox" id="clearemail" name="clearemail"> Remove the saved email</label>
+        </details>
         <div class="actions">
           <button class="primary" type="submit" id="submitbtn">Schedule capture</button>
           <button type="button" id="editcancel" hidden>Cancel edit</button>
@@ -197,6 +206,7 @@ function aapi(method, url, body) { return api(method, url, body, true); }
 
 // A capture or recording by what it is (municipality and title), not its folder name; the folder name stays as small text.
 function jobName(j) { return (j.source ? j.source + ": " : "") + (j.title || j.slug); }
+var REC_STATUS = { ended: "recorded", stopped: "stopped", running: "recording", blocked: "blocked", not_started: "never started", failed: "failed", archive_failed: "import failed", unknown: "no result", ended_after_interruption: "recorded, with a gap" };
 function recName(r) { return (r.source ? r.source + ": " : "") + (r.title && r.title !== r.slug ? r.title : r.slug); }
 var OUTCOME_TEXT = { ended: "recorded", stopped: "stopped by an admin", not_started: "the meeting never started", blocked: "the platform wouldn't let the recorder in",
   invalid_link: "the link isn't a meeting", email_required: "the platform asked for an email address", ended_after_interruption: "recorded, with a gap",
@@ -246,6 +256,7 @@ function renderRecs(recs) {
   if (!recs.length) { box.appendChild(el("div", { "class": "empty", text: "No recordings yet." })); return; }
   recs.forEach(function (r) {
     var status = r.active ? "running" : r.outcome;
+    var statusPill = el("span", { "class": "pill s-" + status, text: REC_STATUS[status] || String(status).replace(/_/g, " ") });
     var parts = r.parts.length + (r.parts.length === 1 ? " part" : " parts");
     var sub = fmt(r.scheduledStart) + " · " + parts + (r.chapters.length > 1 ? " · " + (r.chapters.length - 1) + " gap(s)" : "") +
       (r.videoBytes ? " · " + mb(r.videoBytes) : "") + (r.audioGone ? " · sound deleted after the transcript (the video is on YouTube)" : r.audioOnly ? " · sound only (the video is on YouTube)" : "") + (r.video ? "" : r.active ? " · recording now" : " · no video") +
@@ -258,9 +269,10 @@ function renderRecs(recs) {
       r.video && r.transcript && (r.transcript.status === "done" || r.transcript.status === "failed") ? el("button", { text: r.transcript.status === "failed" ? "Retry transcript" : "Transcribe again", on: { click: function () {
         if (!confirm("Ask the transcriber to do " + recName(r) + " again? The current transcript stays until the new one replaces it.")) return;
         aapi("POST", "/api/admin/recordings/" + encodeURIComponent(r.slug) + "/retranscribe", {}).then(function () { refresh(); }, function (e) { alert(e.message); });
-      } } }) : null);
+      } } }) : null,
+      r.public ? el("a", { href: "/m/" + encodeURIComponent(r.slug), target: "_blank", rel: "noopener", text: "Public page" }) : null);
     box.appendChild(el("div", { "class": "row" + (selectedRec === r.slug ? " selected" : "") },
-      el("div", { "class": "title", title: r.slug }, pill(status), recName(r)), actions, el("div", { "class": "sub", text: sub + " · folder " + r.slug }), panel));
+      el("div", { "class": "title", title: r.slug }, statusPill, recName(r)), actions, el("div", { "class": "sub", text: sub + " · folder " + r.slug }), panel));
   });
   if (recTotal > recs.length) {
     box.appendChild(el("div", { "class": "row" }, el("div", { "class": "sub", text: "Showing the latest " + recs.length + " of " + recTotal + " recordings. " }),
@@ -403,6 +415,7 @@ var editing = null;
 function setMode(job) {
   var f = document.getElementById("form");
   editing = job ? { id: job.id, start: localInput(job.start), slug: job.slug, name: job.name, hasEmail: job.hasEmail } : null;
+  document.getElementById("moreopts").open = !!job;   // an edit shows every field
   document.getElementById("formtitle").textContent = job ? "Edit " + job.slug : "Schedule a meeting";
   document.getElementById("submitbtn").textContent = job ? "Save changes" : "Schedule capture";
   document.getElementById("editcancel").hidden = !job;

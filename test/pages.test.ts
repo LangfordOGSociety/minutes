@@ -79,6 +79,7 @@ describe("pages in Chromium", { skip: skipReason() }, () => {
     const local = (n: number) => String(n).padStart(2, "0");
     await page.fill("#link", "https://zoom.us/j/87093163922?pwd=429539");
     await page.fill("#start", `${d.getFullYear()}-${local(d.getMonth() + 1)}-${local(d.getDate())}T19:00`);
+    await page.click("#moreopts > summary");
     await page.fill("#slug", "council-ui");
     await page.click("#submitbtn");
     await page.waitForSelector("#formmsg.ok");
@@ -757,6 +758,33 @@ describe("redesigned pages in Chromium", { skip: skipReason() }, () => {
     assert.equal(await page.locator("h2:has-text('Signed in')").count(), 0);
     assert.equal(await page.isVisible("#home"), false);
     assert.match(await page.textContent("#me") ?? "", /plain@example\.com/);
+  });
+
+  it("admin on a phone and the leftovers: attention first, optional capture fields folded, plain recording status with a public link", async () => {
+    await app.accounts.create({ email: "phone@example.com", role: "admin", password: "phone password 1", verified: true });
+    const page = await signIn("phone@example.com", "phone password 1", "/admin");
+    await page.setViewportSize({ width: 390, height: 800 });
+    await page.waitForSelector("#feedsum");
+    const top = (sel: string) => page.evaluate((s) => document.querySelector(s)!.getBoundingClientRect().top, sel);
+    const [attn, now, next, feeds, recent] = [await top(".o-attn"), await top(".o-now"), await top(".o-next"), await top(".o-feeds"), await top(".o-recent")];
+    assert.ok(attn < now && now < next && next < feeds && feeds < recent, JSON.stringify({ attn, now, next, feeds, recent }));
+    await page.setViewportSize({ width: 1280, height: 900 });
+    // On a wide window the two columns are as before: attention beside "Right now".
+    const wide = await page.evaluate(() => ({ a: document.querySelector(".o-attn")!.getBoundingClientRect().left, n: document.querySelector(".o-now")!.getBoundingClientRect().left }));
+    assert.ok(wide.a > wide.n + 100, JSON.stringify(wide));
+    // Captures: the optional fields start folded; an edit opens them.
+    await page.goto(base + "/admin#captures");
+    await page.waitForSelector("#moreopts");
+    assert.equal(await page.getAttribute("#moreopts", "open"), null);
+    assert.equal(await page.isVisible("#email"), false);
+    await page.waitForSelector("#jobs .row button:has-text('Edit')");
+    await page.click("#jobs .row button:has-text('Edit')");
+    await page.waitForSelector("#moreopts[open]");
+    // Recordings: "recorded" rather than the raw outcome, and a way to the public page.
+    await page.goto(base + "/admin#recordings");
+    await page.waitForSelector("#recs .row:has-text('council-a')");
+    assert.match(await page.textContent("#recs .row:has-text('council-a') .pill") ?? "", /^recorded$/);
+    assert.equal(await page.locator("#recs .row:has-text('council-a') a:has-text('Public page')").getAttribute("href"), "/m/council-a");
   });
 });
 
