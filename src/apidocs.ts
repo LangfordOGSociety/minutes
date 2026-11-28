@@ -115,6 +115,7 @@ export function openApi(server: string): object {
           parameters: [
             { name: "q", in: "query", required: true, schema: { type: "string", maxLength: 200 } },
             { name: "body", in: "query", schema: { type: "string" } },
+            { name: "source", in: "query", schema: { type: "string" }, description: "Only this municipality, as named in `sources`." },
             { name: "from", in: "query", schema: { type: "string", format: "date" } },
             { name: "to", in: "query", schema: { type: "string", format: "date" } },
             { name: "limit", in: "query", schema: { type: "integer", minimum: 1, maximum: 50, default: 20 } },
@@ -191,7 +192,7 @@ td:first-child { white-space: nowrap; }
 <tr><td><code>/api/v1/meetings/{id}/status</code></td><td>Stage (<code>upcoming</code>, <code>live</code>, <code>stitching</code>, <code>video_ready</code>, <code>ready</code>, <code>failed</code>, <code>not_recorded</code>, <code>cancelled</code>) and transcription progress. Small enough to poll.</td></tr>
 <tr><td><code>/api/v1/meetings/{id}/files</code></td><td>The recording's files: video, subtitles (VTT, SRT), transcript (text, JSON), Zoom captions.</td></tr>
 <tr><td><code>/api/v1/meetings/{id}/files/{name}</code></td><td><b>Download</b> (token with the <code>download</code> scope). Supports <code>Range</code>.</td></tr>
-<tr><td><code>/api/v1/search</code></td><td>Search every public transcript: <code>q</code> (words must all appear; "quoted phrase"), <code>body</code>, <code>from</code>, <code>to</code>, <code>limit</code>, <code>offset</code>. Returns passages with the matched words flagged and a <code>url</code> that opens the meeting at that second.</td></tr>
+<tr><td><code>/api/v1/search</code></td><td>Search every public transcript: <code>q</code> (words must all appear; "quoted phrase"), <code>body</code>, <code>source</code> (the municipality), <code>from</code>, <code>to</code>, <code>limit</code>, <code>offset</code>. Returns passages with the matched words flagged and a <code>url</code> that opens the meeting at that second.</td></tr>
 <tr><td><code>/api/v1/changes</code></td><td>Recent changes across meetings.</td></tr>
 <tr><td><code>/api/v1/me</code></td><td>Check your token: label, scopes, expiry.</td></tr>
 </table>

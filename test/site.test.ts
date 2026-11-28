@@ -415,5 +415,20 @@ describe("permalinks, embeds and oEmbed", () => {
     const list = (await admin.get("/api/admin/meetings?view=upcoming")).json as { id: string; joinLink: { label: string; url: string; passcode: boolean } | null }[];
     assert.deepEqual(list.find((m) => m.id === hand.id)!.joinLink, { label: "Microsoft Teams 287 377 366 632 373", url: "https://teams.microsoft.com/meet/287377366632373?p=abc", passcode: true });
   });
+
+  it("the footer's 'Report a mistake' address comes from CONTACT_URL, escaped, and only then", async (t) => {
+    const cleanups: (() => unknown)[] = [];
+    t.after(async () => { for (const f of cleanups.reverse()) await f(); });
+    const hooks: HasAfter = { after: (fn) => cleanups.push(fn) };
+    const a = await startApp(hooks, path.join(tmpDir(hooks), "rec"));
+    assert.match((await new Client(a.base).get("/")).text, /var CONTACT = "";/);
+    const b = await startApp(hooks, path.join(tmpDir(hooks), "rec"), { contactUrl: "mailto:hello@example.org" });
+    const page = (await new Client(b.base).get("/")).text;
+    assert.match(page, /var CONTACT = "mailto:hello@example\.org";/);
+    assert.doesNotMatch(page, /__CONTACT__/);
+    // An address with markup can't break out of the script.
+    const c = await startApp(hooks, path.join(tmpDir(hooks), "rec"), { contactUrl: "https://x.example/</script><b>" });
+    assert.doesNotMatch((await new Client(c.base).get("/")).text, /<\/script><b>/);
+  });
 });
 

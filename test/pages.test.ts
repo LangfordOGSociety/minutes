@@ -157,7 +157,7 @@ describe("public page in Chromium", { skip: skipReason() }, () => {
     assert.equal(await page.isVisible("#livenow"), false);   // "Live now" only shows when a meeting is live
     assert.deepEqual(await page.$$eval("#past .mcard .t", (els) => els.map((e) => e.textContent)), ["council-a"]);
     assert.match(await page.textContent("#past .mcard .mh") ?? "", /video \+ transcript/);
-    assert.match(await page.textContent("#sitenav") ?? "", /Meetings.*Search.*Embed & API/);
+    assert.match(await page.textContent("#sitenav") ?? "", /Meetings.*Search.*For developers/);
     assert.equal(await page.textContent("#me"), "Sign in");
     assert.match(await page.textContent("#updates") ?? "", /Nothing has changed lately|Announced/);
 
@@ -662,6 +662,45 @@ describe("redesigned pages in Chromium", { skip: skipReason() }, () => {
     const y = await phone.evaluate(() => ({ brand: document.querySelector("header h1")!.getBoundingClientRect().top, me: document.getElementById("me")!.getBoundingClientRect().top,
       nav: document.getElementById("sitenav")!.getBoundingClientRect().top }));
     assert.ok(Math.abs(y.brand - y.me) < 12 && y.nav > y.me + 10, JSON.stringify(y));
+  });
+
+  it("home and search: quieter updates, plain headings, a footer, municipality search", async () => {
+    app.sched.meetings.create({ title: "Cancelled hearing", platform: "", link: "", start: new Date(Date.now() - 3 * 86_400_000).toISOString(), slug: "cancelled-hearing", status: "cancelled" });
+    const page = await (await browser.newContext({ viewport: { width: 1280, height: 900 } })).newPage();
+    await page.goto(base + "/");
+    await page.waitForSelector("#upcoming .mcard");
+    await page.waitForSelector("#past .mcard:has-text('Cancelled hearing')");
+    // Headings and pills are sentence case.
+    assert.equal(await page.locator("h2").first().evaluate((e) => getComputedStyle(e).textTransform), "none");
+    // Updates: a meeting's documents become one line, transcription started is left out, news stays.
+    const lines = await page.evaluate(() => {
+      const m = (id: string) => ({ id, title: id, source: "Langford Council" });
+      const c = (kind: string, at: string, id: string, doc?: string) => ({ kind, at, meeting: m(id), doc: doc ? { title: doc, type: "x", url: null } : null, from: null, to: "2026-12-01T01:30:00Z" });
+      // @ts-expect-error a page global
+      return groupUpdates([c("document_added", "2026-11-27T10:03:00Z", "a", "Agenda (PDF)"), c("document_added", "2026-11-27T10:02:00Z", "a", "Cover"), c("document_added", "2026-11-27T10:01:00Z", "a", "Notice"),
+        c("transcript_started", "2026-11-27T09:00:00Z", "b"), c("transcript_done", "2026-11-27T08:00:00Z", "b"), c("document_added", "2026-11-27T07:00:00Z", "c", "Agenda")]).map((u: { meeting: { id: string }; text: string }) => [u.meeting.id, u.text]);
+    });
+    assert.deepEqual(lines, [["a", "3 documents added or updated"], ["b", "Transcript ready"], ["c", "Added Agenda"]]);
+    // The updates box is open on a wide window and closed on a phone.
+    assert.equal(await page.getAttribute("#updbox", "open") !== null, true);
+    const phone = await (await browser.newContext({ viewport: { width: 390, height: 800 } })).newPage();
+    await phone.goto(base + "/");
+    await phone.waitForSelector("#upcoming .mcard");
+    assert.equal(await phone.getAttribute("#updbox", "open"), null);
+    // A meeting with nothing to watch reads quieter.
+    assert.ok(await page.locator(".mcard.quiet").count() >= 1);
+    // The footer says what the site is and where the developer pages are; no contact link unless the operator set one.
+    assert.match(await page.textContent("#sitefoot") ?? "", /check the video before quoting/);
+    assert.equal(await page.locator("#sitefoot a[href='/account#embed']").count(), 1);
+    assert.equal(await page.locator("#sitefoot a:has-text('Report a mistake')").count(), 0);
+    // Search: examples to click before anything is typed, and a municipality filter.
+    await page.goto(base + "/search");
+    await page.waitForSelector("#tryrow a.chip");
+    assert.ok(await page.locator("#tryrow a.chip").count() >= 4);
+    assert.equal(await page.locator("#source").count(), 1);
+    await page.click("#tryrow a.chip >> nth=0");
+    await page.waitForURL(/\/search\?q=/);
+    assert.equal(await page.isHidden("#tryrow"), true);
   });
 });
 

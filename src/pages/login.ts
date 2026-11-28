@@ -32,7 +32,7 @@ h1 a { color: inherit; text-decoration: none; }
 section { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 18px; }
 section + section { margin-top: 16px; }
 section[hidden], form[hidden], p[hidden], label[hidden], input[hidden] { display: none; }
-h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 0 0 8px; font-weight: 600; }
+h2 { font-size: 16px; color: var(--ink); margin: 0 0 8px; font-weight: 650; }
 label { display: block; font-size: 13px; font-weight: 600; margin: 12px 0 4px; }
 input { width: 100%; padding: 9px 10px; border: 1px solid var(--line); border-radius: 7px; background: var(--bg); color: var(--ink); font: inherit; }
 input:focus { outline: 2px solid var(--accent); outline-offset: -1px; }

@@ -39,6 +39,9 @@ ${PUBLIC_CSS}
 details.filt { margin-bottom: 12px; }
 details.filt summary { cursor: pointer; color: var(--muted); font-size: 13px; margin-bottom: 8px; }
 .side .upd { grid-template-columns: 1fr; gap: 0; }
+#updbox > summary { cursor: pointer; list-style: none; } #updbox > summary::-webkit-details-marker { display: none; }
+#updbox > summary h2 { display: inline; margin: 0; } #updbox > summary::after { content: ' ▾'; color: var(--muted); } #updbox:not([open]) > summary::after { content: ' ▸'; }
+#updbox[open] > summary { margin-bottom: 12px; }
 @media (max-width: 900px) { .home { grid-template-columns: 1fr; } .hero { padding: 16px 16px 0; } }
 </style>
 </head>
@@ -84,8 +87,10 @@ details.filt summary { cursor: pointer; color: var(--muted); font-size: 13px; ma
   </div>
   <aside class="side">
     <section>
-      <h2>Recent updates</h2>
-      <div id="updates"><div class="empty">Loading...</div></div>
+      <details id="updbox" open>
+        <summary><h2>Recent updates</h2></summary>
+        <div id="updates"><div class="empty">Loading...</div></div>
+      </details>
     </section>
   </aside>
 </main>
@@ -162,16 +167,34 @@ function loadPast(more) {
   }, function (e) { offline(box, e); });
 }
 
+// What a reader wants from the news: a meeting announced, moved, cancelled, a transcript ready. A meeting's documents arriving become
+// one line, not one per file, and "transcription started" is left out (the full list is on each meeting's page).
+function groupUpdates(cs) {
+  var out = [], docs = {};
+  cs.forEach(function (c) {
+    if (c.kind === "transcript_started") return;
+    if (c.kind.indexOf("document_") === 0) {
+      var d = docs[c.meeting.id];
+      if (!d) { d = docs[c.meeting.id] = { at: c.at, meeting: c.meeting, n: 0, first: c }; out.push(d); }
+      d.n++;
+      if (c.at > d.at) d.at = c.at;
+      return;
+    }
+    out.push({ at: c.at, meeting: c.meeting, text: changeText(c) });
+  });
+  out.forEach(function (u) { if (u.n) u.text = u.n === 1 ? changeText(u.first) : u.n + " documents added or updated"; });
+  return out.sort(function (a, b) { return b.at.localeCompare(a.at); });
+}
 function loadUpdates() {
   var box = document.getElementById("updates");
-  return api("GET", "/api/changes?limit=" + (muni ? 60 : 15)).then(function (cs) {
+  return api("GET", "/api/changes?limit=" + (muni ? 100 : 60)).then(function (cs) {
     if (muni) cs = cs.filter(function (c) { return c.meeting.source === muni; });
-    cs = cs.slice(0, 15);
-    if (!cs.length) { fill(box, el("div", { "class": "empty", text: "Nothing has changed lately." })); return; }
-    fill.apply(null, [box].concat(cs.map(function (c) {
-      return el("div", { "class": "upd" }, el("span", { "class": "w", text: ago(c.at) }),
-        el("span", {}, c.meeting.source && !muni ? el("span", { "class": "src", text: c.meeting.source + " · " }) : null,
-          el("a", { href: "/m/" + encodeURIComponent(c.meeting.id), text: c.meeting.title }), ": " + changeText(c)));
+    var ups = groupUpdates(cs).slice(0, 10);
+    if (!ups.length) { fill(box, el("div", { "class": "empty", text: "Nothing has changed lately." })); return; }
+    fill.apply(null, [box].concat(ups.map(function (u) {
+      return el("div", { "class": "upd" }, el("span", { "class": "w", text: ago(u.at) }),
+        el("span", {}, u.meeting.source && !muni ? el("span", { "class": "src", text: u.meeting.source + " · " }) : null,
+          el("a", { href: "/m/" + encodeURIComponent(u.meeting.id), text: u.meeting.title }), ": " + u.text));
     })));
   }, function (e) { offline(box, e); });
 }
@@ -182,6 +205,8 @@ function onFilter() { clearTimeout(timer); timer = setTimeout(function () { load
 document.getElementById("f-q").addEventListener("input", onFilter);
 document.getElementById("more").addEventListener("click", function () { loadPast(true); });
 
+// On a phone the updates start closed: the meetings come first.
+if (window.matchMedia && window.matchMedia("(max-width: 900px)").matches) document.getElementById("updbox").open = false;
 renderMe(document.getElementById("me"), false);
 loadUpcoming(); loadPast(false); loadUpdates();
 setInterval(function () { if (!document.hidden) { loadUpcoming(); loadUpdates(); } }, 30000);

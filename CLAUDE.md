@@ -174,6 +174,15 @@ captures).
   (`.tline.same`, shown again while searching); the transcript note is
   plain and the model/diarization detail is a disclosure. Narrow screens:
   brand and sign-in on one row, nav below (`common.ts` header CSS).
+  Batch 3: headings and pills are sentence case (no tracked uppercase); the
+  nav item is "For developers" (was "Embed & API"); `renderFooter()` (in
+  `renderMe`, public pages only) adds a footer, with "Report a mistake" when
+  `CONTACT_URL` is set (`__CONTACT__` is filled per page like `__TZ__`);
+  home updates are grouped (`groupUpdates`: documents of one meeting are one
+  line, "transcription started" is dropped) and the box starts closed on a
+  phone; cancelled / not recorded cards read quieter (`.mcard.quiet`);
+  `/search` has example chips, a municipality filter (`/api/search?source=`)
+  and the badge on each hit.
 - Scale (`docs/scaling.md`, `test/scale.test.ts`, 3000 meetings): `serve.ts`
   keeps the recordings list and the public model in snapshots (rebuilt on
   `Meetings.version` / `Scheduler.version` changes, after any write request,

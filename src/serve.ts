@@ -150,6 +150,8 @@ export interface ServeOpts extends Omit<SchedulerOpts, "entry"> {
   trustedProxies?: string;
   /** Outgoing mail (mail.ts). Without it, sign-up and password reset are off. */
   mailer?: Mailer | null;
+  /** Where a reader reports a mistake (a `mailto:` or https address): shown in every page's footer when set. */
+  contactUrl?: string;
   /** The site's address, for links in emails and in page metadata (canonical, previews, oEmbed). */
   publicUrl?: string;
   /** Download speed caps in bytes/second (#36; throttle.ts): all API downloads together, and each token. 0 or unset = unlimited. */
@@ -485,7 +487,7 @@ export function createApp(o: ServeOpts, entry: string): App {
   }
 
   const pages = Object.fromEntries(Object.entries({ public: PUBLIC_PAGE, admin: ADMIN_PAGE, login: LOGIN_PAGE, feeds: FEEDS_PAGE, meeting: MEETING_PAGE, embed: EMBED_PAGE, embedlist: EMBED_LIST_PAGE, search: SEARCH_PAGE, stop: STOP_PAGE }).map(([k, html]) => {
-    const body = html.replace("__TZ__", JSON.stringify(o.tz));
+    const body = html.replace("__TZ__", JSON.stringify(o.tz)).replace("__CONTACT__", () => JSON.stringify(o.contactUrl ?? "").replace(/</g, "\\u003c"));
     return [k, { body, csp: pageCsp(body) }];
   })) as Record<"public" | "admin" | "login" | "feeds" | "meeting" | "embed" | "embedlist" | "search" | "stop", { body: string; csp: string }>;
   const sendPage = (res: http.ServerResponse, p: { body: string; csp: string }) =>
@@ -897,16 +899,16 @@ export function createApp(o: ServeOpts, entry: string): App {
           const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s ?? "");
           return m ? zonedTime(o.tz, +m[1], +m[2], +m[3] + plus) : undefined;
         };
-        const from = day(sp.get("from")), to = day(sp.get("to"), 1), body = sp.get("body")?.slice(0, 100).toLowerCase();
+        const from = day(sp.get("from")), to = day(sp.get("to"), 1), body = sp.get("body")?.slice(0, 100).toLowerCase(), source = sp.get("source")?.slice(0, 100).toLowerCase();
         syncSearch();
         const site = publicSite();
         const eligible = site.entries.filter((e) => e.rec?.public && e.rec.files.transcript
-          && (!body || (e.m.body ?? "").toLowerCase() === body) && (!from || Date.parse(e.m.start) >= from.getTime()) && (!to || Date.parse(e.m.start) < to.getTime()));
+          && (!body || (e.m.body ?? "").toLowerCase() === body) && (!source || (e.p.source ?? "").toLowerCase() === source) && (!from || Date.parse(e.m.start) >= from.getTime()) && (!to || Date.parse(e.m.start) < to.getTime()));
         const byId = new Map(eligible.map((e) => [e.m.id, e]));
         const r = search.search(q, { meetingIds: [...byId.keys()], limit: int(sp.get("limit"), 20, 1, 50), offset: Math.max(Number.parseInt(sp.get("offset") ?? "", 10) || 0, 0) });
         return send(res, 200, { query: q, terms: r.terms, total: r.total, hits: r.hits.flatMap((h) => {
           const e = byId.get(h.meetingId);
-          return e ? [{ meeting: { id: e.p.id, title: e.p.title, body: e.p.body, source: e.p.source, start: e.p.start }, t: Math.floor(h.start), speaker: h.speaker || null, parts: h.parts,
+          return e ? [{ meeting: { id: e.p.id, title: e.p.title, body: e.p.body, source: e.p.source, sourceColor: e.p.sourceColor, start: e.p.start }, t: Math.floor(h.start), speaker: h.speaker || null, parts: h.parts,
             url: `/m/${encodeURIComponent(e.p.id)}?t=${Math.floor(h.start)}` }] : [];
         }) });
       }

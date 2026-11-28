@@ -20,11 +20,16 @@ export const SEARCH_PAGE = String.raw`<!doctype html>
 <style>
 ${BASE_CSS}
 ${PUBLIC_CSS}
-.sform { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; }
+.sform { display: grid; grid-template-columns: 1fr 1fr 1fr 1fr; gap: 8px; }
 .sform .q { grid-column: 1 / -1; display: flex; gap: 8px; }
 .sform .q input { flex: 1; font-size: 16px; padding: 10px 12px; }
 .sform .q button { padding: 10px 16px; }
-@media (max-width: 600px) { .sform { grid-template-columns: 1fr 1fr; } .sform select { grid-column: 1 / -1; } }
+@media (max-width: 800px) { .sform { grid-template-columns: 1fr 1fr; } }
+@media (max-width: 480px) { .sform select { grid-column: 1 / -1; } }
+.tryrow { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 12px; }
+.tryrow[hidden] { display: none; }
+.tryrow .lab { color: var(--muted); font-size: 13px; }
+.hit .m .muni { margin-right: 6px; }
 .hit { border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; }
 .hit a.t { font-weight: 600; overflow-wrap: anywhere; }
 .hit .m { color: var(--muted); font-size: 13px; margin: 2px 0 6px; }
@@ -43,10 +48,12 @@ mark { background: color-mix(in srgb, var(--accent) 28%, transparent); color: in
     <h2>Search what was said</h2>
     <form class="sform" id="sform" action="/search" method="get" role="search">
       <div class="q"><input id="q" name="q" type="search" placeholder="e.g. budget amendment, &quot;public hearing&quot;, zoning" aria-label="Search transcripts" autocomplete="off" required maxlength="200"><button class="primary" type="submit" style="margin-top:0;width:auto">Search</button></div>
+      <select id="source" name="source" aria-label="Municipality"><option value="">All municipalities</option></select>
       <select id="body" name="body" aria-label="Body"><option value="">All bodies</option></select>
       <input id="from" name="from" type="date" aria-label="From date">
       <input id="to" name="to" type="date" aria-label="To date">
     </form>
+    <div class="tryrow" id="tryrow"><span class="lab">Try</span></div>
     <div class="hint" id="tips">Words must all appear (the last one can be a start of a word). Put a phrase in "quotes". Searches machine-made transcripts, so a name may be spelled differently: check the video.</div>
   </section>
   <section id="results" hidden>
@@ -67,8 +74,9 @@ var P = new URLSearchParams(location.search), shown = 0, QS = "";
 function hitCard(h) {
   var text = el("div", { "class": "x" });
   h.parts.forEach(function (p) { text.appendChild(p.hit ? el("mark", { text: p.text }) : document.createTextNode(p.text)); });
-  var meta = [whenOf(h.meeting.start), h.meeting.source, h.meeting.body && h.meeting.body !== h.meeting.title ? h.meeting.body : null, "at " + hms(h.t), h.speaker].filter(Boolean).join(" · ");
-  return el("div", { "class": "hit" }, el("a", { "class": "t", href: h.url, text: h.meeting.title }), el("div", { "class": "m", text: meta }), text);
+  var meta = [whenOf(h.meeting.start), h.meeting.body && h.meeting.body !== h.meeting.title ? h.meeting.body : null, "at " + hms(h.t), h.speaker].filter(Boolean).join(" · ");
+  return el("div", { "class": "hit" }, el("a", { "class": "t", href: h.url, text: h.meeting.title }),
+    el("div", { "class": "m" }, h.meeting.source ? muniBadge(h.meeting) : null, meta), text);
 }
 
 function run(more) {
@@ -77,7 +85,7 @@ function run(more) {
   var box = document.getElementById("hits"), btn = document.getElementById("more");
   var offset = more ? shown : 0;
   var qs = "q=" + encodeURIComponent(q) + "&limit=20&offset=" + offset;
-  ["body", "from", "to"].forEach(function (k) { if (P.get(k)) qs += "&" + k + "=" + encodeURIComponent(P.get(k)); });
+  ["source", "body", "from", "to"].forEach(function (k) { if (P.get(k)) qs += "&" + k + "=" + encodeURIComponent(P.get(k)); });
   api("GET", "/api/search?" + qs).then(function (d) {
     document.getElementById("results").hidden = false;
     if (!more) fill(box);
@@ -114,11 +122,21 @@ function offerAlert() {
   }, function () {});
 }
 offerAlert();
-// The body filter's choices, then restore the chosen one and search.
+// Before a search there is nothing on the page: a few things people ask about at council, one click each.
+(function () {
+  var row = document.getElementById("tryrow");
+  if (P.get("q")) { row.hidden = true; return; }
+  ["budget", "housing", "public hearing", "zoning", "parks", "bylaw", "traffic"].forEach(function (w) {
+    row.appendChild(el("a", { "class": "chip", href: "/search?q=" + encodeURIComponent(w), text: w }));
+  });
+})();
+// The municipality and body filters' choices, then restore the chosen ones and search.
 api("GET", "/api/meetings?scope=past&limit=1").then(function (d) {
-  var sel = document.getElementById("body");
+  var sel = document.getElementById("body"), src = document.getElementById("source");
   d.bodies.forEach(function (b) { sel.appendChild(el("option", { value: b, text: b })); });
+  (d.sources || []).forEach(function (s) { src.appendChild(el("option", { value: s, text: s })); });
   if (P.get("body")) sel.value = P.get("body");
+  if (P.get("source")) src.value = P.get("source");
 }, function () {}).then(function () { run(false); });
 renderMe(document.getElementById("me"), false);
 </script>

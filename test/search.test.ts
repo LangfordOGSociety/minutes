@@ -166,6 +166,9 @@ describe("search through the server", () => {
     assert.deepEqual(h.parts.filter((p: { hit: boolean }) => p.hit).map((p: { text: string }) => p.text.toLowerCase()), ["harbour", "zoning"]);
     assert.equal(r.headers.get("access-control-allow-origin"), "*");
     assert.doesNotMatch(r.text, /secret|orphan|failed capture|manifest|pwd|zoom\.us|rec_slug|meeting_id/);
+    // By municipality: a meeting from no feed has none, so a named one matches nothing; a hit carries its badge color field.
+    assert.equal((await pub.get("/api/search?q=harbour&source=Langford")).json.total, 0);
+    assert.ok("sourceColor" in h.meeting);
     // The same through /api/v1, the one the docs describe.
     assert.equal((await pub.get("/api/v1/search?q=harbour")).json.total, 1);
     // Hidden by the admin: gone from the next search, not at the next index run.

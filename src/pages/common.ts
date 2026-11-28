@@ -29,6 +29,8 @@ header h1 { font-size: 18px; margin: 0; letter-spacing: -.01em; }
 header h1 a { color: inherit; text-decoration: none; }
 header .meta { color: var(--muted); font-size: 13px; }
 header .me { margin-left: auto; color: var(--muted); font-size: 13px; }
+#sitefoot { border-top: 1px solid var(--line); margin-top: 32px; padding: 20px 24px 28px; color: var(--muted); font-size: 13px; }
+#sitefoot .foot { max-width: 1050px; margin: 0 auto; } #sitefoot p { margin: 0 0 6px; max-width: 70ch; }
 nav.site { display: flex; gap: 4px; flex-wrap: wrap; }
 nav.site a { color: var(--ink); text-decoration: none; padding: 5px 10px; border-radius: 7px; font-size: 14px; }
 nav.site a:hover { background: var(--bg); }
@@ -37,7 +39,7 @@ nav.site a[aria-current] { background: var(--bg); font-weight: 600; box-shadow: 
 @media (max-width: 900px) { header { padding: 8px 16px; } header h1 { order: 1; } header .me { order: 2; flex: 1 1 auto; margin-left: auto; text-align: right; } nav.site { order: 3; flex-basis: 100%; flex-wrap: nowrap; overflow-x: auto; } nav.site a { white-space: nowrap; } }
 section { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; box-shadow: var(--shadow); padding: 16px; min-width: 0; }
 section + section { margin-top: 20px; }
-h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 0 0 12px; font-weight: 600; }
+h2 { font-size: 16px; color: var(--ink); margin: 0 0 12px; font-weight: 650; }
 label { display: block; font-size: 13px; font-weight: 600; margin: 10px 0 4px; }
 label small { font-weight: 400; color: var(--muted); }
 input, select { width: 100%; padding: 8px 10px; border: 1px solid var(--line); border-radius: 7px; background: var(--bg); color: var(--ink); font: inherit; }
@@ -56,7 +58,7 @@ button.danger { color: var(--bad); }
 .row .actions { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; min-width: 0; }
 .row .actions select { width: auto; max-width: 12rem; min-width: 0; }
 @media (max-width: 700px) { .row { grid-template-columns: minmax(0, 1fr); } .row .actions { justify-content: flex-start; } .row .actions select { max-width: 100%; } }
-.pill { display: inline-block; font-size: 11px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase;
+.pill { display: inline-block; font-size: 12px; font-weight: 600;
   padding: 2px 7px; border-radius: 999px; border: 1px solid currentColor; margin-right: 6px; vertical-align: 1px; }
 .s-scheduled, .s-queued { color: var(--accent); } .s-running, .s-live { color: var(--live); } .s-stopping { color: var(--warn); }
 .s-done, .s-ended { color: var(--ok); } .s-failed, .s-blocked, .s-interrupted, .s-invalid_link, .s-email_required { color: var(--bad); } .s-cancelled, .s-stopped { color: var(--muted); }
@@ -76,7 +78,7 @@ a { color: var(--accent); }
 .links { font-size: 14px; }
 .transcript { margin-top: 14px; }
 .thead { display: flex; gap: 10px; align-items: center; justify-content: space-between; flex-wrap: wrap; margin-bottom: 8px; }
-.thead h4 { margin: 0; font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
+.thead h4 { margin: 0; font-size: 15px; color: var(--ink); font-weight: 650; }
 .thead input { width: auto; flex: 1 1 200px; max-width: 320px; padding: 6px 10px; }
 .tlist { max-height: min(62vh, 560px); overflow: auto; border: 1px solid var(--line); border-radius: 8px; }
 .tline { display: grid; grid-template-columns: 4.2em minmax(0, 9em) 1fr; gap: 10px; width: 100%; text-align: left;
@@ -101,6 +103,7 @@ a { color: var(--accent); }
 
 /** Helpers. Needs a global TZ (server timezone) defined before it. */
 export const BASE_JS = String.raw`
+var CONTACT = __CONTACT__;   // where to report a mistake (CONTACT_URL), or ""
 function el(tag, attrs) {
   var e = document.createElement(tag);
   if (attrs) for (var k in attrs) {
@@ -156,7 +159,7 @@ function api(method, url, body, signIn) {
 // holds who is signed in and the account links.
 var NAV = [["Meetings", "/", function (p) { return p === "/" || p.indexOf("/m/") === 0; }],
   ["Search", "/search", function (p) { return p === "/search"; }],
-  ["Embed & API", "/account#embed", function (p) { return p === "/account"; }]];
+  ["For developers", "/account#embed", function (p) { return p === "/account"; }]];
 function siteNav(box, extra) {
   var nav = document.getElementById("sitenav");
   if (!nav) { nav = el("nav", { "class": "site", id: "sitenav", "aria-label": "Site" }); box.parentNode.insertBefore(nav, box); }
@@ -164,8 +167,19 @@ function siteNav(box, extra) {
   var items = NAV.map(function (n) { return [n[0], n[1], n[2](p)]; }).concat(extra || []);
   fill.apply(null, [nav].concat(items.map(function (n) { return el("a", { href: n[1], text: n[0], "aria-current": n[2] ? "page" : null }); })));
 }
+// The page's foot: what the site is, where the data and the embeds are, and (if the operator set one) where to report a mistake.
+function renderFooter() {
+  if (document.getElementById("sitefoot")) return;
+  var links = [el("a", { href: "/search", text: "Search transcripts" }), el("a", { href: "/account#embed", text: "Embed and API for developers" }), el("a", { href: "/api/docs", text: "API documentation" })];
+  if (CONTACT) links.push(el("a", { href: CONTACT, text: "Report a mistake" }));
+  var nav = el("div", { "class": "footlinks" });
+  links.forEach(function (a, i) { if (i) nav.appendChild(document.createTextNode(" · ")); nav.appendChild(a); });
+  document.body.appendChild(el("footer", { id: "sitefoot" },
+    el("div", { "class": "foot" }, el("p", { text: "Public meetings of the municipalities listed here, recorded and transcribed automatically. Transcripts can contain mistakes: check the video before quoting." }), nav)));
+}
 function renderMe(box, admin) {
   siteNav(box);
+  if (!admin) renderFooter();
   api("GET", "/api/me").then(function (d) {
     var u = d.user;
     var isAdmin = !!u && u.caps.indexOf("admin.view") >= 0;
@@ -423,6 +437,9 @@ main { max-width: 1100px; margin: 0 auto; padding: 12px 24px 40px; }
 .mh .pill { margin: 0; }
 .muni { font-size: 12px; font-weight: 700; padding: 2px 8px; border-radius: 999px; background: var(--accent); color: var(--accent-ink); }
 .mcard .t { font-weight: 600; overflow-wrap: anywhere; }
+/* A meeting with nothing to watch (cancelled, not recorded) reads quieter than one with a video. */
+.mcard.quiet { background: transparent; }
+.mcard.quiet .t { font-weight: 500; color: var(--muted); }
 .mcard .s { color: var(--muted); font-size: 13px; margin-top: 2px; overflow-wrap: anywhere; }
 .s-upcoming { color: var(--accent); } .s-processing { color: var(--warn); } .s-ready { color: var(--ok); }
 .s-nofile { color: var(--muted); }
@@ -505,7 +522,8 @@ function muniBadge(m) {
 
 function meetingCard(m) {
   var sub = [whenOf(m.start), m.body && m.body !== m.title ? m.body : null, m.duration ? hms(m.duration) : null].filter(Boolean).join(" · ");
-  return el("a", { "class": "mcard", href: "/m/" + encodeURIComponent(m.id) },
+  var quiet = m.stage === "cancelled" || m.stage === "not_recorded" || m.stage === "failed";
+  return el("a", { "class": "mcard" + (quiet ? " quiet" : ""), href: "/m/" + encodeURIComponent(m.id) },
     m.poster ? el("img", { "class": "p", src: m.poster, alt: "", loading: "lazy", width: "128", height: "72" }) : null,
     el("div", { "class": "b" },
       el("div", { "class": "mh" }, m.source ? muniBadge(m) : null, stagePill(m.stage)),
