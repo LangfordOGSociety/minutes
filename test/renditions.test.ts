@@ -8,7 +8,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { describe, it, type TestContext } from "node:test";
 import { publicFiles, toPublic } from "../src/recordings.js";
-import { Renditions, planHeights, renditionFile } from "../src/renditions.js";
+import { Renditions, planHeights, renditionFile, targetKbps } from "../src/renditions.js";
 import { fixtures, makeRecording } from "./fixtures.js";
 import { need, tmpDir, type HasAfter } from "./helpers.js";
 import { Client, startApp } from "./server.js";
@@ -29,6 +29,12 @@ describe("renditions", () => {
     assert.deepEqual(planHeights(480, [720, 480, 360]), [360]);
     assert.deepEqual(planHeights(360, [720, 480, 360]), []);
     assert.equal(renditionFile("council-a", 720), "council-a.720p.mp4");
+    // A source already at a ladder height gets a copy of that height only when it is far heavier than ours would be.
+    assert.deepEqual(planHeights(720, [720, 480, 360], 2500), [720, 480, 360], "a 2.5 Mbps 720p stream");
+    assert.deepEqual(planHeights(720, [720, 480, 360], 600), [480, 360], "already light");
+    assert.deepEqual(planHeights(720, [720, 480, 360], null), [480, 360], "rate unknown");
+    assert.deepEqual(planHeights(1080, [720, 480, 360], 100000), [720, 480, 360], "1080p never gets a 1080p copy");
+    assert.equal(targetKbps(720), 350);
   });
 
   it("makes them with ffmpeg, once, and not while a capture needs the machine", { skip: ffmpeg }, async (t) => {

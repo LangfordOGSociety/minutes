@@ -36,15 +36,27 @@ export function audioArgs(height: number): string[] {
   return ["-c:a", "aac", "-b:a", height >= 720 ? "96k" : "64k", "-ac", "2"];
 }
 
-/** Which of the ladder's heights a source of this height should get: only smaller ones, a copy as big as the original has no point. */
-export function planHeights(sourceHeight: number, ladder: number[]): number[] {
-  return ladder.filter((h) => h < sourceHeight - 8);
+/** About what our copy of a given height costs (video, kbps) on a slides-and-speaker meeting: 720p ~350, scaling with the picture's area. */
+export const targetKbps = (height: number): number => Math.round(350 * (height / 720) ** 2);
+
+/** Which of the ladder's heights a source should get: every smaller one, and one at the source's own height when the source
+ *  is much bigger than our copy would be (a city's 2.5 Mbps 720p stream: viewers at 720p should not have to download that). */
+export function planHeights(sourceHeight: number, ladder: number[], sourceKbps: number | null = null): number[] {
+  return ladder.filter((h) => h < sourceHeight - 8 || (Math.abs(h - sourceHeight) <= 8 && sourceKbps !== null && sourceKbps > targetKbps(h) * 2.5));
 }
 
-function probeHeight(file: string): Promise<number | null> {
+/** Height and video bit rate of the first video stream (the rate from the stream, else the file's size over its length, less 128 kbps of sound). */
+function probeVideo(file: string, bytes: number, durationS: number | null): Promise<{ height: number; kbps: number | null } | null> {
   return new Promise((resolve) => {
-    execFile("ffprobe", ["-v", "error", "-select_streams", "v:0", "-show_entries", "stream=height", "-of", "csv=p=0", file], { timeout: 30_000 },
-      (err, out) => { const h = Number.parseInt(String(out).trim(), 10); resolve(err || !(h > 0) ? null : h); });
+    execFile("ffprobe", ["-v", "error", "-select_streams", "v:0", "-show_entries", "stream=height,bit_rate", "-of", "csv=p=0", file], { timeout: 30_000 },
+      (err, out) => {
+        const [h, br] = String(out).trim().split(",");
+        const height = Number.parseInt(h, 10);
+        if (err || !(height > 0)) { resolve(null); return; }
+        const rate = Number.parseInt(br, 10);
+        const kbps = rate > 0 ? rate / 1000 : durationS && durationS > 0 ? Math.max(bytes * 8 / durationS / 1000 - 128, 0) : null;
+        resolve({ height, kbps });
+      });
   });
 }
 
@@ -71,9 +83,9 @@ export class Renditions {
         try { bytes = statSync(file).size; } catch { continue; }
         const key = `${bytes}:${t.have.join(",")}`;
         if (this.settled.get(t.slug) === key) continue;
-        const h = await probeHeight(file);
-        if (!h) { this.failed.set(`${t.slug}`, now); continue; }
-        const want = planHeights(h, this.ladder).filter((x) => !t.have.includes(x));
+        const v = await probeVideo(file, bytes, t.duration);
+        if (!v) { this.failed.set(`${t.slug}`, now); continue; }
+        const want = planHeights(v.height, this.ladder, v.kbps).filter((x) => !t.have.includes(x));
         if (!want.length) { this.settled.set(t.slug, key); continue; }
         for (const height of want) {
           if (stop()) return made;

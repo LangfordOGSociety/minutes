@@ -274,6 +274,12 @@ captures).
   player's Quality menu (`play()` in common.ts: Auto / Original / sizes,
   `localStorage` minutes.quality, Auto steps down after stalls) works in
   embeds too. Why MP4 + H.264, not HLS or AV1: `docs/streaming-quality.md`.
+  A source at a ladder height also gets a same-height copy when its video
+  rate is > 2.5x `targetKbps(height)` (a 2.5 Mbps Granicus 720p import).
+  `src/parts.ts`: `KEEP_PARTS_DAYS` (off by default) deletes
+  `part_NNN.mkv` of a finished capture once the MP4 is that old, its length
+  matches the manifest's offsets and its size is within 3% of the parts'
+  (a stream copy; a re-encoded stitch keeps its parts). Audited.
 - `src/speakers.ts` speaker names added by hand. `<slug>/speaker-names.json`
   maps the transcriber's label ("Speaker 4", or a Zoom name) to a name;
   APPLIED WHEN SERVING (public /media, /admin/media and the API's file
