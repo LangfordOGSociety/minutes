@@ -81,10 +81,12 @@ export class Search {
   /**
    * Bring the index in step with these transcripts: index new or changed
    * files, drop what's no longer there. `items` are every recording that
-   * has a transcript on disk.
+   * has a transcript on disk. With a budget, stops after the first indexed transcript that takes it past
+   * the budget (more = true: call again; nothing is dropped until a pass has seen every transcript).
    */
-  sync(items: { recSlug: string; meetingId: string; file: string; namesFile?: string }[], now = new Date()): { indexed: number; removed: number } {
+  sync(items: { recSlug: string; meetingId: string; file: string; namesFile?: string }[], now = new Date(), budgetMs = Infinity): { indexed: number; removed: number; more: boolean } {
     let indexed = 0, removed = 0;
+    const t0 = performance.now();
     const have = new Map((this.db.prepare("SELECT rec_slug, meeting_id, size, mtime_ms, names_mtime_ms FROM transcript_index").all() as { rec_slug: string; meeting_id: string; size: number; mtime_ms: number; names_mtime_ms: number }[])
       .map((r) => [r.rec_slug, r]));
     const live = new Set<string>();
@@ -107,6 +109,8 @@ export class Search {
           .run(it.recSlug, it.meetingId, st.size, Math.round(st.mtimeMs), ps.length, now.toISOString(), namesStamp);
       });
       indexed++;
+      // Out of time for this slice (a first pass over thousands of transcripts): the caller comes back for the rest.
+      if (performance.now() - t0 > budgetMs) return { indexed, removed, more: true };
     }
     for (const slug of have.keys()) {
       if (live.has(slug)) continue;
@@ -116,7 +120,7 @@ export class Search {
       });
       removed++;
     }
-    return { indexed, removed };
+    return { indexed, removed, more: false };
   }
 
   /** Passages matching `q`, best first, only in the given meetings. */

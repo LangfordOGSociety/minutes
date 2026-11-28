@@ -81,7 +81,7 @@ export function visible(m: Meeting): boolean {
 }
 
 /** Where a meeting is, for the page's "stage". */
-export function stageOf(m: Meeting, jobs: Job[], rec: Recording | undefined, now: number): Stage {
+export function stageOf(m: Meeting, jobs: readonly Job[], rec: Recording | undefined, now: number): Stage {
   if (m.status === "cancelled") return "cancelled";
   // A finished video being imported (a Granicus clip) isn't a meeting in progress, whatever its date: it is being processed.
   const running = jobs.filter((j) => j.status === "running" || j.status === "stopping");
@@ -138,7 +138,7 @@ function teamsJoin(m: Meeting): PublicJoin | null {
   return null;
 }
 
-export function toPublicMeeting(m: Meeting, jobs: Job[], rec: Recording | undefined, now: number, copies?: Map<string, string>, source?: string | null, sourceColor?: string | null): PublicMeeting {
+export function toPublicMeeting(m: Meeting, jobs: readonly Job[], rec: Recording | undefined, now: number, copies?: Map<string, string>, source?: string | null, sourceColor?: string | null): PublicMeeting {
   const stage = stageOf(m, jobs, rec, now);
   return {
     id: m.slug, title: m.title, body: m.body ?? null, start: m.start, end: m.endEst ?? null, stage,
@@ -154,7 +154,7 @@ export function toPublicMeeting(m: Meeting, jobs: Job[], rec: Recording | undefi
 }
 
 /** The recording to show for a meeting: the latest capture with a video, else the latest with a folder. */
-export function recordingOf(jobs: Job[], recs: Map<string, Recording>): Recording | undefined {
+export function recordingOf(jobs: readonly Job[], recs: Map<string, Recording>): Recording | undefined {
   const mine = jobs.map((j) => recs.get(j.slug)).filter((r): r is Recording => !!r);
   return [...mine].reverse().find((r) => r.video) ?? mine.at(-1);
 }

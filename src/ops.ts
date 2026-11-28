@@ -45,7 +45,10 @@ export class Ops {
   constructor(private db: DB, private o: { notify: Notifier; site: string; titleOf(job: Job): string; platformOf(job: Job): string }) {}
 
   /** True the first time for a key (and records it). */
+  private seen = new Set<string>();   // keys already recorded: a pass over every recording costs no queries for the ones done long ago
   private once(key: string, now = new Date()): boolean {
+    if (this.seen.has(key)) return false;
+    this.seen.add(key);
     return Number(this.db.prepare("INSERT OR IGNORE INTO ops_notified (key, at) VALUES (?, ?)").run(key, now.toISOString()).changes) > 0;
   }
 

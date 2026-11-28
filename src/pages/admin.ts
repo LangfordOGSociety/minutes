@@ -247,6 +247,10 @@ function renderRecs(recs) {
     box.appendChild(el("div", { "class": "row" + (selectedRec === r.slug ? " selected" : "") },
       el("div", { "class": "title" }, pill(status), r.slug), actions, el("div", { "class": "sub", text: sub }), panel));
   });
+  if (recTotal > recs.length) {
+    box.appendChild(el("div", { "class": "row" }, el("div", { "class": "sub", text: "Showing the latest " + recs.length + " of " + recTotal + " recordings. " }),
+      el("button", { text: "Show more", on: { click: function () { recLimit += 50; refresh(); } } })));
+  }
 }
 
 // Who the transcriber's "Speaker N" voices are, by hand. Names show on every transcript view, public too.
@@ -352,9 +356,20 @@ function refreshLogin() { return aapi("GET", "/api/admin/session").then(renderLo
 
 function cancel(id) { aapi("DELETE", "/api/admin/jobs/" + id).then(refresh, function (e) { alert(e.message); }); }
 
+// The lists are bounded (the latest few captures, the latest recordings): "Show more" asks for more.
+var recLimit = 50, recTotal = 0;
+function listApi(url) {
+  return fetch(url).then(function (r) {
+    if (r.status === 401) { location.reload(); throw new Error("sign in first"); }
+    return r.json().then(function (d) {
+      if (!r.ok) throw new Error((d && d.error) || ("HTTP " + r.status));
+      return { rows: d, total: Number(r.headers.get("X-Total-Count")) || d.length };
+    });
+  });
+}
 function refresh() {
-  return Promise.all([aapi("GET", "/api/admin/jobs"), aapi("GET", "/api/admin/recordings")])
-    .then(function (d) { lastRecs = d[1]; renderJobs(d[0]); renderRecs(d[1]); renderOverview(); refreshLogin(); if (!auditOlder) loadAudit(); })
+  return Promise.all([aapi("GET", "/api/admin/jobs?limit=20"), listApi("/api/admin/recordings?limit=" + recLimit)])
+    .then(function (d) { lastRecs = d[1].rows; recTotal = d[1].total; renderJobs(d[0]); renderRecs(d[1].rows); renderOverview(); refreshLogin(); if (!auditOlder) loadAudit(); })
     .catch(function (e) { fill(document.getElementById("jobs"), el("div", { "class": "empty", text: "Can't reach the server: " + e.message })); });
 }
 

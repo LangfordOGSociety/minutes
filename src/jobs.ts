@@ -151,6 +151,7 @@ export class Scheduler {
   /** Write these jobs to the database (one transaction), then refresh
    *  active.json. Call after every change to a job. */
   private save(...jobs: Job[]): void {
+    this.touch();
     if (jobs.length) {
       const st = this.db.prepare(UPSERT);
       tx(this.db, () => { for (const j of jobs) st.run(toRow(j)); });
@@ -167,6 +168,31 @@ export class Scheduler {
   }
 
   list(): Job[] { return this.jobs.map((j) => ({ ...j })); }
+
+  /** Bumps whenever a job is added, changed or removed (a cache of anything derived from jobs is stale once it moves). */
+  version = 0;
+  private idx: { byMeeting: Map<string, Job[]>; bySlug: Map<string, Job> } | null = null;
+  private touch(): void { this.idx = null; this.version++; }
+  private index() {
+    if (!this.idx) {
+      const byMeeting = new Map<string, Job[]>(), bySlug = new Map<string, Job>();
+      for (const j of this.jobs) {
+        const l = byMeeting.get(j.meetingRef);
+        if (l) l.push(j); else byMeeting.set(j.meetingRef, [j]);
+        bySlug.set(j.slug, j);   // the latest attempt with a folder name
+      }
+      this.idx = { byMeeting, bySlug };
+    }
+    return this.idx;
+  }
+  /** A meeting's attempts, oldest first, without copying. Read-only: never change what comes back. */
+  jobsOf(meetingId: string): readonly Job[] { return this.index().byMeeting.get(meetingId) ?? []; }
+  /** The latest attempt with this folder name (read-only, like jobsOf). */
+  jobBySlug(slug: string): Job | undefined { return this.index().bySlug.get(slug); }
+  /** Folder names of captures running now, in one pass. */
+  activeSlugs(): Set<string> {
+    return new Set(this.jobs.filter((j) => ["scheduled", "queued", "running", "stopping"].includes(j.status)).map((j) => j.slug));
+  }
   get(id: string): Job | undefined { return this.jobs.find((j) => j.id === id); }
   displayOf(id: string): string | null {
     const r = this.running.get(id);
@@ -226,7 +252,7 @@ export class Scheduler {
       this.save(job);
       return job;
     });
-    this.jobs.push(job);
+    this.jobs.push(job); this.touch();
     this.writeActive();
     log.info(`scheduled ${slug} for ${job.start}`);
     void this.tick();
@@ -307,6 +333,7 @@ export class Scheduler {
       this.meetings.delete(id);
     });
     this.jobs = this.jobs.filter((j) => j.meetingRef !== id);
+    this.touch();
     this.writeActive();
   }
 
@@ -334,7 +361,7 @@ export class Scheduler {
       status: "scheduled", createdAt: now,
     };
     this.save(job);
-    this.jobs.push(job);
+    this.jobs.push(job); this.touch();
     this.writeActive();
     log.info(`another attempt at ${m.slug}: ${slug} for ${job.start}`);
     void this.tick();
@@ -343,7 +370,7 @@ export class Scheduler {
 
   /** The meeting's capture that's scheduled, queued, running or stopping. */
   activeJobFor(meetingId: string): Job | undefined {
-    return this.jobs.find((j) => j.meetingRef === meetingId && ["scheduled", "queued", "running", "stopping"].includes(j.status));
+    return this.jobsOf(meetingId).find((j) => ["scheduled", "queued", "running", "stopping"].includes(j.status));
   }
 
   /** A capture for an existing meeting (from a feed, or approved from the
@@ -367,7 +394,7 @@ export class Scheduler {
     const now = new Date().toISOString();
     const job: Job = { id: randomUUID(), meetingRef: m.id, link: m.link, start: m.start, slug, name, status: "scheduled", createdAt: now };
     this.save(job);
-    this.jobs.push(job);
+    this.jobs.push(job); this.touch();
     this.writeActive();
     log.info(`scheduled ${slug} for ${job.start} (meeting ${m.title})`);
     void this.tick();
