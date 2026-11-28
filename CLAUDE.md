@@ -156,6 +156,15 @@ captures).
   first) with an embed builder; `/admin` is tabs (`#overview` default,
   `#captures #recordings #people #audit`, Feeds is its own page);
   `/embed/upcoming` (`pages/embedlist.ts`) is the framable upcoming list.
+  Review 2026-11-28 quick fixes: the public history never lists a "Join
+  link" document and drops add/remove flaps of one document within 24 h
+  (`site.ts collapseDocFlaps`); history and "From the city" show document
+  titles, not the feed's type names; an upcoming card has no "Upcoming"
+  pill; admin captures/recordings are named `source: title` (folder name as
+  tooltip and small text; `jobView`/`recView` in serve.ts); the admin's
+  join-link chip sees a Teams link kept as a document; the Feeds page lists
+  a meeting under review only in the review queue; "Same as..." is
+  "Merge into...".
 - Scale (`docs/scaling.md`, `test/scale.test.ts`, 3000 meetings): `serve.ts`
   keeps the recordings list and the public model in snapshots (rebuilt on
   `Meetings.version` / `Scheduler.version` changes, after any write request,

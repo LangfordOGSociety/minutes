@@ -10,7 +10,7 @@ import type { Job } from "../src/jobs.js";
 import type { Meeting } from "../src/meetings.js";
 import type { Recording } from "../src/recordings.js";
 import { embedAncestors } from "../src/net.js";
-import { isUpcoming, joinOf, toPublicMeeting, stageOf, visible, type PublicMeeting } from "../src/site.js";
+import { collapseDocFlaps, isUpcoming, joinOf, publicChange, toPublicMeeting, stageOf, visible, type PublicMeeting } from "../src/site.js";
 import { tmpDir, type HasAfter } from "./helpers.js";
 import { fakeSource, fixtures } from "./fixtures.js";
 import { Client, startApp } from "./server.js";
@@ -385,6 +385,35 @@ describe("permalinks, embeds and oEmbed", () => {
     assert.equal(app.sched.meetings.get(hand.id), undefined);
     assert.equal((await pub.get("/api/meetings/by-hand")).status, 404);
     assert.equal((await admin.req("DELETE", url)).status, 404);
+  });
+
+  it("history: a join link is not a document that came and went, and a flickering document is not news", () => {
+    const at = (n: number) => new Date(Date.parse("2026-11-27T09:00:00Z") + n * 3_600_000).toISOString();
+    const ch = (kind: string, n: number, title: string, type = "AdditionalDocuments") => ({ at: at(n), kind, meetingId: "m", before: null, after: { title, type, url: "https://city.example/" + title }, effect: "" }) as unknown as Parameters<typeof publicChange>[0];
+    const m = { slug: "council", title: "Council" };
+    assert.equal(publicChange(ch("document_added", 0, "Join on Microsoft Teams", "Join link"), m), null);
+    assert.equal(publicChange(ch("document_added", 0, "Agenda (PDF)", "Agenda"), m)?.doc?.title, "Agenda (PDF)");
+    const mk = (kind: string, n: number, title: string) => publicChange(ch(kind, n, title), m)!;
+    // Added, removed, added again within a day: the first two cancel out, the last stands. A removal after two days is real.
+    const list = [mk("document_added", 0, "Dial in"), mk("document_removed", 1, "Dial in"), mk("document_added", 2, "Dial in"), mk("document_added", 3, "Agenda"), mk("document_removed", 60, "Agenda")];
+    assert.deepEqual(collapseDocFlaps(list).map((c) => [c.kind, c.doc!.title]), [["document_added", "Dial in"], ["document_added", "Agenda"], ["document_removed", "Agenda"]]);
+    assert.deepEqual(collapseDocFlaps([mk("cancelled", 0, "x")]).length, 1);
+  });
+
+  it("the admin's lists name meetings by title and municipality, and see a Teams join link", async (t) => {
+    const { app, admin, mk, run, src } = await setup(t);
+    const feed = await mk("auto");
+    src.state.meetings = [{ id: "a", title: "Council Meeting", body: "Council", start: at(72), link: ZOOM }];
+    await run(feed);
+    const fm = app.sched.meetings.list().find((m) => m.feedId)!;
+    const jobs = (await admin.get("/api/admin/jobs")).json as { slug: string; title: string; source: string }[];
+    const job = jobs.find((j) => j.slug === fm.slug)!;
+    assert.deepEqual([job.title, job.source], ["Council Meeting", "Langford"]);
+    // A meeting with no Zoom link but a Teams join document: the admin sees a join link, not "no join link yet".
+    const hand = app.sched.meetings.create({ title: "Panel", platform: "", link: "", start: at(96), slug: "panel", feedId: feed.id,
+      documents: [{ title: "Join on Microsoft Teams", type: "Join link", url: "https://teams.microsoft.com/meet/287377366632373?p=abc" }] });
+    const list = (await admin.get("/api/admin/meetings?view=upcoming")).json as { id: string; joinLink: { label: string; url: string; passcode: boolean } | null }[];
+    assert.deepEqual(list.find((m) => m.id === hand.id)!.joinLink, { label: "Microsoft Teams 287 377 366 632 373", url: "https://teams.microsoft.com/meet/287377366632373?p=abc", passcode: true });
   });
 });
 

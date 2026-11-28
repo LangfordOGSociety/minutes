@@ -287,12 +287,12 @@ function meetingRow(m, inQueue) {
     actions.appendChild(el("button", { text: "Approve", on: { click: act("approve") } }));
     actions.appendChild(el("button", { "class": "danger", text: "Reject", on: { click: act("reject") } }));
   }
-  if (!inQueue) {
-    if (m.duplicateOf) actions.appendChild(el("button", { text: "Split", on: { click: act("split") } }));
+  {
+    if (m.duplicateOf) { if (!inQueue) actions.appendChild(el("button", { text: "Split", on: { click: act("split") } })); }
     else {
       var near = MEETINGS.filter(function (x) { return x.id !== m.id && !x.duplicateOf && Math.abs(Date.parse(x.start) - Date.parse(m.start)) < 86400000; });
       if (near.length) {
-        var sel = el("select", { "aria-label": "Same meeting as" }, el("option", { value: "", text: "Same as..." }));
+        var sel = el("select", { "aria-label": "Merge into another meeting" }, el("option", { value: "", text: "Merge into..." }));
         near.forEach(function (x) { sel.appendChild(el("option", { value: x.id, text: x.title + " · " + fmt(x.start) + (x.feedName ? " · " + x.feedName : "") })); });
         sel.addEventListener("change", function () {
           if (sel.value && confirm("Treat " + m.title + " as the same meeting? It won't be captured itself.")) act("merge", { into: sel.value })();
@@ -301,11 +301,11 @@ function meetingRow(m, inQueue) {
         actions.appendChild(sel);
       }
     }
-    if (!m.duplicateOf) {
+    if (!m.duplicateOf && !inQueue) {
       actions.appendChild(el("button", { text: m.visibility === "hidden" ? "Show publicly" : "Hide", title: "Admin-only override: a hidden meeting is not on the public site",
         on: { click: act(m.visibility === "hidden" ? "show" : "hide") } }));
     }
-    actions.appendChild(el("button", { text: "History", on: { click: function () {
+    if (!inQueue) actions.appendChild(el("button", { text: "History", on: { click: function () {
       if (hist.childNodes.length) { fill(hist); return; }
       aapi("GET", "/api/admin/meetings/" + m.id + "/changes").then(function (cs) {
         fill(hist, cs.length ? changeTable(cs) : el("div", { "class": "hint", text: "No changes recorded." }));
@@ -343,13 +343,15 @@ function msgFor(m, text) {
 }
 function loadMeetings() {
   return Promise.all([aapi("GET", "/api/admin/meetings?view=upcoming"), aapi("GET", "/api/admin/meetings?view=review")]).then(function (d) {
-    MEETINGS = d[0];
+    MEETINGS = d[0];   // every upcoming meeting, for "Merge into..."
     var box = $("meetings"), q = $("review");
     fill(box); fill(q);
     if (!d[1].length) q.appendChild(el("div", { "class": "empty", text: "Nothing waiting for review." }));
     d[1].forEach(function (m) { q.appendChild(meetingRow(m, true)); });
-    if (!MEETINGS.length) box.appendChild(el("div", { "class": "empty", text: "No upcoming meetings." }));
-    MEETINGS.forEach(function (m) { box.appendChild(meetingRow(m, false)); });
+    // A meeting waiting for review is in the review queue above: it is not listed a second time here.
+    var listed = MEETINGS.filter(function (m) { return m.review !== "pending"; });
+    if (!listed.length) box.appendChild(el("div", { "class": "empty", text: "No other upcoming meetings." }));
+    listed.forEach(function (m) { box.appendChild(meetingRow(m, false)); });
   }).catch(function (e) { fill($("meetings"), el("div", { "class": "msg err", text: "Can't show meetings: " + e.message })); });
 }
 

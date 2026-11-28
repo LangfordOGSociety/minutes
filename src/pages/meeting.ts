@@ -235,11 +235,12 @@ function renderLinks(m) {
   var box = document.getElementById("links");
   var city = cityLinks(m);
   if (!city.length && !m.documents.length) { box.hidden = true; fill(box); return; }
-  var docs = m.documents.filter(function (d) { return d.url !== m.agendaUrl; });
+  // A document already linked above (the agenda, the meeting page, the video) is not listed again.
+  var docs = m.documents.filter(function (d) { return d.url !== m.agendaUrl && d.url !== m.pageUrl && d.url !== m.streamUrl; });
   fill(box, el("h2", { text: "From the city" }),
     city.length ? wrap("div", { "class": "linkrow" }, city) : null,
     docs.length ? wrap("ul", { "class": "docs" }, docs.map(function (d) {
-      return el("li", {}, ext(d.url, d.title), d.type ? el("span", { "class": "k", text: d.type }) : null,
+      return el("li", {}, ext(d.url, d.title),
         d.copy ? el("a", { "class": "k", href: d.copy, target: "_blank", rel: "noopener", text: "stored copy" }) : null);
     })) : null);
   box.hidden = false;

@@ -475,6 +475,7 @@ var STAGES = { upcoming: ["upcoming", "upcoming"], live: ["live", "live"], stitc
   video_ready: ["video", "ready"], ready: ["video + transcript", "ready"], failed: ["not recorded", "nofile"],
   not_recorded: ["not recorded", "nofile"], cancelled: ["cancelled", "cancelled"] };
 function stagePill(stage) {
+  if (stage === "upcoming") return null;   // the date and the "Upcoming" heading already say so; a pill is for what is different (live, cancelled, video)
   var s = STAGES[stage] || [stage, "nofile"];
   return el("span", { "class": "pill s-" + s[1], text: s[0] });
 }
@@ -500,7 +501,7 @@ function meetingCard(m) {
 }
 
 function changeText(c) {
-  var d = c.doc ? c.doc.title + (c.doc.type ? " (" + c.doc.type + ")" : "") : "";
+  var d = c.doc ? c.doc.title : "";   // the feed's own kind ("AgendaCover") is an internal label: the title says what it is
   switch (c.kind) {
     case "added": return "Announced for " + whenOf(c.to);
     case "date_changed": return "Moved from " + whenOf(c.from) + " to " + whenOf(c.to);

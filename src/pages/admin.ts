@@ -186,6 +186,9 @@ var selectedRec = null, watching = null, liveTimer = null, stopLive = null, last
 var MEDIA = "/admin/media/";
 function aapi(method, url, body) { return api(method, url, body, true); }
 
+// A capture or recording by what it is (municipality and title), not its folder name; the folder name stays as small text.
+function jobName(j) { return (j.source ? j.source + ": " : "") + (j.title || j.slug); }
+function recName(r) { return (r.source ? r.source + ": " : "") + (r.title && r.title !== r.slug ? r.title : r.slug); }
 var ACTIVE = { running: 0, stopping: 1, queued: 2, scheduled: 3 };
 function renderJobs(jobs) {
   lastJobs = jobs;
@@ -201,12 +204,12 @@ function renderJobs(jobs) {
     if (j.status === "running") {
       actions.appendChild(el("button", { text: watching === j.id ? "Watching" : "Watch", on: { click: function () { watch(j.id); } } }));
       actions.appendChild(el("button", { "class": "danger", text: "Stop", on: { click: function () {
-        if (confirm("Stop recording " + j.slug + "? What's been recorded so far is kept and stitched.")) cancel(j.id);
+        if (confirm("Stop recording " + jobName(j) + "? What's been recorded so far is kept and stitched.")) cancel(j.id);
       } } }));
     } else if (j.status === "scheduled" || j.status === "queued") {
       actions.appendChild(el("button", { text: editing && editing.id === j.id ? "Editing" : "Edit", on: { click: function () { startEdit(j); } } }));
       actions.appendChild(el("button", { "class": "danger", text: "Cancel", on: { click: function () {
-        if (confirm("Cancel " + j.slug + "?")) cancel(j.id);
+        if (confirm("Cancel the capture of " + jobName(j) + "?")) cancel(j.id);
       } } }));
     } else if (j.status !== "cancelled" && !jobs.some(function (o) { return o.meetingRef === j.meetingRef && o.status in ACTIVE; })) {
       actions.appendChild(el("button", { text: "Record again", on: { click: function () {
@@ -215,11 +218,11 @@ function renderJobs(jobs) {
         }
       } } }));
     }
-    var sub = "Meeting " + j.meetingId + " · starts " + fmt(j.start) + " · as “" + j.name + "”" + (j.hasEmail ? " · email set" : "");
+    var sub = "Starts " + fmt(j.start) + " · meeting " + j.meetingId + " · joins as “" + j.name + "”" + (j.hasEmail ? " · email set" : "") + " · folder " + j.slug;
     if (j.outcome) sub += " · outcome " + j.outcome;
     if (j.error) sub += " · " + j.error;
     box.appendChild(el("div", { "class": "row" + (watching === j.id || (editing && editing.id === j.id) ? " selected" : "") },
-      el("div", { "class": "title" }, pill(j.status), j.slug), actions, el("div", { "class": "sub", text: sub })));
+      el("div", { "class": "title", title: j.slug }, pill(j.status), jobName(j)), actions, el("div", { "class": "sub", text: sub })));
   });
 }
 
@@ -241,11 +244,11 @@ function renderRecs(recs) {
       r.video ? el("button", { text: selectedRec === r.slug ? "Playing" : "Play", on: { click: function () { playRec(r); } } }) : null,
       r.files && r.files.transcript ? el("button", { text: "Speakers", on: { click: function () { toggleSpeakers(r, panel); } } }) : null,
       r.video && r.transcript && (r.transcript.status === "done" || r.transcript.status === "failed") ? el("button", { text: r.transcript.status === "failed" ? "Retry transcript" : "Transcribe again", on: { click: function () {
-        if (!confirm("Ask the transcriber to do " + r.slug + " again? The current transcript stays until the new one replaces it.")) return;
+        if (!confirm("Ask the transcriber to do " + recName(r) + " again? The current transcript stays until the new one replaces it.")) return;
         aapi("POST", "/api/admin/recordings/" + encodeURIComponent(r.slug) + "/retranscribe", {}).then(function () { refresh(); }, function (e) { alert(e.message); });
       } } }) : null);
     box.appendChild(el("div", { "class": "row" + (selectedRec === r.slug ? " selected" : "") },
-      el("div", { "class": "title" }, pill(status), r.slug), actions, el("div", { "class": "sub", text: sub }), panel));
+      el("div", { "class": "title", title: r.slug }, pill(status), recName(r)), actions, el("div", { "class": "sub", text: sub + " · folder " + r.slug }), panel));
   });
   if (recTotal > recs.length) {
     box.appendChild(el("div", { "class": "row" }, el("div", { "class": "sub", text: "Showing the latest " + recs.length + " of " + recTotal + " recordings. " }),
@@ -301,7 +304,7 @@ function watch(id) {
   var draft = el("div", { "class": "tlist live-t" });
   var draftNote = el("div", { "class": "hint" });
   fill(live,
-    el("div", { "class": "player-title" }, el("h3", { text: (j ? j.slug : "capture") + " (live)" }),
+    el("div", { "class": "player-title" }, el("h3", { text: (j ? jobName(j) : "capture") + " (live)" }),
       el("button", { text: "Close", on: { click: function () { stopWatching(); refresh(); } } })),
     img, el("div", { "class": "hint", text: "Screen refreshes every 5 seconds. This is exactly what gets recorded." }),
     el("h3", { "class": "live-h", text: "Live transcript (draft)" }), draft, draftNote, log);
@@ -580,17 +583,17 @@ function renderOverview() {
     var r = lastRecs.filter(function (x) { return x.slug === j.slug; })[0];
     var sub = (j.status === "stopping" ? "Stopping, stitching the video" : "Recording") + (r ? " · " + r.parts.length + (r.parts.length === 1 ? " part" : " parts") : "") +
       (j.launchedAt ? " · since " + fmt(j.launchedAt) : "");
-    now.push(line(pill(j.status), j.slug, sub, el("div", { "class": "actions" },
+    now.push(line(pill(j.status), jobName(j), sub, el("div", { "class": "actions" },
       el("button", { text: "Watch", on: { click: function () { goTab("recordings"); watch(j.id); } } }))));
   });
   lastRecs.forEach(function (r) {
     var t = r.transcript;
     if (t && t.status !== "done" && t.status !== "failed") {
-      now.push(line(el("span", { "class": "pill s-queued", text: "transcribing" }), r.slug,
+      now.push(line(el("span", { "class": "pill s-queued", text: "transcribing" }), recName(r),
         (t.stage || "working") + (t.progress !== null && t.progress !== undefined ? " · " + t.progress + "%" : "") + (t.updated ? " · updated " + ago(t.updated) : ""), null, t.progress));
     } else if (!t && r.video && !r.active && r.public !== undefined) {
       var waiting = r.video && !r.files.transcript;
-      if (waiting) now.push(line(el("span", { "class": "pill s-scheduled", text: "waiting" }), r.slug, "Video ready, waiting for the transcriber"));
+      if (waiting) now.push(line(el("span", { "class": "pill s-scheduled", text: "waiting" }), recName(r), "Video ready, waiting for the transcriber"));
     }
   });
   var feedBusy = feedsNow.filter(function (f) { return f.running; });
@@ -599,7 +602,7 @@ function renderOverview() {
 
   lastJobs.filter(function (j) { return j.status === "scheduled" || j.status === "queued"; })
     .sort(function (a, b) { return a.start.localeCompare(b.start); }).slice(0, 6).forEach(function (j) {
-      next.push(line(pill(j.status), j.slug, fmt(j.start) + " · meeting " + j.meetingId, el("div", { "class": "actions" },
+      next.push(line(pill(j.status), jobName(j), fmt(j.start) + " · meeting " + j.meetingId, el("div", { "class": "actions" },
         el("button", { text: "Edit", on: { click: function () { goTab("captures"); startEdit(j); } } }))));
     });
   fill.apply(null, [document.getElementById("next")].concat(next.length ? next : [el("div", { "class": "empty", text: "No captures scheduled." })]));
@@ -609,11 +612,11 @@ function renderOverview() {
     attn.push(line(el("span", { "class": "pill s-failed", text: "login" }), "Zoom login " + (LOGIN_TEXT[sessionNow.state] || sessionNow.state), sessionNow.detail || ""));
   lastJobs.filter(function (j) { return (j.status === "failed" || (j.outcome && ["blocked", "invalid_link", "email_required", "not_started", "failed"].indexOf(j.outcome) >= 0)) && new Date(j.endedAt || j.start).getTime() > week; })
     .forEach(function (j) {
-      attn.push(line(pill(j.outcome || j.status), j.slug, (j.error || "") + (j.error ? " · " : "") + fmt(j.endedAt || j.start), el("div", { "class": "actions" },
+      attn.push(line(pill(j.outcome || j.status), jobName(j), (j.error || "") + (j.error ? " · " : "") + fmt(j.endedAt || j.start), el("div", { "class": "actions" },
         el("button", { text: "Open", on: { click: function () { goTab("captures"); } } }))));
     });
   lastRecs.forEach(function (r) {
-    if (r.transcript && r.transcript.status === "failed") attn.push(line(el("span", { "class": "pill s-failed", text: "transcript" }), r.slug, r.transcript.error || "Transcription failed", el("div", { "class": "actions" },
+    if (r.transcript && r.transcript.status === "failed") attn.push(line(el("span", { "class": "pill s-failed", text: "transcript" }), recName(r), r.transcript.error || "Transcription failed", el("div", { "class": "actions" },
       el("button", { text: "Recordings", on: { click: function () { goTab("recordings"); } } }))));
   });
   feedsNow.filter(function (f) { return f.health === "failing" || f.health === "unhealthy"; }).forEach(function (f) {

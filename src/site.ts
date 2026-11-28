@@ -130,7 +130,7 @@ function zoomJoin(m: Meeting): PublicJoin | null {
 /** Document type a feed gives a meeting's join link on a platform minutes can't join (Teams). */
 export const JOIN_DOC = "Join link";
 
-function teamsJoin(m: Meeting): PublicJoin | null {
+export function teamsJoin(m: Meeting): PublicJoin | null {
   for (const d of m.documents ?? []) {
     if (d.type !== JOIN_DOC) continue;
     try {
@@ -179,12 +179,27 @@ export function publicChange(c: MeetingChange, m: { slug: string; title: string 
   if (!PUBLIC_KINDS.includes(c.kind)) return null;
   const s = (r: Record<string, unknown> | null, k: string): string | null => (typeof r?.[k] === "string" ? r[k] as string : null);
   const d = c.kind.startsWith("document_") ? (c.after ?? c.before) : null;
+  if (d && d.type === JOIN_DOC) return null;   // a join link is shown as the join box, not as a document that came and went
   return {
     at: c.at, kind: c.kind as PublicChangeKind, meeting: { id: m.slug, title: m.title, source },
     from: s(c.before, "start"), to: s(c.after, "start"),
     doc: d && typeof d.title === "string" ? { title: d.title, type: typeof d.type === "string" ? d.type : null,
       url: c.kind === "document_removed" ? null : httpUrl(typeof d.url === "string" ? d.url : undefined) } : null,
   };
+}
+
+/** A document a feed drops and lists again within a day (a city's page flickering) is not news: remove such add/remove pairs. */
+export function collapseDocFlaps(list: PublicChange[], windowMs = 24 * 3_600_000): PublicChange[] {
+  const isDoc = (c: PublicChange) => c.kind === "document_added" || c.kind === "document_removed";
+  const key = (c: PublicChange) => `${c.meeting.id}|${c.doc?.title ?? ""}`;
+  const drop = new Set<PublicChange>();
+  const last = new Map<string, PublicChange>();
+  for (const c of [...list].filter(isDoc).sort((a, b) => a.at.localeCompare(b.at))) {
+    const prev = last.get(key(c));
+    if (prev && prev.kind !== c.kind && Date.parse(c.at) - Date.parse(prev.at) <= windowMs && !drop.has(prev)) { drop.add(prev); drop.add(c); last.delete(key(c)); }
+    else last.set(key(c), c);
+  }
+  return list.filter((c) => !drop.has(c));
 }
 
 /** One recording as /api/recordings gives it (public fields only). */

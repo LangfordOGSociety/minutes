@@ -600,5 +600,28 @@ describe("redesigned pages in Chromium", { skip: skipReason() }, () => {
     await phone.waitForSelector("#player video");
     assert.match(await phone.getAttribute("#player video", "src") ?? "", /council-a\.480p\.mp4$/);
   });
+
+  it("quick fixes: no 'Upcoming' pill on upcoming cards, a review meeting listed once, captures named by their meeting", async () => {
+    const page = await (await browser.newContext()).newPage();
+    await page.goto(base + "/");
+    await page.waitForSelector("#upcoming .mcard");
+    assert.equal(await page.locator("#upcoming .pill", { hasText: /^upcoming$/i }).count(), 0);
+    // A meeting waiting for review appears in the queue only, not again under Upcoming meetings.
+    const pending = app.sched.meetings.create({ title: "Parks review", platform: "", link: "", start: new Date(Date.now() + 5 * 86_400_000).toISOString(), slug: "parks-review", review: "pending" });
+    await app.accounts.create({ email: "fixer@example.com", role: "admin", password: "fixer password 1", verified: true });
+    const admin = await signIn("fixer@example.com", "fixer password 1", "/admin/feeds");
+    await admin.waitForSelector("#q-" + pending.id);
+    assert.equal(await admin.locator("#m-" + pending.id).count(), 0);
+    assert.match(await admin.textContent("#q-" + pending.id) ?? "", /Merge into|Approve/);
+    // Captures are named by their meeting, with the folder name as a tooltip.
+    const liveE = app.sched.meetings.get(app.sched.list().find((j) => j.slug === "live-e")!.meetingRef)!;
+    liveE.title = "Evening hearing";
+    app.sched.meetings.save(liveE);
+    await admin.goto(base + "/admin#captures");
+    await admin.waitForSelector("#jobs .row .title[title='live-e']");
+    const shown = (await admin.locator("#jobs .row .title[title='live-e']").textContent()) ?? "";
+    assert.match(shown, /Evening hearing/);
+    assert.doesNotMatch(shown, /live-e/);
+  });
 });
 
