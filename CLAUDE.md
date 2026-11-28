@@ -47,6 +47,20 @@ captures).
   lists); never twice (`scheduleMeeting` refuses if a job is done). The
   PrimeGov parser makes a finished meeting's published Granicus clip its
   link. NOT built: reading the Granicus ViewPublisher archive table.
+- YouTube video is EMBEDDED, not copied: a meeting whose link or stream page is
+  a YouTube video gets `PublicMeeting.embed {provider, id}` (`site.ts embedOf`)
+  and its page/`/embed/<slug>` show YouTube's player (`youtube-nocookie.com`
+  iframe, `frame-src` allowed on those two pages only, `net.ts YOUTUBE_FRAME`;
+  driven by postMessage, no script from YouTube: `youtubeFrame()` in
+  common.ts gives the transcript panel a <video>-like handle). The capture
+  records the SOUND only (`RecorderInput.audioOnly`, manifest `audioOnly`;
+  `Recording.audioOnly`; `toPublic` hides it, `/media` never serves it) for
+  the transcript and diarization, and `deleteAudio` (parts.ts, every 5 min,
+  KEEP_AUDIO_DAYS default 0) deletes it, the parts and `.live` once the
+  transcript is done, leaving `audio.deleted` (the recording stays `ready`;
+  transcribing again is refused). YOUTUBE_RECORD=video restores picture
+  recording (then the local player wins over the embed). Not built: fetching
+  the sound of a stream we missed, from its archive, for a transcript.
 - `src/platforms/youtube.ts` (#20) YouTube live streams, method `stream`:
   yt-dlp (pinned standalone binary in its own Dockerfile layer, `YT_DLP`
   env, bump it first when YouTube breaks) only DESCRIBES the video
@@ -445,6 +459,17 @@ captures).
   /admin/feeds): public meetings carry `sourceColor`, the listing
   `sourceColors` by name; the `.muni` badge and the home chips use it, with
   black or white text by brightness (`muniBadge` in common.ts).
+  `civicweb` (Colwood, any *.civicweb.net): the portal's JSON service
+  (`Services/MeetingsService.svc/meetings?from=&to=` with local
+  `MeetingDateTime`, `meetings/<id>/meetingDocuments`, `api/videolink/<id>`
+  -> the meeting's YouTube event id), no browser; "CANCELLED -"/"POSTPONED -"
+  names are cancelled, a "Notice of ..." entry is dropped when another
+  starts within 15 min, the YouTube watch URL is the join link while the
+  meeting isn't over (else a link found in the agenda text), and a past
+  meeting's video is only its stream page. Fixtures: test/fixtures/feeds/
+  civicweb (Colwood, 2026-11-28). No municipality-specific parsers: a city
+  that needs two sources gets them as options of one reusable parser
+  (Saanich: primegov + `linksUrl`).
   Blank types/titles = every meeting, in every parser.
   streamUrl (migration 9, meetings.stream_url): the public live/recorded
   stream page, separate from the join link. eScribe: VideoStream.aspx

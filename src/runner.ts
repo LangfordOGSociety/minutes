@@ -112,6 +112,8 @@ export class Capture {
     this.writeManifest();
   }
 
+  private audioOnly = false;   // the parts hold sound only (RecorderInput.audioOnly)
+
   private writeManifest(extra: Record<string, unknown> = {}): void {
     const data = {
       slug: this.cfg.slug,
@@ -127,6 +129,7 @@ export class Capture {
         exitCode: p.exitCode,
       })),
       events: this.events,
+      ...(this.audioOnly ? { audioOnly: true } : {}),
       ...extra,
     };
     const tmp = path.join(this.dir, "manifest.json.tmp");
@@ -309,6 +312,7 @@ export class Capture {
           }
           if (Date.now() >= this.ffRetryAt) {
             const input = session.input?.() ?? { kind: "screen", display: cfg.display, sink: cfg.sink };
+            if (input.kind === "stream" && input.audioOnly) this.audioOnly = true;
             const part = this.rec.start(this.parts.length + 1, input);
             this.parts.push(part);
             if (input.kind === "stream" && input.once) this.oncePart.add(part.index);

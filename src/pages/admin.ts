@@ -233,7 +233,7 @@ function renderRecs(recs) {
     var status = r.active ? "running" : r.outcome;
     var parts = r.parts.length + (r.parts.length === 1 ? " part" : " parts");
     var sub = fmt(r.scheduledStart) + " · " + parts + (r.chapters.length > 1 ? " · " + (r.chapters.length - 1) + " gap(s)" : "") +
-      (r.videoBytes ? " · " + mb(r.videoBytes) : "") + (r.video ? "" : r.active ? " · recording now" : " · no video") +
+      (r.videoBytes ? " · " + mb(r.videoBytes) : "") + (r.audioGone ? " · sound deleted after the transcript (the video is on YouTube)" : r.audioOnly ? " · sound only (the video is on YouTube)" : "") + (r.video ? "" : r.active ? " · recording now" : " · no video") +
       (r.files && r.files.transcript ? " · transcript" : r.video && transcriptNote(r) ? " · " + transcriptNote(r).toLowerCase() : "") +
       (r.public ? "" : " · not public");
     var panel = el("div", { "class": "spk-panel", style: "grid-column: 1 / -1" });

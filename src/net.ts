@@ -72,7 +72,10 @@ export const SECURITY_HEADERS: Record<string, string> = {
 };
 
 /** CSP for one of our pages: its inline scripts by hash, nothing else. */
-export function pageCsp(html: string, frameAncestors = "'none'"): string {
+/** The one outside site the meeting and embed pages may frame: YouTube's player (privacy-enhanced domain), for meetings whose video is on YouTube. */
+export const YOUTUBE_FRAME = "https://www.youtube-nocookie.com";
+
+export function pageCsp(html: string, frameAncestors = "'none'", frameSrc = ""): string {
   const hashes = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)]
     .map((m) => `'sha256-${createHash("sha256").update(m[1]).digest("base64")}'`);
   return [
@@ -84,6 +87,7 @@ export function pageCsp(html: string, frameAncestors = "'none'"): string {
     "connect-src 'self'",
     "base-uri 'none'",
     "form-action 'self'",
+    ...(frameSrc ? [`frame-src ${frameSrc}`] : []),
     `frame-ancestors ${frameAncestors}`,
   ].join("; ");
 }

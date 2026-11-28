@@ -43,6 +43,7 @@ body { display: flex; flex-direction: column; }
 .note { margin: auto; padding: 16px; max-width: 520px; text-align: center; }
 .note b { display: block; font-size: 17px; margin-bottom: 4px; }
 .note .hint { margin-top: 6px; }
+#box .ytfill { flex: 1; min-height: 0; aspect-ratio: auto; border-radius: 0; }
 #extra { overflow: auto; padding: 0 10px 10px; }
 #extra .transcript { margin-top: 8px; } #extra .tlist { max-height: 40vh; }
 </style>
@@ -87,6 +88,17 @@ function render(m) {
     if (chap) extra.insertBefore(chap, extra.firstChild);
     fill(box, v, WANT.title ? titleBar(m) : null, extra.childNodes.length ? extra : null);
     if (t) v.addEventListener("loadedmetadata", function () { v.currentTime = t; if (playing) v.play().catch(function () {}); }, { once: true });
+  } else if (m.embed) {
+    // The video is on YouTube: its player fills the frame; the transcript (if asked for) follows it below.
+    var yt = youtubeFrame(m.embed.id, { title: m.title, start: t }), extra2 = el("div", { id: "extra" });
+    var f = (m.recording && m.recording.files) || {};
+    if (WANT.transcript) {
+      var tp = el("div", { "class": "transcript" });
+      extra2.appendChild(tp);
+      if (f.transcript) loadTranscript(mediaUrl("/media/", m.recording.slug, f.transcript), yt.v, tp);
+      else tp.appendChild(el("div", { "class": "hint", text: m.recording ? (transcriptNote({ video: true, transcript: m.recording.transcript }) || "No transcript.") : "A transcript appears here once the meeting has been transcribed." }));
+    }
+    fill(box, el("div", { "class": "ytbox ytfill" }, yt.frame), WANT.title ? titleBar(m) : null, extra2.childNodes.length ? extra2 : null);
   } else if (m.stage === "live") {
     note("Recording now", "The video appears here when the meeting ends.", el("div", { "class": "hint" }, homeLink("Follow the live transcript")));
   } else if (m.stage === "stitching") {
@@ -99,7 +111,7 @@ function render(m) {
     note("No video", "This meeting wasn't recorded here.", el("div", { "class": "hint" }, homeLink("Meeting page")));
   }
   clearInterval(timer);
-  if (["upcoming", "live", "stitching", "video_ready"].indexOf(m.stage) >= 0) timer = setInterval(poll, m.stage === "upcoming" ? 30000 : 10000);
+  if (m.embed ? !m.hasTranscript && m.stage !== "cancelled" : ["upcoming", "live", "stitching", "video_ready"].indexOf(m.stage) >= 0) timer = setInterval(poll, m.stage === "upcoming" ? 30000 : 10000);
 }
 
 function load() {
@@ -110,7 +122,8 @@ function load() {
 function poll() {
   if (document.hidden || !M) return;
   api("GET", "/api/meetings/" + encodeURIComponent(SLUG) + "/status").then(function (s) {
-    if (s.stage !== M.stage || s.hasVideo !== M.hasVideo || s.hasTranscript !== M.hasTranscript) load();
+    // A YouTube video is not reloaded when the stage moves (that would restart it): only when a transcript arrives.
+    if (M.embed ? s.hasTranscript !== M.hasTranscript : (s.stage !== M.stage || s.hasVideo !== M.hasVideo || s.hasTranscript !== M.hasTranscript)) load();
   }, function () {});
 }
 load();

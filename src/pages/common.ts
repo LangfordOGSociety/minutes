@@ -64,6 +64,8 @@ video { width: 100%; max-height: 70vh; background: #000; border-radius: 8px; dis
 .player-title { display: flex; justify-content: space-between; gap: 10px; align-items: baseline; flex-wrap: wrap; margin-bottom: 10px; }
 .player-title h3 { margin: 0; font-size: 16px; overflow-wrap: anywhere; }
 .chapters { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+.ytbox { position: relative; aspect-ratio: 16 / 9; background: #000; border-radius: 10px; overflow: hidden; }
+.ytbox iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; }
 select.quality { margin-top: 8px; font-size: 13px; max-width: 100%; }
 .chapters button { font-size: 13px; }
 pre { background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 10px; font-size: 12px; line-height: 1.4;
@@ -195,6 +197,45 @@ function transcriptNote(r) {
 
 // o (optional): { bare: no title or download links, chapters: false hides
 // the chapter buttons, transcript: false leaves the panel out }.
+// A YouTube video, embedded from YouTube's privacy-enhanced domain and driven through the player's own postMessage protocol (no script
+// is loaded from YouTube). Returns { frame, v }: v quacks enough like a <video> (currentTime, play, pause, paused, addEventListener for
+// timeupdate and loadedmetadata) for the transcript panel to follow it and to seek it.
+var YT_ORIGIN = "https://www.youtube-nocookie.com";
+function youtubeFrame(id, o) {
+  o = o || {};
+  var q = "enablejsapi=1&rel=0&playsinline=1&origin=" + encodeURIComponent(location.origin) + (o.start ? "&start=" + Math.floor(o.start) : "");
+  var frame = el("iframe", { src: YT_ORIGIN + "/embed/" + encodeURIComponent(id) + "?" + q, title: o.title || "Video", "class": "ytframe",
+    allow: "fullscreen; picture-in-picture; encrypted-media", allowfullscreen: "", referrerpolicy: "strict-origin-when-cross-origin" });
+  var time = o.start || 0, state = -1, ready = false, handlers = {};
+  function post(msg) { if (frame.contentWindow) frame.contentWindow.postMessage(JSON.stringify(msg), YT_ORIGIN); }
+  function command(func, args) { post({ event: "command", func: func, args: args || [], id: 1, channel: "widget" }); }
+  function fire(type) { (handlers[type] || []).slice().forEach(function (h) { h.fn(); if (h.once) handlers[type].splice(handlers[type].indexOf(h), 1); }); }
+  frame.addEventListener("load", function () { post({ event: "listening", id: 1, channel: "widget" }); });
+  window.addEventListener("message", function (ev) {
+    if (ev.source !== frame.contentWindow || ev.origin !== YT_ORIGIN) return;
+    var d;
+    try { d = JSON.parse(ev.data); } catch (e) { return; }
+    var info = d && d.info;
+    if (!info || typeof info !== "object") return;
+    if (typeof info.playerState === "number") state = info.playerState;
+    if (typeof info.currentTime === "number") {
+      time = info.currentTime;
+      if (!ready) { ready = true; fire("loadedmetadata"); }
+      fire("timeupdate");
+    }
+  });
+  var v = {
+    get currentTime() { return time; },
+    set currentTime(t) { time = t; command("seekTo", [t, true]); fire("timeupdate"); },
+    get paused() { return state !== 1; },
+    playbackRate: 1,
+    play: function () { command("playVideo"); return Promise.resolve(); },
+    pause: function () { command("pauseVideo"); },
+    addEventListener: function (type, fn, opts) { (handlers[type] = handlers[type] || []).push({ fn: fn, once: !!(opts && opts.once) }); }
+  };
+  return { frame: frame, v: v };
+}
+
 // Quality: the original and the smaller copies the server made (r.renditions, biggest first). "auto" picks one from the
 // screen and the connection at the start, and steps down if playback keeps stalling. The choice is remembered.
 function wrap_(kids) { var d = document.createDocumentFragment(); kids.forEach(function (k) { d.appendChild(k); }); return d; }

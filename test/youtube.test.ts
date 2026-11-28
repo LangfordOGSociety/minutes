@@ -97,9 +97,26 @@ describe("what yt-dlp says", () => {
     for (const [text, want] of cases) assert.equal(classifyError(text), want, text);
   });
 
-  it("ffmpeg inputs: two playlists mapped by hand; from the start of the playlist only when asked", () => {
+  it("sound only by default: one audio input, marked audioOnly (the video is embedded from YouTube)", () => {
     const live = load("live");
-    const now = recorderInput(live, { fromStart: false });
+    const a = recorderInput(live, { fromStart: false });
+    assert.equal(a.kind, "stream");
+    if (a.kind !== "stream") return;
+    assert.equal(a.audioOnly, true);
+    assert.deepEqual(a.map, ["-map", "0:a:0"]);
+    assert.equal(a.args.filter((x) => x === "-i").length, 1);
+    assert.ok(a.args.some((x) => /audio|^https/.test(x)));
+    const start = recorderInput(live, { fromStart: true });
+    assert.equal(start.kind === "stream" && start.args.filter((x) => x === "-live_start_index").length, 1);
+    // A single combined stream still gives only its sound.
+    const one = recorderInput({ requested_formats: [{ url: "https://x/c.m3u8", vcodec: "avc1", acodec: "mp4a" }] }, { fromStart: false });
+    assert.deepEqual(one.kind === "stream" && [one.map, one.audioOnly], [["-map", "0:a:0"], true]);
+    assert.throws(() => recorderInput({}, { fromStart: false }), /no stream/);
+  });
+
+  it("with the picture (YOUTUBE_RECORD=video): two playlists mapped by hand; from the start of the playlist only when asked", () => {
+    const live = load("live");
+    const now = recorderInput(live, { fromStart: false, video: true });
     assert.equal(now.kind, "stream");
     if (now.kind !== "stream") return;
     assert.equal(now.copy, true);
@@ -107,11 +124,11 @@ describe("what yt-dlp says", () => {
     assert.deepEqual(now.args.filter((a) => a === "-i").length, 2);
     assert.ok(!now.args.includes("-live_start_index"));
     assert.equal(now.args.filter((a) => a === "-reconnect").length, 2);
-    const start = recorderInput(live, { fromStart: true });
+    const start = recorderInput(live, { fromStart: true, video: true });
     assert.equal(start.kind === "stream" && start.args.filter((a) => a === "-live_start_index").length, 2);
-    const one = recorderInput({ requested_formats: [{ url: "https://x/c.m3u8", vcodec: "avc1", acodec: "mp4a" }] }, { fromStart: false });
+    const one = recorderInput({ requested_formats: [{ url: "https://x/c.m3u8", vcodec: "avc1", acodec: "mp4a" }] }, { fromStart: false, video: true });
     assert.deepEqual(one.kind === "stream" && one.map, ["-map", "0:v:0?", "-map", "0:a:0?"]);
-    assert.throws(() => recorderInput({}, { fromStart: false }), /no stream/);
+    assert.throws(() => recorderInput({}, { fromStart: false, video: true }), /no stream/);
   });
 });
 
@@ -210,7 +227,7 @@ describe("running yt-dlp", () => {
   it("asks for JSON with a height cap, and returns what it printed", async (t) => {
     const dir = tmpDir(t);
     const bin = fake(dir, `cat "${FIX}/live.json"`);
-    const r = await describeVideo(ID, { bin, maxHeight: 720 }).promise;
+    const r = await describeVideo(ID, { bin, maxHeight: 720, video: true }).promise;
     assert.ok(r.ok && r.info.live_status === "is_live");
     const args = readFileSync(path.join(dir, "args"), "utf8");
     assert.match(args, /--dump-single-json/);
@@ -219,6 +236,9 @@ describe("running yt-dlp", () => {
     assert.match(args, /--ignore-no-formats-error/);
     assert.match(args, /bv\*\[height<=\?720\]\+ba\/b\[height<=\?720\]/);
     assert.match(args, new RegExp(`https://www\\.youtube\\.com/watch\\?v=${ID}\\s*$`));
+    // By default only the sound is asked for.
+    await describeVideo(ID, { bin }).promise;
+    assert.match(readFileSync(path.join(dir, "args"), "utf8"), /-f\s+ba\/b\s/);
   });
 
   it("failures: classified from stderr, a missing binary and a hang are transient", async (t) => {

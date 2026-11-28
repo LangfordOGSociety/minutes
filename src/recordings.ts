@@ -14,6 +14,8 @@ import path from "node:path";
 import type { Scheduler } from "./jobs.js";
 import { SLUG_RE } from "./util.js";
 
+/** Marker the server leaves in a folder once it has deleted the sound of a YouTube meeting (parts.ts `pruneAudio`). */
+export const AUDIO_DELETED = "audio.deleted";
 export const FILE_RE = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 
 export interface Recording {
@@ -25,6 +27,10 @@ export interface Recording {
   active: boolean;
   video: string | null;
   videoBytes: number | null;
+  /** The parts hold sound only (a YouTube meeting: the picture is embedded from YouTube). `video` is then the sound's file, never public. */
+  audioOnly: boolean;
+  /** The sound was deleted once the transcript was done (marker file `audio.deleted`); `video` still names it. */
+  audioGone: boolean;
   duration: number | null;          // seconds, from the stitch offsets
   parts: { index: number; started: string; ended: string | null }[];
   chapters: { title: string; at: number }[];
@@ -53,7 +59,10 @@ function readFolder(out: string, slug: string, clock: Intl.DateTimeFormat): Omit
   const dir = path.join(out, slug);
   let m: any;
   try { m = JSON.parse(readFileSync(path.join(dir, "manifest.json"), "utf8")); } catch { return null; }
-  const video = typeof m.output === "string" && FILE_RE.test(m.output) && existsSync(path.join(dir, m.output)) ? m.output : null;
+  const audioOnly = m.audioOnly === true;
+  const audioGone = audioOnly && existsSync(path.join(dir, AUDIO_DELETED));
+  const named = typeof m.output === "string" && FILE_RE.test(m.output) ? m.output : null;
+  const video = named && (existsSync(path.join(dir, named)) || audioGone) ? named : null;
   const parts = Array.isArray(m.parts) ? m.parts.map((p: any) => ({ index: p.index, started: p.started, ended: p.ended })) : [];
   // Chapter offsets: part 1 at 0, then each gap's offset (same as the MP4's chapters).
   const gaps: any[] = Array.isArray(m.gaps) ? m.gaps : [];
@@ -74,7 +83,7 @@ function readFolder(out: string, slug: string, clock: Intl.DateTimeFormat): Omit
   };
   // Smaller copies, found by name: this runs only for a folder that changed (its mtime moves when one appears).
   const renditions: Recording["renditions"] = [];
-  if (video) {
+  if (video && !audioOnly) {
     try {
       for (const f of readdirSync(dir)) {
         const r = RENDITION_RE.exec(f);
@@ -93,7 +102,8 @@ function readFolder(out: string, slug: string, clock: Intl.DateTimeFormat): Omit
     scheduledStart: m.scheduledStart ?? null,
     outcome: m.outcome ?? "unknown",
     video,
-    videoBytes: video ? statSync(path.join(dir, video)).size : null,
+    videoBytes: video && !audioGone ? statSync(path.join(dir, video)).size : null,
+    audioOnly, audioGone,
     duration: duration && Number.isFinite(duration) ? Math.round(duration) : null,
     parts,
     chapters,
@@ -137,8 +147,9 @@ export function listRecordings(out: string, sched: Scheduler, tz: string): Recor
 
 export function toPublic(r: Recording): PublicRecording {
   const { speakers: _, ...files } = r.files;
-  return { slug: r.slug, title: r.title, scheduledStart: r.scheduledStart, active: r.active, video: r.video,
-    videoBytes: r.videoBytes, duration: r.duration, chapters: r.chapters, transcript: r.transcript, renditions: r.renditions, files };
+  // Sound-only recordings have no public video: the page embeds the video from YouTube and the sound is never served.
+  return { slug: r.slug, title: r.title, scheduledStart: r.scheduledStart, active: r.active, video: r.audioOnly ? null : r.video,
+    videoBytes: r.audioOnly ? null : r.videoBytes, duration: r.duration, chapters: r.chapters, transcript: r.transcript, renditions: r.renditions, files };
 }
 
 /** The files /media may serve for a public recording. */

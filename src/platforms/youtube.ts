@@ -2,7 +2,14 @@
  * YouTube, stream method (#20): the meeting is a YouTube live stream, and
  * we pull it with yt-dlp (a pinned binary in the image: YT_DLP, default
  * `yt-dlp`) instead of recording a browser. No Xvfb, no sound sink, no
- * login, original quality, a few percent of a CPU core.
+ * login, a few percent of a CPU core.
+ *
+ * SOUND ONLY. The video is not copied: our pages embed it from YouTube. The
+ * parts hold just the best audio stream (`-f ba/b`, RecorderInput.audioOnly,
+ * manifest `audioOnly`), which the transcriber needs for the transcript and
+ * the voices; it is never served, and is deleted once the transcript is done
+ * (parts.ts deleteAudio, KEEP_AUDIO_DAYS). YOUTUBE_RECORD=video brings the
+ * picture back (the older behaviour).
  *
  * yt-dlp only *describes* the video (`--dump-single-json`): its
  * `live_status` becomes our State, and its HLS playlist URLs become ffmpeg
@@ -102,13 +109,17 @@ export function stateOf(info: YtInfo): State | null {
   return info.is_live ? (streamsOf(info) ? State.IN_MEETING : null) : null;
 }
 
-/** ffmpeg input arguments for the streams, and the -map that picks them. */
-export function recorderInput(info: YtInfo, o: { fromStart: boolean }): RecorderInput {
+/** ffmpeg input arguments for the stream, and the -map that picks it. Sound only: the video is embedded from YouTube on our
+ *  pages, and the sound is kept for the transcript and diarization (then deleted). With `video: true` (YOUTUBE_RECORD=video)
+ *  the picture is recorded too, as before. */
+export function recorderInput(info: YtInfo, o: { fromStart: boolean; video?: boolean }): RecorderInput {
   const s = streamsOf(info);
   if (!s) throw new Error("no stream to record yet");
-  const inputs = [s.combined, s.video, s.audio].filter((x): x is string => !!x);
+  const withVideo = o.video === true;
+  const inputs = (withVideo ? [s.combined, s.video, s.audio] : [s.audio ?? s.combined]).filter((x): x is string => !!x);
   const args = inputs.flatMap((url) => ["-reconnect", "1", "-reconnect_streamed", "1", "-reconnect_delay_max", "10",
     ...(o.fromStart ? ["-live_start_index", "0"] : []), "-i", url]);
+  if (!withVideo) return { kind: "stream", args, copy: true, map: ["-map", "0:a:0"], audioOnly: true };
   const map = s.combined ? ["-map", "0:v:0?", "-map", "0:a:0?"]
     : s.video && s.audio ? ["-map", "0:v:0", "-map", "1:a:0"]
     : s.video ? ["-map", "0:v:0"] : ["-map", "0:a:0"];
@@ -120,11 +131,12 @@ export function recorderInput(info: YtInfo, o: { fromStart: boolean }): Recorder
 export type Described = { ok: true; info: YtInfo } | { ok: false; problem: YtProblem; message: string };
 
 /** `yt-dlp --dump-single-json` for one video. Never throws. */
-export function describeVideo(id: string, o: { bin?: string; maxHeight?: number; timeoutMs?: number } = {}): { promise: Promise<Described>; kill: () => void } {
+export function describeVideo(id: string, o: { bin?: string; maxHeight?: number; timeoutMs?: number; video?: boolean } = {}): { promise: Promise<Described>; kill: () => void } {
   const bin = o.bin ?? process.env.YT_DLP ?? "yt-dlp";
   const h = o.maxHeight ?? 1080;
-  const args = ["--no-warnings", "--no-playlist", "--skip-download", "--ignore-no-formats-error", "--dump-single-json",
-    "-f", `bv*[height<=?${h}]+ba/b[height<=?${h}]`, watchUrl(id)];
+  // Sound only unless the picture is wanted too: the best audio stream, else whatever there is.
+  const format = o.video ? `bv*[height<=?${h}]+ba/b[height<=?${h}]` : "ba/b";
+  const args = ["--no-warnings", "--no-playlist", "--skip-download", "--ignore-no-formats-error", "--dump-single-json", "-f", format, watchUrl(id)];
   let proc: ChildProcess | null = null;
   const promise = new Promise<Described>((resolve) => {
     let out = "", err = "";
@@ -167,7 +179,7 @@ export class YouTubeSession implements CaptureSession {
   private started = 0;           // parts started so far
   private closed = false;
 
-  constructor(private id: string, private o: { bin?: string; maxHeight?: number; now?: () => number; describeFn?: typeof describeVideo } = {}) {}
+  constructor(private id: string, private o: { bin?: string; maxHeight?: number; video?: boolean; now?: () => number; describeFn?: typeof describeVideo } = {}) {}
 
   private now() { return this.o.now?.() ?? Date.now(); }
 
@@ -183,7 +195,7 @@ export class YouTubeSession implements CaptureSession {
     const every = this.st === State.IN_MEETING ? POLL_LIVE_MS : this.st === State.WAITING ? POLL_WAITING_MS : POLL_OTHER_MS;
     if (!force && this.now() - this.lastAt < every) return;
     if (this.running) return void await this.running.promise;
-    this.running = (this.o.describeFn ?? describeVideo)(this.id, { bin: this.o.bin, maxHeight: this.o.maxHeight });
+    this.running = (this.o.describeFn ?? describeVideo)(this.id, { bin: this.o.bin, maxHeight: this.o.maxHeight, video: this.o.video });
     let d: Described;
     try { d = await this.running.promise; } finally { this.running = null; }
     this.lastAt = this.now();
@@ -210,7 +222,7 @@ export class YouTubeSession implements CaptureSession {
     const since = (info.release_timestamp ?? info.timestamp ?? 0) * 1000;
     const late = this.started === 0 && since > 0 && this.now() - since > LATE_START_MS;
     this.started++;
-    return recorderInput(info, { fromStart: late });
+    return recorderInput(info, { fromStart: late, video: this.o.video });
   }
 
   async dump(dir: string, label: string): Promise<void> {
@@ -248,6 +260,6 @@ export const youtube: Platform = {
   create(link: string, _o: SessionOpts): CaptureSession {
     const id = videoIdOf(link);
     if (!id) throw new Error("not a YouTube video link");
-    return new YouTubeSession(id, { maxHeight: Number(process.env.YOUTUBE_MAX_HEIGHT) || undefined });
+    return new YouTubeSession(id, { maxHeight: Number(process.env.YOUTUBE_MAX_HEIGHT) || undefined, video: process.env.YOUTUBE_RECORD === "video" });
   },
 };

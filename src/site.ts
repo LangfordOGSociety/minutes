@@ -14,6 +14,7 @@
  */
 import type { Job } from "./jobs.js";
 import { isArchive, platformFor } from "./platforms/registry.js";
+import { videoIdOf } from "./platforms/youtube.js";
 import type { Meeting } from "./meetings.js";
 import type { PublicRecording, Recording } from "./recordings.js";
 import { toPublic } from "./recordings.js";
@@ -25,6 +26,8 @@ export type Stage = "upcoming" | "live" | "stitching" | "video_ready" | "ready" 
 export const OVER_AFTER_MS = 4 * 3_600_000;
 /** A finished capture with no video yet is "processing" this long, then "failed". */
 export const STITCH_WAIT_MS = 6 * 3_600_000;
+
+export interface PublicEmbed { provider: "youtube"; id: string }
 
 export interface PublicDoc { title: string; type: string | null; url: string; copy: string | null }
 
@@ -51,6 +54,8 @@ export interface PublicMeeting {
   documents: PublicDoc[];
   join: PublicJoin | null;
   hasVideo: boolean;
+  /** A video to embed from the video site itself instead of playing our own copy (YouTube). */
+  embed: PublicEmbed | null;
   hasTranscript: boolean;
   /** A poster frame of the recording, as a path on this site (/media/...), when there is one. */
   poster: string | null;
@@ -138,8 +143,19 @@ function teamsJoin(m: Meeting): PublicJoin | null {
   return null;
 }
 
+/** The YouTube video a meeting is on, when its join link or stream page is one: the page embeds it. */
+export function embedOf(m: Meeting): PublicEmbed | null {
+  if (m.status === "cancelled") return null;
+  for (const u of [m.link, m.streamUrl]) {
+    const id = u ? videoIdOf(u) : null;
+    if (id) return { provider: "youtube", id };
+  }
+  return null;
+}
+
 export function toPublicMeeting(m: Meeting, jobs: readonly Job[], rec: Recording | undefined, now: number, copies?: Map<string, string>, source?: string | null, sourceColor?: string | null): PublicMeeting {
   const stage = stageOf(m, jobs, rec, now);
+  const embed = embedOf(m);
   return {
     id: m.slug, title: m.title, body: m.body ?? null, start: m.start, end: m.endEst ?? null, stage,
     cancelled: m.status === "cancelled",
@@ -147,7 +163,7 @@ export function toPublicMeeting(m: Meeting, jobs: readonly Job[], rec: Recording
     documents: (m.documents ?? []).flatMap((d) => { if (d.type === JOIN_DOC) return []; const url = httpUrl(d.url); return url ? [{ title: d.title, type: d.type ?? null, url, copy: copies?.get(d.url) ?? null }] : []; }),
     source: source ?? null, sourceColor: source ? sourceColor ?? null : null,
     join: joinOf(m, stage),
-    hasVideo: !!rec?.video && stage !== "cancelled", hasTranscript: !!rec?.files.transcript && stage !== "cancelled",
+    hasVideo: (!!rec?.video && !rec.audioOnly && stage !== "cancelled") || embed !== null, embed, hasTranscript: !!rec?.files.transcript && stage !== "cancelled",
     poster: rec?.public && rec.files.thumb && stage !== "cancelled" ? `/media/${encodeURIComponent(rec.slug)}/${encodeURIComponent(rec.files.thumb)}` : null,
     duration: rec?.duration ?? null, live: stage === "live",
   };

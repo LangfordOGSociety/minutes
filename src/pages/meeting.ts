@@ -82,7 +82,7 @@ function cityLinks(m) {
   var items = [];
   if (m.agendaUrl) items.push(ext(m.agendaUrl, "Agenda"));
   if (m.pageUrl) items.push(ext(m.pageUrl, "Meeting page on the city's site"));
-  if (m.streamUrl) items.push(ext(m.streamUrl, m.stage === "upcoming" || m.stage === "live" ? "Watch on the city's site" : "Video on the city's site"));
+  if (m.streamUrl && !m.embed) items.push(ext(m.streamUrl, m.stage === "upcoming" || m.stage === "live" ? "Watch on the city's site" : "Video on the city's site"));
   return items;
 }
 
@@ -90,6 +90,13 @@ function cityLinks(m) {
 function banner(m) {
   untilNode = startedNode = null;
   var city = cityLinks(m);
+  if (m.embed) {
+    // The video is on YouTube: nothing here is "recorded" or "processing"; the transcript follows.
+    if (m.stage === "upcoming") { untilNode = el("span", { text: until(m.start) }); return el("div", { "class": "banner" }, el("b", {}, "Starts ", untilNode), el("div", { "class": "hint", text: "The video plays here when the stream starts, and a transcript follows once the meeting is over. This page updates by itself." })); }
+    if (m.stage === "live") return el("div", { "class": "banner live" }, el("b", { text: "Live now" }), el("div", { "class": "hint", text: "A transcript follows once the meeting is over." }));
+    if (m.stage === "cancelled") return el("div", { "class": "banner off" }, el("b", { text: "Cancelled" }), el("div", { "class": "hint", text: "See the history below for when." }));
+    return null;
+  }
   switch (m.stage) {
     case "upcoming":
       untilNode = el("span", { text: until(m.start) });
@@ -122,8 +129,36 @@ function renderHead(m) {
   fill(document.getElementById("head"), el("h2", { "class": "mtitle", text: m.title }), facts, banner(m));
 }
 
+// A meeting whose video is on YouTube: the player is YouTube's, embedded once (a poll never reloads it); the transcript beside it
+// follows it and seeks it. Our own recording of the sound is never shown.
+var yt = null;
+function renderEmbedded(m, box) {
+  var r = m.recording, f = (r && r.files) || {};
+  if (!yt || yt.id !== m.embed.id) {
+    var frame = youtubeFrame(m.embed.id, { title: m.title, start: startT });
+    var links = el("span", { "class": "links" }, el("a", { href: "https://www.youtube.com/watch?v=" + encodeURIComponent(m.embed.id), target: "_blank", rel: "noopener", text: "Watch on YouTube" }));
+    yt = { id: m.embed.id, v: frame.v, tkey: null, links: links, panel: el("div", { "class": "transcript" }) };
+    fill(box, el("div", { "class": "player-title" }, el("h3", { text: m.title }), links), el("div", { "class": "ytbox" }, frame.frame), yt.panel);
+  }
+  var key = f.transcript ? f.transcript : "note:" + (r && r.transcript ? r.transcript.status + ":" + r.transcript.progress : "none");
+  if (key !== yt.tkey) {
+    yt.tkey = key;
+    [["txt", "Transcript"], ["srt", "SRT"]].forEach(function (x) {
+      if (f[x[0]] && !yt.links.querySelector("[data-k='" + x[0] + "']")) {
+        yt.links.appendChild(document.createTextNode(" · "));
+        yt.links.appendChild(el("a", { href: mediaUrl("/media/", r.slug, f[x[0]]), download: f[x[0]], text: x[1], "data-k": x[0] }));
+      }
+    });
+    if (f.transcript) loadTranscript(mediaUrl("/media/", r.slug, f.transcript), yt.v, yt.panel);
+    else fill(yt.panel, el("div", { "class": "hint", text: r ? (transcriptNote({ video: true, transcript: r.transcript }) || "No transcript.") : "A transcript appears here once the meeting has been transcribed." }));
+  }
+  box.hidden = false;
+}
+
 function renderPlayer(m) {
   var box = document.getElementById("player");
+  if (m.embed && !(m.hasVideo && m.recording && m.recording.video)) { renderEmbedded(m, box); return; }
+  yt = null;
   if (!m.hasVideo || !m.recording || !m.recording.video) { box.hidden = true; fill(box); return; }
   var v = box.querySelector("video"), t = v ? v.currentTime : startT, playing = v ? !v.paused : false;
   play(m.recording, "/media/", box);

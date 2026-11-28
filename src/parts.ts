@@ -9,8 +9,9 @@
  * within 3% of the parts' (a stream copy: if the stitch had to re-encode, the parts are the better quality and stay).
  */
 import { execFile } from "node:child_process";
-import { existsSync, readdirSync, readFileSync, statSync, unlinkSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, rmSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import path from "node:path";
+import { AUDIO_DELETED } from "./recordings.js";
 import { logger, SLUG_RE } from "./util.js";
 
 const log = logger("parts");
@@ -55,4 +56,31 @@ export async function pruneParts(o: PruneOpts): Promise<[string, number][]> {
     log.info(`${slug}: removed ${parts.length} raw part(s), ${(partBytes / 1e6).toFixed(0)} MB (the MP4 is verified and ${Math.round((now - vs.mtimeMs) / 86_400_000)} days old)`);
   }
   return freed;
+}
+
+/**
+ * The sound of a YouTube meeting (its video is embedded from YouTube, so we only keep the sound long enough to make the
+ * transcript and tell the voices apart). Once the transcript is done and its files are there, the sound (the stitched file and
+ * the parts, and the live draft's chunks) is deleted and `audio.deleted` is left in the folder, so the recording is still
+ * listed and its transcript still served. `days` (KEEP_AUDIO_DAYS, default 0) is how long to keep it after the transcript was
+ * finished, for transcribing again.
+ */
+export function deleteAudio(o: { out: string; slug: string; days: number; now?: number }): number | null {
+  const dir = path.join(o.out, o.slug);
+  try {
+    const m = JSON.parse(readFileSync(path.join(dir, "manifest.json"), "utf8")) as { audioOnly?: boolean; output?: unknown };
+    if (m.audioOnly !== true || existsSync(path.join(dir, AUDIO_DELETED))) return null;
+    const st = JSON.parse(readFileSync(path.join(dir, "transcript.status.json"), "utf8")) as { status?: string; finished?: string; updated?: string };
+    if (st.status !== "done" || !existsSync(path.join(dir, `${o.slug}.transcript.json`))) return null;
+    const done = Date.parse(st.finished ?? st.updated ?? "") || statSync(path.join(dir, "transcript.status.json")).mtimeMs;
+    if ((o.now ?? Date.now()) - done < o.days * 86_400_000) return null;
+    let freed = 0;
+    const rm = (f: string) => { try { freed += statSync(f).size; unlinkSync(f); } catch { /* not there */ } };
+    for (const f of readdirSync(dir)) if (PART_RE.test(f) || /\.fixed\.mkv$/.test(f)) rm(path.join(dir, f));
+    if (typeof m.output === "string" && /^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(m.output)) rm(path.join(dir, m.output));
+    rmSync(path.join(dir, ".live"), { recursive: true, force: true });
+    writeFileSync(path.join(dir, AUDIO_DELETED), new Date(o.now ?? Date.now()).toISOString() + "\n");
+    log.info(`${o.slug}: sound deleted after its transcript, ${(freed / 1e6).toFixed(0)} MB`);
+    return freed;
+  } catch { return null; }
 }
