@@ -21,7 +21,7 @@ const meeting = (o: Partial<Meeting> = {}): Meeting => ({ id: "m", title: "Counc
   status: "scheduled", visibility: "public", slug: "council", createdAt: "", updatedAt: "", ...o });
 const job = (status: Job["status"], o: Partial<Job> = {}): Job => ({ id: "j", meetingRef: "m", link: "", start: "", slug: "council", name: "", status, createdAt: "", ...o });
 const rec = (o: Partial<Recording> = {}): Recording => ({ slug: "council", title: "", public: true, scheduledStart: null, outcome: "", active: false, video: null,
-  videoBytes: null, duration: null, parts: [], chapters: [], transcript: null, files: {}, ...o });
+  videoBytes: null, duration: null, parts: [], chapters: [], transcript: null, renditions: [], files: {}, ...o });
 
 describe("stages", () => {
   const at = (hours: number) => new Date(NOW + hours * H).toISOString();
@@ -211,7 +211,7 @@ describe("public meetings API", () => {
     assert.ok(!list.some((m) => m.id === "hidden-b"));
     const d = (await pub.get("/api/meetings/council-a")).json;
     assert.equal(d.recording.video, "council-a.mp4");
-    assert.deepEqual(Object.keys(d.recording).sort(), ["active", "chapters", "duration", "files", "scheduledStart", "slug", "title", "transcript", "video", "videoBytes"]);
+    assert.deepEqual(Object.keys(d.recording).sort(), ["active", "chapters", "duration", "files", "renditions", "scheduledStart", "slug", "title", "transcript", "video", "videoBytes"]);
     // A shared link with the recording's folder name still finds the meeting.
     assert.equal((await pub.get("/api/meetings/council-a/status")).json.stage, "ready");
     assert.equal((await pub.get("/media/council-a/council-a.mp4")).status, 200);

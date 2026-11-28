@@ -573,5 +573,32 @@ describe("redesigned pages in Chromium", { skip: skipReason() }, () => {
     await page.waitForURL(base + "/");
     assert.equal(app.sched.meetings.get(hand.id), undefined);
   });
+
+  it("player: a Quality menu when smaller copies exist; the choice is remembered", async () => {
+    for (const h of [720, 360]) writeFileSync(path.join(out, "council-a", `council-a.${h}p.mp4`), "x".repeat(100));
+    const page = await (await browser.newContext({ viewport: { width: 1280, height: 900 } })).newPage();
+    await page.goto(base + "/m/council-a");
+    await page.waitForSelector("#player video");
+    assert.deepEqual(await page.$$eval("select.quality option", (o) => o.map((x) => (x as HTMLOptionElement).value)), ["auto", "orig", "720", "360"]);
+    // Auto on a desktop-sized window: the smallest copy that is still sharp (720), not the original.
+    assert.match(await page.getAttribute("#player video", "src") ?? "", /council-a\.720p\.mp4$/);
+    await page.selectOption("select.quality", "360");
+    assert.match(await page.getAttribute("#player video", "src") ?? "", /council-a\.360p\.mp4$/);
+    await page.selectOption("select.quality", "orig");
+    assert.match(await page.getAttribute("#player video", "src") ?? "", /council-a\.mp4$/);
+    assert.equal(await page.evaluate(() => localStorage.getItem("minutes.quality")), "orig");
+    // The choice is remembered on the next visit; the download link is always the original.
+    await page.reload();
+    await page.waitForSelector("#player video");
+    assert.match(await page.getAttribute("#player video", "src") ?? "", /council-a\.mp4$/);
+    assert.equal(await page.inputValue("select.quality"), "orig");
+    assert.match(await page.getAttribute("#player .links a", "href") ?? "", /council-a\.mp4$/);
+    // A phone (390 px wide, twice the pixel density) gets the 480p copy by itself.
+    writeFileSync(path.join(out, "council-a", "council-a.480p.mp4"), "x".repeat(100));
+    const phone = await (await browser.newContext({ viewport: { width: 390, height: 800 }, deviceScaleFactor: 2 })).newPage();
+    await phone.goto(base + "/m/council-a");
+    await phone.waitForSelector("#player video");
+    assert.match(await phone.getAttribute("#player video", "src") ?? "", /council-a\.480p\.mp4$/);
+  });
 });
 

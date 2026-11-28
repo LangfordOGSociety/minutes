@@ -306,6 +306,14 @@ if (process.argv[2] === "serve") {
     if (!Number.isFinite(r) || r < min) fail(`--${k} must be a number >= ${min}`);
     return r;
   };
+  // RENDITIONS: heights of the smaller copies made for slow connections ("720,480,360" by default; "off" = none).
+  const renditionsEnv = (v: string | undefined): number[] | false | undefined => {
+    if (!v?.trim()) return undefined;
+    if (/^(off|none|0|false)$/i.test(v.trim())) return false;
+    const hs = v.split(",").map((x) => Number.parseInt(x, 10));
+    if (hs.some((h) => !(h >= 144 && h <= 2160))) return fail("RENDITIONS: heights like 720,480,360, or off");
+    return [...new Set(hs)].sort((a, b) => b - a);
+  };
   const rate = (name: string) => { try { return parseRate(env[name]); } catch (e) { return fail(`${name}: ${(e as Error).message}`); } };
   if (v.auth && !existsSync(v.auth)) fail(`--auth file not found: ${v.auth}`);
   if (!v.auth) console.error("warning: no --auth session; Zoom blocks anonymous web-client joins (see `minutes login`)");
@@ -318,6 +326,7 @@ if (process.argv[2] === "serve") {
     trustedProxies: env.TRUSTED_PROXIES,
     mailer, publicUrl: env.PUBLIC_URL, embedOrigins: env.EMBED_ORIGINS, operatorEmail: env.OPERATOR_EMAIL || undefined,
     downloadBps: rate("DOWNLOAD_MAX_BPS"), tokenDownloadBps: rate("DOWNLOAD_TOKEN_BPS"),
+    renditions: renditionsEnv(env.RENDITIONS),
     out: v.out!, auth: v.auth ?? null, defaultName: v.name!,
     leadMs: n("lead-min", v["lead-min"]) * 60_000, noShowMs: n("no-show-min", v["no-show-min"]) * 60_000,
     maxConcurrent: n("max-jobs", v["max-jobs"], 1),

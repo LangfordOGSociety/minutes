@@ -9,6 +9,7 @@
  * are the only files /media will serve for it.
  */
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { RENDITION_RE } from "./renditions.js";
 import path from "node:path";
 import type { Scheduler } from "./jobs.js";
 import { SLUG_RE } from "./util.js";
@@ -30,11 +31,13 @@ export interface Recording {
   /** From the transcriber's transcript.status.json, if it has seen this one. */
   transcript: { status: string; stage: string | null; progress: number | null; error: string | null; started: string | null; finished: string | null; updated: string | null } | null;
   /** Side files that exist: subtitles, transcript, Zoom captions, speakers, live draft. */
+  /** Smaller copies of the video for slow connections, biggest first (`<slug>.720p.mp4`); see renditions.ts. */
+  renditions: { height: number; file: string; bytes: number }[];
   files: { vtt?: string; srt?: string; txt?: string; transcript?: string; zoomCaptions?: string; speakers?: string; live?: string; thumb?: string };
 }
 
 export type PublicRecording = Pick<Recording, "slug" | "title" | "scheduledStart" | "active" | "video" | "videoBytes" |
-  "duration" | "chapters" | "transcript"> & { files: Omit<Recording["files"], "speakers"> };
+  "duration" | "chapters" | "transcript" | "renditions"> & { files: Omit<Recording["files"], "speakers"> };
 
 /** What the folder itself says (manifest, status, which files exist): the part of a Recording that doesn't depend on the scheduler. */
 interface Disk { sig: string; rec: Omit<Recording, "title" | "public" | "active"> }
@@ -69,8 +72,19 @@ function readFolder(out: string, slug: string, clock: Intl.DateTimeFormat): Omit
     transcript: has(`${slug}.transcript.json`), zoomCaptions: has(`${slug}.zoom-captions.vtt`),
     speakers: has(`${slug}.speakers.json`), thumb: video ? has(`${slug}.jpg`) : undefined,
   };
+  // Smaller copies, found by name: this runs only for a folder that changed (its mtime moves when one appears).
+  const renditions: Recording["renditions"] = [];
+  if (video) {
+    try {
+      for (const f of readdirSync(dir)) {
+        const r = RENDITION_RE.exec(f);
+        if (r && r[1] === slug) renditions.push({ height: Number(r[2]), file: f, bytes: statSync(path.join(dir, f)).size });
+      }
+    } catch { /* unreadable folder: none */ }
+    renditions.sort((a, b) => b.height - a.height);
+  }
   return {
-    slug,
+    slug, renditions,
     transcript: st ? { status: String(st.status ?? "unknown"), stage: st.stage ?? null,
       progress: typeof st.progress === "number" ? st.progress : null, error: st.error ?? null,
       started: typeof st.started === "string" ? st.started : null, finished: typeof st.finished === "string" ? st.finished : null,
@@ -124,12 +138,13 @@ export function listRecordings(out: string, sched: Scheduler, tz: string): Recor
 export function toPublic(r: Recording): PublicRecording {
   const { speakers: _, ...files } = r.files;
   return { slug: r.slug, title: r.title, scheduledStart: r.scheduledStart, active: r.active, video: r.video,
-    videoBytes: r.videoBytes, duration: r.duration, chapters: r.chapters, transcript: r.transcript, files };
+    videoBytes: r.videoBytes, duration: r.duration, chapters: r.chapters, transcript: r.transcript, renditions: r.renditions, files };
 }
 
 /** The files /media may serve for a public recording. */
 export function publicFiles(r: PublicRecording): Set<string> {
   const s = new Set<string>(Object.values(r.files).filter((v): v is string => typeof v === "string"));
   if (r.video) s.add(r.video);
+  for (const x of r.renditions) s.add(x.file);
   return s;
 }
