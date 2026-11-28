@@ -21,11 +21,11 @@ export const ADMIN_PAGE = String.raw`<!doctype html>
 ${BASE_CSS}
 main { padding: 16px 24px 40px; max-width: 1200px; margin: 0 auto; }
 main[hidden] { display: none !important; }
-main.two { display: grid; grid-template-columns: minmax(320px, 420px) 1fr; gap: 20px; align-items: start; max-width: none; }
+main.two { display: grid; grid-template-columns: minmax(320px, 420px) 1fr; gap: 20px; align-items: start; }
 main.two > div > section + section { margin-top: 20px; }
 main.cols { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; align-items: start; }
 main.cols > div > section + section { margin-top: 20px; }
-@media (max-width: 900px) { main, main.two, main.cols { grid-template-columns: 1fr; padding: 12px 16px 32px; } }
+@media (max-width: 900px) { main, main.two, main.cols { grid-template-columns: 1fr; padding: 12px 16px 32px; } main.two > div:first-child { order: 2; } }
 .tabs { display: flex; gap: 4px; flex-wrap: wrap; padding: 0 24px; background: var(--panel); border-bottom: 1px solid var(--line); }
 .tabs a { padding: 10px 14px; text-decoration: none; color: var(--muted); border-bottom: 2px solid transparent; margin-bottom: -1px; font-size: 14px; }
 .tabs a:hover { color: var(--ink); }
@@ -33,9 +33,12 @@ main.cols > div > section + section { margin-top: 20px; }
 .tabs .badge { display: inline-block; min-width: 18px; padding: 0 5px; margin-left: 6px; border-radius: 999px; background: var(--bad); color: #fff; font-size: 11px; text-align: center; }
 .tabs .badge.n { background: var(--live); }
 .tabs .badge[hidden] { display: none; }
-@media (max-width: 900px) { .tabs { padding: 0 12px; } }
+@media (max-width: 900px) { .tabs { padding: 0 12px; flex-wrap: nowrap; overflow-x: auto; } .tabs a { white-space: nowrap; } }
 .ov { display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); gap: 20px; align-items: start; }
 .ov > div > section + section { margin-top: 20px; }
+.ovmeta { grid-column: 1 / -1; margin: 0; }
+.change-detail summary { cursor: pointer; font-size: 13px; color: var(--muted); }
+.audit-who { color: var(--muted); }
 @media (max-width: 900px) { .ov { grid-template-columns: 1fr; } }
 .ok-line { color: var(--ok); font-weight: 600; }
 .bar { height: 6px; background: var(--line); border-radius: 3px; overflow: hidden; margin-top: 6px; grid-column: 1 / -1; }
@@ -48,6 +51,7 @@ form .actions button.primary { flex: 1; }
 #editcancel[hidden] { display: none; }
 #login { margin: 4px 24px 0; padding: 8px 12px; border-radius: 8px; font-size: 13px; color: var(--muted);
   display: flex; gap: 10px; align-items: center; flex-wrap: wrap; border: 1px solid transparent; }
+#login[hidden] { display: none; }
 #login.bad { color: var(--ink); background: color-mix(in srgb, var(--bad) 12%, transparent); border-color: var(--bad); }
 #login.bad b { color: var(--bad); }
 #login button { padding: 3px 10px; font-size: 13px; }
@@ -85,12 +89,16 @@ label.check[hidden] { display: none; }
   <div>
     <section>
       <h2>Right now</h2>
-      <div class="kv" id="meta"></div>
       <div class="list" id="now"><div class="empty">Loading...</div></div>
     </section>
     <section>
       <h2>Coming up</h2>
       <div class="list" id="next"><div class="empty">Loading...</div></div>
+    </section>
+    <section>
+      <h2>Feeds</h2>
+      <div class="list" id="feedsum"><div class="empty">Loading...</div></div>
+      <p class="hint"><a href="/admin/feeds">Manage feeds and review new meetings</a></p>
     </section>
   </div>
   <div>
@@ -104,6 +112,7 @@ label.check[hidden] { display: none; }
       <p class="hint"><a href="#audit">Full audit log</a></p>
     </section>
   </div>
+  <div class="kv ovmeta" id="meta"></div>
 </main>
 
 <main id="t-captures" class="two" hidden>
@@ -153,7 +162,7 @@ label.check[hidden] { display: none; }
     <section>
       <h2>Users</h2>
       <div class="list" id="users"><div class="empty">Loading...</div></div>
-      <p class="hint">New admins: <code>minutes user add --admin email</code> on the server, or promote a user here.</p>
+      <p class="hint">To add an admin, choose "Make admin" on a user here, or run <code>minutes user add --admin &lt;email&gt;</code> on the server.</p>
     </section>
   </div>
   <div>
@@ -189,6 +198,9 @@ function aapi(method, url, body) { return api(method, url, body, true); }
 // A capture or recording by what it is (municipality and title), not its folder name; the folder name stays as small text.
 function jobName(j) { return (j.source ? j.source + ": " : "") + (j.title || j.slug); }
 function recName(r) { return (r.source ? r.source + ": " : "") + (r.title && r.title !== r.slug ? r.title : r.slug); }
+var OUTCOME_TEXT = { ended: "recorded", stopped: "stopped by an admin", not_started: "the meeting never started", blocked: "the platform wouldn't let the recorder in",
+  invalid_link: "the link isn't a meeting", email_required: "the platform asked for an email address", ended_after_interruption: "recorded, with a gap",
+  failed: "failed", archive_failed: "the finished video couldn't be imported", unknown: "no result yet" };
 var ACTIVE = { running: 0, stopping: 1, queued: 2, scheduled: 3 };
 function renderJobs(jobs) {
   lastJobs = jobs;
@@ -219,7 +231,7 @@ function renderJobs(jobs) {
       } } }));
     }
     var sub = "Starts " + fmt(j.start) + " · meeting " + j.meetingId + " · joins as “" + j.name + "”" + (j.hasEmail ? " · email set" : "") + " · folder " + j.slug;
-    if (j.outcome) sub += " · outcome " + j.outcome;
+    if (j.outcome) sub += " · " + (OUTCOME_TEXT[j.outcome] || j.outcome.replace(/_/g, " "));
     if (j.error) sub += " · " + j.error;
     box.appendChild(el("div", { "class": "row" + (watching === j.id || (editing && editing.id === j.id) ? " selected" : "") },
       el("div", { "class": "title", title: j.slug }, pill(j.status), jobName(j)), actions, el("div", { "class": "sub", text: sub })));
@@ -475,6 +487,7 @@ setInterval(function () { if (!document.hidden) loadUsers(); }, 30000);
 
 // --- API tokens and usage (#16, #18) ---
 function gb(n) { return n < 1048576 ? Math.round(n / 1024) + " KB" : n < 1073741824 ? (n / 1048576).toFixed(1) + " MB" : (n / 1073741824).toFixed(2) + " GB"; }
+var showGoneTokens = false;
 function loadTokens() {
   Promise.all([aapi("GET", "/api/admin/tokens"), aapi("GET", "/api/admin/usage?days=30")]).then(function (r) {
     var list = r[0], use = r[1], byId = {};
@@ -482,7 +495,9 @@ function loadTokens() {
     var box = document.getElementById("tokens");
     fill(box);
     if (!list.length) box.appendChild(el("div", { "class": "empty", text: "No API tokens." }));
-    list.forEach(function (t) {
+    // Revoked and expired keys are history: shown only when asked for.
+    var gone = list.filter(function (t) { return !t.active; });
+    (showGoneTokens ? list : list.filter(function (t) { return t.active; })).forEach(function (t) {
       var u = byId[t.id] || { requests: 0, bytes: 0 };
       var state = t.revokedAt ? "revoked" : !t.active ? "expired" : null;
       var actions = el("div", { "class": "actions" });
@@ -494,6 +509,8 @@ function loadTokens() {
         el("div", { "class": "sub", text: "mnt_" + t.prefix + "_... · " + t.scopes.join(", ") + " · last used " + (t.lastUsedAt ? ago(t.lastUsedAt) : "never") +
           " · 30 days: " + u.requests + " requests, " + gb(u.bytes) })));
     });
+    if (gone.length) box.appendChild(el("div", { "class": "row" }, el("button", { text: showGoneTokens ? "Hide revoked and expired keys" : "Show " + gone.length + " revoked or expired " + (gone.length === 1 ? "key" : "keys"),
+      on: { click: function () { showGoneTokens = !showGoneTokens; loadTokens(); } } })));
     var tu = document.getElementById("tokusage");
     tu.textContent = use.users.length ? "By user, last 30 days: " + use.users.map(function (x) { return x.email + " " + x.requests + " requests, " + gb(x.bytes); }).join("; ") +
       (use.files.length ? ". Most downloaded: " + use.files.slice(0, 3).map(function (f) { return f.file + " (" + f.requests + "x)"; }).join(", ") : "") + "." : "No API use in the last 30 days.";
@@ -512,24 +529,96 @@ function auditQuery(before) {
   return "/api/admin/audit?" + q.toString();
 }
 function show(v) { return v === null || v === undefined ? "none" : typeof v === "string" ? v : JSON.stringify(v); }
+
+// What an audit entry says, as a sentence. The raw fields stay behind "Details".
+var FEED_FIELDS = { name: "the name", parser: "the source type", slugPrefix: "the folder prefix", color: "the badge color", policy: "how new meetings are handled",
+  intervalMin: "how often it checks", enabled: "whether it is on" };
+var CONFIG_FIELDS = { baseUrl: "the portal address", url: "the address", linksUrl: "the meeting links page", titles: "the title filter", timezone: "the timezone",
+  daysBack: "how many days back it looks", daysAhead: "how many days ahead it looks", agendas: "reading agendas for join links", channel: "the channel", maxVideos: "how many streams it checks",
+  titleFilter: "the title filter", meetingTypes: "the meeting types", body: "the body name", details: "reading each meeting's details" };
+function sameJson(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
+function changedKeys(b, a) {
+  var ks = {}; Object.keys(b || {}).concat(Object.keys(a || {})).forEach(function (k) { ks[k] = 1; });
+  return Object.keys(ks).filter(function (k) { return !sameJson((b || {})[k], (a || {})[k]); });
+}
+function feedChanges(b, a) {
+  var out = [];
+  changedKeys(b, a).forEach(function (k) {
+    if (k === "config" && b.config && a.config && typeof b.config === "object" && typeof a.config === "object") {
+      changedKeys(b.config, a.config).forEach(function (c) { out.push(CONFIG_FIELDS[c] || c); });
+    } else out.push(FEED_FIELDS[k] || k);
+  });
+  return out;
+}
+var MEETING_FIELDS = { title: "the title", body: "the body", start: "the start time", agendaUrl: "the agenda address", pageUrl: "the meeting page address", streamUrl: "the video page address" };
+function describeAudit(e) {
+  var who = e.targetLabel || e.targetType || "", b = e.before || {}, a = e.after || {};
+  switch (e.action) {
+    case "login.check": return "Checked the Zoom login";
+    case "account.password": return "Changed the password of " + who;
+    case "user.create": return "Created the account " + who;
+    case "user.passwd": return "Set a new one-time password for " + who;
+    case "user.role": return "Changed the role of " + who;
+    case "user.signup": return who + " signed up";
+    case "user.verify": return who + " confirmed their email address";
+    case "user.update":
+      if ("role" in a) return "Made " + who + (a.role === "admin" ? " an admin" : " a regular user");
+      if ("disabled" in a) return (a.disabled ? "Disabled " : "Enabled ") + who;
+      return "Changed the account " + who;
+    case "feed.create": return "Added the feed " + who;
+    case "feed.delete": return "Deleted the feed " + who;
+    case "feed.run": return "Ran the feed " + who + " now";
+    case "feed.update": { var f = feedChanges(b, a); return "Changed the feed " + who + (f.length ? ": " + f.join(", ") : ""); }
+    case "meeting.edit": { var m = changedKeys(b, a).map(function (k) { return MEETING_FIELDS[k] || k; }); return "Edited " + who + (m.length ? ": " + m.join(", ") : ""); }
+    case "meeting.delete": return "Deleted the meeting " + who;
+    case "meeting.approve": return "Approved " + who;
+    case "meeting.reject": return "Rejected " + who;
+    case "meeting.merge": return "Merged " + who + " into another meeting";
+    case "meeting.split": return "Separated " + who + " from the meeting it was merged into";
+    case "meeting.hide": return "Hid " + who + " from the public site";
+    case "meeting.show": return "Showed " + who + " on the public site again";
+    case "job.create": return "Scheduled a capture: " + who;
+    case "job.update": return "Changed the capture " + who;
+    case "job.retry": return "Recorded " + who + " again";
+    case "job.cancel": return "Cancelled the capture " + who;
+    case "job.stop": return "Stopped the capture " + who;
+    case "token.create": return "Made an API key for " + who;
+    case "token.revoke": return "Revoked the API key " + who;
+    case "token.limit": return "Changed the download limit of the API key " + who;
+    case "alert.create": return "Saved an email alert";
+    case "alert.delete": return "Deleted an email alert";
+    case "alert.stop": return "An email alert was stopped from its email link";
+    case "transcript.redo": return "Asked for the transcript of " + who + " to be made again";
+    case "speakers.update": return "Named the speakers of " + who;
+    case "documents.run": return "Fetched the cities' documents now";
+    case "recording.parts.prune": return "Deleted raw capture files that were no longer needed";
+  }
+  return e.action.replace(/\./g, " ") + (who ? ": " + who : "");
+}
+var AUDIT_ACTIONS = { "feed.update": "Feed changes", "feed.run": "Feed runs", "feed.create": "Feeds added", "feed.delete": "Feeds deleted", "user.update": "User changes", "user.create": "Accounts created",
+  "account.password": "Password changes", "login.check": "Zoom login checks", "meeting.edit": "Meeting edits", "meeting.delete": "Meetings deleted", "job.create": "Captures scheduled", "token.create": "API keys made", "token.revoke": "API keys revoked" };
 function auditRow(e) {
   var b = e.before || {}, a = e.after || {}, keys = Object.keys(a).length ? Object.keys(a) : Object.keys(b);
-  var changes = el("div", { "class": "sub" });
-  keys.forEach(function (k) {
-    var line = e.before && e.after ? show(b[k]) + " → " + show(a[k]) : show(e.after ? a[k] : b[k]);
-    changes.appendChild(el("div", { "class": "change" }, el("b", { text: k + ": " }), line));
-  });
+  var detail = null;
+  if (keys.length || e.ip) {
+    var lines = keys.map(function (k) {
+      var line = e.before && e.after ? show(b[k]) + " → " + show(a[k]) : show(e.after ? a[k] : b[k]);
+      return el("div", { "class": "change" }, el("b", { text: k + ": " }), line);
+    });
+    lines.push(el("div", { "class": "change audit-who", text: "action " + e.action + (e.ip ? " · from " + e.ip : "") }));
+    detail = el("details", { "class": "change-detail" }, el("summary", { text: "Details" }), el.apply(null, ["div", { "class": "sub" }].concat(lines)));
+  }
   return el("div", { "class": "row" },
-    el("div", { "class": "title" }, el("span", { "class": "pill", text: e.action }), e.targetLabel || e.targetType),
+    el("div", { "class": "title", text: describeAudit(e) }),
     el("div", null),
-    el("div", { "class": "sub", text: fmt(e.at) + " · " + e.actor + (e.ip ? " · " + e.ip : "") }),
-    keys.length ? changes : null);
+    el("div", { "class": "sub", text: fmt(e.at) + " · " + e.actor }),
+    detail);
 }
 function loadAudit(before) {
   return aapi("GET", auditQuery(before)).then(function (d) {
     var box = document.getElementById("audit"), sel = document.getElementById("aaction");
     var have = [].map.call(sel.options, function (o) { return o.value; });
-    d.actions.forEach(function (x) { if (have.indexOf(x) < 0) sel.appendChild(el("option", { value: x, text: x })); });
+    d.actions.forEach(function (x) { if (have.indexOf(x) < 0) sel.appendChild(el("option", { value: x, text: AUDIT_ACTIONS[x] || x })); });
     if (!before) fill(box);
     d.entries.forEach(function (e) { box.appendChild(auditRow(e)); });
     if (!before && !d.entries.length) box.appendChild(el("div", { "class": "empty", text: "Nothing yet." }));
@@ -563,6 +652,7 @@ function showTab() {
   [].forEach.call(document.querySelectorAll("#tabs a[href^='#']"), function (a) {
     if (a.getAttribute("href") === "#" + cur) a.setAttribute("aria-current", "page"); else a.removeAttribute("aria-current");
   });
+  document.getElementById("login").hidden = cur !== "overview" && cur !== "captures";   // the Zoom login matters where captures are
   if (cur === "audit" && !document.getElementById("audit").childNodes.length) loadAudit();
 }
 function goTab(t) { if (location.hash !== "#" + t) location.hash = "#" + t; else showTab(); }
@@ -626,6 +716,12 @@ function renderOverview() {
   if (reviewCount) attn.push(line(el("span", { "class": "pill s-queued", text: "review" }), reviewCount + (reviewCount === 1 ? " meeting" : " meetings") + " waiting for approval", "", el("div", { "class": "actions" },
     el("a", { href: "/admin/feeds", text: "Review" }))));
   fill.apply(null, [document.getElementById("attn")].concat(attn.length ? attn : [el("div", { "class": "ok-line", text: "All clear." })]));
+  var HEALTH_PILL = { ok: ["healthy", "done"], failing: ["failing", "stopping"], unhealthy: ["failing for over a day", "failed"], "new": ["not run yet", "stopped"], disabled: ["off", "stopped"] };
+  var fs = feedsNow.map(function (f) {
+    var h = HEALTH_PILL[f.health] || [f.health, "stopped"];
+    return line(el("span", { "class": "pill s-" + h[1], text: h[0] }), f.name, f.parserLabel + (f.lastRunAt ? " · checked " + ago(f.lastRunAt) : " · never checked"));
+  });
+  fill.apply(null, [document.getElementById("feedsum")].concat(fs.length ? fs : [el("div", { "class": "empty", text: "No feeds yet. Add one on the Feeds page." })]));
   var b = document.getElementById("b-over");
   b.hidden = !attn.length; b.textContent = String(attn.length);
   var br = document.getElementById("b-review");
@@ -636,7 +732,7 @@ function loadOverviewExtra() {
   aapi("GET", "/api/admin/meetings?view=review").then(function (d) { reviewCount = (Array.isArray(d) ? d : (d.meetings || [])).length; renderOverview(); }, function () {});
   aapi("GET", "/api/admin/audit?limit=8").then(function (d) {
     fill.apply(null, [document.getElementById("recent")].concat(d.entries.length ? d.entries.map(function (e) {
-      return el("div", { "class": "row" }, el("div", { "class": "title" }, el("span", { "class": "pill", text: e.action }), e.targetLabel || e.targetType),
+      return el("div", { "class": "row" }, el("div", { "class": "title", text: describeAudit(e) }),
         el("div", null), el("div", { "class": "sub", text: fmt(e.at) + " · " + e.actor }));
     }) : [el("div", { "class": "empty", text: "Nothing yet." })]));
   }, function () {});

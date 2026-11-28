@@ -125,7 +125,7 @@ function fill(node) {
   node.replaceChildren.apply(node, kids);
   return node;
 }
-function pill(status) { return el("span", { "class": "pill s-" + status, text: status }); }
+function pill(status) { return el("span", { "class": "pill s-" + status, text: String(status).replace(/_/g, " ") }); }
 var fmtDT = new Intl.DateTimeFormat(undefined, { timeZone: TZ, weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
 var fmtClock = new Intl.DateTimeFormat(undefined, { timeZone: TZ, hour: "numeric", minute: "2-digit", second: "2-digit" });
 function fmt(iso) { return iso ? fmtDT.format(new Date(iso)) : "?"; }

@@ -438,10 +438,11 @@ describe("feeds page in Chromium", { skip: skipReason() }, () => {
     await page.waitForURL(base + "/admin/feeds");
     await page.waitForSelector("#feeds .empty");
 
+    await page.click("#addbtn");   // the form is folded away until asked for
     await page.selectOption("#f-parser", "test-json");
     await page.fill("#f-name", "Langford council");
     await page.fill("#cfg-url", src.url);
-    await page.fill("#f-prefix", "langford");
+    // No folder prefix typed: it defaults to the first word of the name ("langford").
     await page.click("#previewbtn");
     await page.waitForSelector("#previewbody table");
     const row = await page.textContent("#previewbody table tr:nth-child(2)") ?? "";
@@ -701,6 +702,61 @@ describe("redesigned pages in Chromium", { skip: skipReason() }, () => {
     await page.click("#tryrow a.chip >> nth=0");
     await page.waitForURL(/\/search\?q=/);
     assert.equal(await page.isHidden("#tryrow"), true);
+  });
+
+  it("admin: Feeds in the tab shell with the form folded away, readable audit sentences, a tidier overview and people page", async () => {
+    const u = await app.accounts.create({ email: "tidy@example.com", role: "admin", password: "tidy password 1", verified: true });
+    const page = await signIn("tidy@example.com", "tidy password 1", "/admin/feeds");
+    // Feeds sits in the same tab bar as the other admin pages, current there, with the add form closed.
+    await page.waitForSelector("#tabs a[aria-current='page']:has-text('Feeds')");
+    assert.equal(await page.locator("#tabs a").count(), 6);
+    assert.equal(await page.isHidden("#formbox"), true);
+    await page.click("#addbtn");
+    await page.waitForSelector("#formbox:not([hidden])");
+    assert.equal(await page.getAttribute("#advbox", "open"), null, "advanced settings start closed");
+    await page.fill("#f-name", "Colwood Council");
+    assert.equal(await page.evaluate(() => (window as unknown as { formBody(): { slugPrefix: string } }).formBody().slugPrefix), "colwood", "the folder prefix defaults to the first word of the name");
+    await page.click("#cancelbtn");
+    assert.equal(await page.isHidden("#formbox"), true);
+
+    // The audit log reads as sentences, with the raw fields behind Details.
+    const actor = { id: u.id, label: "tidy@example.com", ip: "192.168.1.5" };
+    app.audit.record(actor, "feed.update", { type: "feed", id: "f1", label: "Saanich Council" }, { config: { baseUrl: "https://a.example/" } }, { config: { baseUrl: "https://a.example/", linksUrl: "https://b.example/" } });
+    app.audit.record(actor, "user.update", { type: "user", id: "u9", label: "someone@example.com" }, { role: "user" }, { role: "admin" });
+    await page.goto(base + "/admin#audit");
+    await page.waitForSelector("#audit .row .title:has-text('Made someone@example.com an admin')");
+    assert.match(await page.textContent("#audit") ?? "", /Changed the feed Saanich Council: the meeting links page/);
+    assert.doesNotMatch(await page.textContent("#audit .row .title") ?? "", /feed\.update|user\.update/);
+    assert.equal(await page.locator("#audit details.change-detail[open]").count(), 0);
+    await page.click("#audit .row:has-text('Saanich Council') summary");
+    assert.match(await page.textContent("#audit .row:has-text('Saanich Council') details") ?? "", /192\.168\.1\.5/);
+    // Overview: a feeds card, and the settings line after the columns rather than inside "Right now".
+    await page.goto(base + "/admin#overview");
+    await page.waitForSelector("#feedsum");
+    assert.equal(await page.evaluate(() => !!(document.getElementById("feedsum")!.compareDocumentPosition(document.getElementById("meta")!) & Node.DOCUMENT_POSITION_FOLLOWING)), true);
+    assert.equal(await page.locator("#now #meta").count(), 0);
+    // The Zoom login banner belongs to Overview and Captures only.
+    assert.equal(await page.isVisible("#login"), true);
+    await page.goto(base + "/admin#people");
+    assert.equal(await page.isHidden("#login"), true);
+    // People: a revoked key is folded away until asked for.
+    const t = app.tokens.create(u.id, { label: "old key" });
+    app.tokens.revoke(t.record.id);
+    await page.reload();
+    await page.waitForSelector("#tokens button:has-text('Show 1 revoked or expired key')");
+    assert.equal(await page.locator("#tokens .row .title:has-text('old key')").count(), 0);
+    await page.click("#tokens button:has-text('Show 1 revoked or expired key')");
+    await page.waitForSelector("#tokens .row .title:has-text('old key')");
+  });
+
+  it("account: no 'Signed in / Continue' card (the header says who is signed in)", async () => {
+    await app.accounts.create({ email: "plain@example.com", role: "user", password: "plain password 1", verified: true });
+    const page = await signIn("plain@example.com", "plain password 1", "/account");
+    await page.waitForSelector("#tabs a");
+    assert.equal(await page.isHidden("#account"), true);
+    assert.equal(await page.locator("h2:has-text('Signed in')").count(), 0);
+    assert.equal(await page.isVisible("#home"), false);
+    assert.match(await page.textContent("#me") ?? "", /plain@example\.com/);
   });
 });
 

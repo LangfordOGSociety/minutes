@@ -183,6 +183,16 @@ captures).
   phone; cancelled / not recorded cards read quieter (`.mcard.quiet`);
   `/search` has example chips, a municipality filter (`/api/search?source=`)
   and the badge on each hit.
+  Admin batch: Feeds (`/admin/feeds`) shares the admin header and tab bar
+  (its add/edit form is folded away behind "Add a feed", advanced settings
+  folded again, folder prefix defaults to the first word of the name); one
+  content width; tab bar scrolls sideways on a phone; the Zoom login
+  banner shows on Overview and Captures only; Overview has a Feeds card and
+  the settings line moved to its foot; the audit log and Recent activity
+  read as sentences (`describeAudit` in admin.ts: raw fields, action code
+  and IP are behind "Details"); capture outcomes are in plain words;
+  revoked/expired API keys are folded away; the account page has no
+  "Signed in / Continue" card.
 - Scale (`docs/scaling.md`, `test/scale.test.ts`, 3000 meetings): `serve.ts`
   keeps the recordings list and the public model in snapshots (rebuilt on
   `Meetings.version` / `Scheduler.version` changes, after any write request,
