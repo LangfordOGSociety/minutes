@@ -8,3 +8,5 @@ images:
     newTag: main
   - name: ghcr.io/langfordogsociety/minutes-transcriber-rocm
     newTag: main
+  - name: ghcr.io/langfordogsociety/minutes-encoder
+    newTag: main

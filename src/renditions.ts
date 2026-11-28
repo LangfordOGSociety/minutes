@@ -8,10 +8,13 @@
  * keeps the transcript, chapters and captions in step because it is the same timeline.
  * Why not other codecs, and the numbers: docs/streaming-quality.md.
  *
- * Made one at a time, niced, and not while a capture is running or about to start (the
- * capture encodes in real time on the same machine). A failure is remembered for an hour.
+ * Two ways to make them. On the GPU node (src/encoder.ts, the minutes-encoder container): the
+ * AMD GPU's video encoder through VAAPI, about 30 times faster than real time and nearly no CPU
+ * (measured on k3s-07's Radeon 8060S: docs/streaming-quality.md). Or x264 on the CPU, inside the web
+ * server (RENDITIONS), niced, and not while a capture is running or about to start. A failure is
+ * remembered for an hour.
  */
-import { execFile } from "node:child_process";
+import { execFile, type ChildProcess } from "node:child_process";
 import { renameSync, rmSync, statSync } from "node:fs";
 import path from "node:path";
 import { logger } from "./util.js";
@@ -25,9 +28,27 @@ export const renditionFile = (slug: string, height: number): string => `${slug}.
 export const RENDITION_RE = /^(.+)\.(\d{3,4})p\.mp4$/;
 
 /** x264 settings per height: constant quality, so a still slide costs almost nothing and a busy shot costs what it needs. */
-export function videoArgs(height: number): string[] {
-  return ["-vf", `scale=-2:${height},fps=30`, "-c:v", "libx264", "-preset", RENDITION_PRESET, "-crf", String(height >= 720 ? RENDITION_CRF : RENDITION_CRF + 2),
-    "-pix_fmt", "yuv420p", "-profile:v", "high", "-g", "60", "-keyint_min", "30", "-sc_threshold", "40"];
+export function videoArgs(height: number, threads = 2): string[] {
+  // The thread limits matter: -threads alone leaves x264's lookahead and the scaler free to take every core the container may use.
+  return ["-filter_threads", "1", "-vf", `scale=-2:${height},fps=30`, "-c:v", "libx264", "-preset", RENDITION_PRESET, "-crf", String(height >= 720 ? RENDITION_CRF : RENDITION_CRF + 2),
+    "-pix_fmt", "yuv420p", "-profile:v", "high", "-g", "60", "-keyint_min", "30", "-sc_threshold", "40", "-threads", String(threads),
+    "-x264-params", "lookahead-threads=1"];
+}
+
+/** The GPU encoder's bit rate is about 1.4 times x264's for the same picture (measured), so its targets are scaled up from ours. */
+export const VAAPI_FACTOR = 1.43;
+export const vaapiKbps = (height: number): number => Math.round(targetKbps(height) * VAAPI_FACTOR);
+
+/** VAAPI (the AMD GPU's encoder): the decoding and scaling are done by the CPU and the frames handed to the GPU, which measured as
+ *  fast as doing everything on the GPU and avoids the GPU scaler's flood of driver errors. A source already at the wanted height isn't scaled. */
+export function vaapiArgs(height: number, sourceHeight: number, device: string, threads = 4): { input: string[]; output: string[] } {
+  const k = vaapiKbps(height);
+  const scale = Math.abs(sourceHeight - height) <= 8 ? [] : [`scale=-2:${height}`];
+  return {
+    input: ["-threads", String(threads), "-vaapi_device", device],
+    output: ["-vf", [...scale, "fps=30", "format=nv12", "hwupload"].join(","), "-c:v", "h264_vaapi", "-rc_mode", "VBR", "-b:v", `${k}k`, "-maxrate", `${2 * k}k`,
+      "-profile:v", "high", "-g", "60"],
+  };
 }
 export const RENDITION_PRESET = "medium";
 export const RENDITION_CRF = 27;
@@ -62,13 +83,28 @@ function probeVideo(file: string, bytes: number, durationS: number | null): Prom
 
 export interface RenditionTask { slug: string; video: string; dir: string; duration: number | null; have: number[] }
 
+export interface RenditionOpts {
+  /** "vaapi" makes the copies on the GPU (falling back to x264 if it can't); default x264. */
+  encoder?: "x264" | "vaapi";
+  /** The render node for VAAPI. */
+  device?: string;
+  /** CPU threads for decoding and (x264) encoding. */
+  threads?: number;
+}
+
 export class Renditions {
   private busy = false;
+  private child: ChildProcess | null = null;
+  private aborted = false;
+  private warned = false;
   private failed = new Map<string, number>();
   /** Recordings with nothing more to make (their size was checked): remembered by name and byte size, so a pass doesn't probe them again. */
   private settled = new Map<string, string>();
 
-  constructor(private ladder: number[] = DEFAULT_LADDER) {}
+  constructor(private ladder: number[] = DEFAULT_LADDER, private o: RenditionOpts = {}) {}
+
+  /** Stop what is running (a shutdown): the unfinished copy is discarded and the pass ends. */
+  abort(): void { this.aborted = true; this.child?.kill("SIGTERM"); }
 
   /** One pass over recordings that have a video. `stop()` says a capture needs the machine: nothing new is started while it is true. Returns how many were made. */
   async run(todo: RenditionTask[], stop: () => boolean = () => false, now = Date.now()): Promise<number> {
@@ -77,7 +113,7 @@ export class Renditions {
     let made = 0;
     try {
       for (const t of todo) {
-        if (stop()) break;
+        if (stop() || this.aborted) break;
         const file = path.join(t.dir, t.video);
         let bytes = 0;
         try { bytes = statSync(file).size; } catch { continue; }
@@ -88,9 +124,9 @@ export class Renditions {
         const want = planHeights(v.height, this.ladder, v.kbps).filter((x) => !t.have.includes(x));
         if (!want.length) { this.settled.set(t.slug, key); continue; }
         for (const height of want) {
-          if (stop()) return made;
+          if (stop() || this.aborted) return made;
           if (now - (this.failed.get(`${t.slug}:${height}`) ?? -Infinity) < 3_600_000) continue;
-          const ok = await this.make(file, path.join(t.dir, renditionFile(t.slug, height)), height, t.duration);
+          const ok = await this.make(file, path.join(t.dir, renditionFile(t.slug, height)), height, v.height, t.duration);
           if (ok) { made++; log.info(`${t.slug}: ${height}p`); } else this.failed.set(`${t.slug}:${height}`, now);
         }
       }
@@ -98,16 +134,36 @@ export class Renditions {
     return made;
   }
 
-  private make(src: string, dest: string, height: number, durationS: number | null): Promise<boolean> {
+  private make(src: string, dest: string, height: number, sourceHeight: number, durationS: number | null): Promise<boolean> {
     const tmp = `${dest}.tmp.mp4`;
     // A generous limit, in case the machine is busy: an hour, or four times the recording's length.
     const timeout = Math.max(3_600_000, (durationS ?? 0) * 4000);
-    return new Promise((resolve) => {
-      execFile("nice", ["-n", "19", "ffmpeg", "-v", "error", "-y", "-threads", "4", "-i", src, "-map", "0:v:0", "-map", "0:a:0?",
-        ...videoArgs(height), ...audioArgs(height), "-movflags", "+faststart", tmp], { timeout }, (err) => {
-        if (err) { log.warn(`no ${height}p for ${path.basename(src)}: ${String(err.message).split("\n")[0]}`); rmSync(tmp, { force: true }); resolve(false); return; }
-        try { renameSync(tmp, dest); resolve(true); } catch { rmSync(tmp, { force: true }); resolve(false); }
+    const threads = this.o.threads ?? 2;
+    const run = (kind: "x264" | "vaapi"): Promise<string | null> => new Promise((resolve) => {
+      const v = kind === "vaapi" ? vaapiArgs(height, sourceHeight, this.o.device ?? "/dev/dri/renderD128", Math.max(threads, 2)) : null;
+      const args = [...(v ? v.input : []), "-i", src, "-map", "0:v:0", "-map", "0:a:0?", ...(v ? v.output : videoArgs(height, threads)), ...audioArgs(height), "-movflags", "+faststart", tmp];
+      const base = ["ffmpeg", "-v", "error", "-y", ...args];
+      const [bin, ...rest] = kind === "x264" ? ["nice", "-n", "19", ...base] : base;   // the CPU encode yields to everything else; the GPU one uses no CPU to speak of
+      // The driver can be noisy: a big buffer, and only the first line of an error is kept.
+      this.child = execFile(bin, rest, { timeout, maxBuffer: 32 * 1024 * 1024 }, (err) => {
+        this.child = null;
+        resolve(err ? String(err.message).split("\n").find((l) => l.trim() && !/^Command failed/.test(l)) ?? String(err.message).split("\n")[0] : null);
       });
     });
+    const finish = (): boolean => { try { renameSync(tmp, dest); return true; } catch { rmSync(tmp, { force: true }); return false; } };
+    return (async () => {
+      const order: ("x264" | "vaapi")[] = this.o.encoder === "vaapi" ? ["vaapi", "x264"] : ["x264"];
+      let last: string | null = null;
+      for (const kind of order) {
+        rmSync(tmp, { force: true });
+        last = await run(kind);
+        if (!last) return finish();
+        if (this.aborted) break;
+        if (kind === "vaapi" && !this.warned) { this.warned = true; log.warn(`the GPU encoder failed (${last}); using x264 on the CPU`); }
+      }
+      log.warn(`no ${height}p for ${path.basename(src)}: ${last ?? "stopped"}`);
+      rmSync(tmp, { force: true });
+      return false;
+    })();
   }
 }

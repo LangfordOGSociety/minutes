@@ -39,7 +39,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
       - name: point main at this commit's images
         run: |
-          for image in minutes minutes-transcriber minutes-transcriber-rocm; do
+          for image in minutes minutes-transcriber minutes-transcriber-rocm minutes-encoder; do
             docker buildx imagetools create --tag "$REPO/$image:main" "$REPO/$image:sha-$GITHUB_SHA"
           done
 
@@ -101,6 +101,11 @@ jobs:
           if $k get deployment minutes-transcriber >/dev/null 2>&1; then
             $k set image deployment/minutes-transcriber transcriber="$REPO/minutes-transcriber-rocm:sha-$GITHUB_SHA"
             deploys="$deploys minutes-transcriber"
+          fi
+          # The GPU encoder (k3s-07): restarting it only abandons a copy in progress, which is made again.
+          if $k get deployment minutes-encoder >/dev/null 2>&1; then
+            $k set image deployment/minutes-encoder encoder="$REPO/minutes-encoder:sha-$GITHUB_SHA"
+            deploys="$deploys minutes-encoder"
           fi
           failed=0
           for d in $deploys; do

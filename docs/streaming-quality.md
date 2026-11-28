@@ -77,6 +77,47 @@ Reading it:
 6. **Public files**: the copies are public files of a public recording (served by `/media` with
    Range, listed by `/api/v1/meetings/:id/files` as `video-smaller` with a `height`).
 
+## Encoding on the GPU (k3s-07)
+
+x264 on the web pod's CPU was the first implementation, and it took every core the pod may use (8): a 4 hour
+meeting needed over an hour per copy, and a capture starting meanwhile would have been throttled with it (the pod's
+CPU limit is a shared quota; niceness doesn't protect against it). The copies are now made by their own container,
+`minutes-encoder` (`Dockerfile.encoder`, `src/encoder.ts`), on k3s-07, whose Radeon 8060S (gfx1151) has a hardware
+H.264 encoder reached through VAAPI (Mesa 25.0's `radeonsi` VA driver on Debian 13; the transcriber's ROCm image has no
+VA driver and the capture image's Ubuntu 22.04 Mesa predates the GPU).
+
+Measured on k3s-07 with a 4 minute clip, 1080p to 720p, against x264 on the same node (4 threads):
+
+| path | video rate | SSIM | speed (x realtime) |
+|---|---|---|---|
+| x264 medium crf 27, CPU | 459 kbps | 0.991 | 13 |
+| VAAPI constant QP 24 | 596 kbps | 0.989 | 33 |
+| VAAPI constant QP 27 | 417 kbps | 0.984 | 33 |
+| VAAPI constant QP 30 | 286 kbps | 0.979 | 33 |
+| VAAPI VBR 350k | 357 kbps | 0.984 | 32 |
+| VAAPI VBR 400k, CPU decode and scale | 407 kbps | 0.987 | 32 |
+| VAAPI VBR 400k, GPU decode and scale (`scale_vaapi`) | 407 kbps | 0.986 | 32, but ~7000 driver error lines |
+| VAAPI VBR 400k, GPU decode, CPU scale | 407 kbps | 0.987 | 26 |
+| a 720p city stream (3.1 Mbps), not scaled, GPU decode and encode | 406 kbps | 0.966 | 32 |
+
+- **The GPU is about 2.5 times faster than the CPU and uses almost none of it**, but its encoder spends roughly
+  1.4 times the bits for the same picture (compare VBR 350k with x264 crf 27: x264 is sharper at 459 kbps; at
+  similar SSIM the GPU needs about 40% more). The targets are scaled up from x264's for that
+  (`VAAPI_FACTOR` 1.43: 501, 223 and 126 kbps for 720p, 480p and 360p), so a 720p copy is still about half the original's rate.
+- **VBR, not constant QP**: at the same SSIM VBR gave a 14% smaller file than constant QP.
+- **CPU decode and scale feeding the GPU encoder** is as fast as all-GPU, and avoids the GPU scaler's flood of
+  driver errors (`si_vpe_construct_blt`); the frames are then handed over with `hwupload`. A source already at the
+  wanted height isn't scaled.
+- **Heavy city streams shrink the most**: the 3.1 Mbps 720p Saanich import becomes about 0.4 Mbps (87% smaller) in
+  7 seconds per 4 minutes, so a 4 hour meeting takes about 8 minutes per copy. SSIM against such a source is lower
+  (0.966), as it is a sharper, busier picture than a slide-and-speaker recording.
+- **It needs only the render node**, so the container asks for `devic.es/dri-render` (shared, 4 on the node) and not an
+  `amd-gpu` slot, which the transcriber and Ollama hold. The video block is separate from the compute units WhisperX uses.
+- **If the GPU can't be used** (no device, a driver problem) the worker logs why once and encodes with x264 on the CPU
+  (4 threads), so copies still appear.
+- The web server keeps the CPU path for other deployments, now capped at two threads (and `-filter_threads 1`,
+  `lookahead-threads=1`): `-threads` alone had left it free to use every core.
+
 ## Not done, and why
 
 - **Re-encoding the originals.** Langford's are 0.9 Mbps already, and a newer codec saves only

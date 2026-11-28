@@ -314,12 +314,16 @@ throttled.
 
 **Streaming quality.** Besides the original recording, the server makes
 smaller copies (720p, 480p and 360p H.264, a fraction of the original's
-size) one at a time, at low priority, and never while a capture is running
-or about to start. The player on the meeting page and in embeds has a
+size). On the homelab they're made by the `minutes-encoder` container on
+k3s-07's GPU video encoder (VAAPI: about 30 times faster than real time, almost
+no CPU); anywhere else the web server makes them with x264 on the CPU, two
+threads, at low priority, and never while a capture is running or about to
+start. The player on the meeting page and in embeds has a
 Quality menu: Auto (picks one from the screen size and connection, and
 steps down if playback keeps stalling), Original, or a size; the choice is
 remembered. `RENDITIONS=720,480` changes the sizes, `RENDITIONS=off`
-turns them off. The API lists them as `video-smaller` files. Why plain MP4
+turns them off in the web server (the encoder container has its own
+`RENDITIONS`, `ENCODER=vaapi|x264`, `VAAPI_DEVICE`). The API lists them as `video-smaller` files. Why plain MP4
 and H.264 rather than HLS or newer codecs: `docs/streaming-quality.md`.
 A source already at one of those sizes gets a copy at its own size when it
 is much heavier than ours would be (a city's 2.5 Mbps 720p stream becomes
