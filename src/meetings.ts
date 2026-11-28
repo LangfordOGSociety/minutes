@@ -100,6 +100,9 @@ function fromRow(r: Row): Meeting {
 export class Meetings {
   constructor(private db: DB) {}
 
+  /** Bumps on every create, save and delete here, so a cache built from meetings knows when it is stale. */
+  version = 0;
+
   get(id: string): Meeting | undefined {
     const r = this.db.prepare(`SELECT ${COLS} FROM meetings WHERE id = ?`).get(id) as Row | undefined;
     return r && fromRow(r);
@@ -111,7 +114,23 @@ export class Meetings {
   }
 
   delete(id: string): void {
+    this.version++;
     this.db.prepare("DELETE FROM meetings WHERE id = ?").run(id);
+  }
+
+  /** Starting at or after an instant (ISO), soonest first: what the admin's "upcoming" view shows. */
+  from(iso: string): Meeting[] {
+    return (this.db.prepare(`SELECT ${COLS} FROM meetings WHERE start >= ? ORDER BY start`).all(iso) as Row[]).map(fromRow);
+  }
+
+  /** The latest `limit` meetings that started at or before an instant, newest first ("recent"). */
+  recent(iso: string, limit: number): Meeting[] {
+    return (this.db.prepare(`SELECT ${COLS} FROM meetings WHERE start <= ? ORDER BY start DESC LIMIT ?`).all(iso, limit) as Row[]).map(fromRow);
+  }
+
+  /** Waiting for review (the review queue is a small set: an index on `review` keeps it so). */
+  pendingReview(): Meeting[] {
+    return (this.db.prepare(`SELECT ${COLS} FROM meetings WHERE review = 'pending' ORDER BY start`).all() as Row[]).map(fromRow);
   }
 
   list(): Meeting[] {
@@ -133,6 +152,7 @@ export class Meetings {
 
   create(input: NewMeeting, at = new Date().toISOString()): Meeting {
     const m: Meeting = { status: "scheduled", visibility: "public", ...input, id: randomUUID(), createdAt: at, updatedAt: at };
+    this.version++;
     this.db.prepare(`INSERT INTO meetings (${COLS}) VALUES (${COLS.split(", ").map((c) => ":" + c).join(", ")})`).run(toRow(m));
     return m;
   }
@@ -140,6 +160,7 @@ export class Meetings {
   /** Write back a changed meeting; bumps updatedAt. */
   save(m: Meeting): void {
     m.updatedAt = new Date().toISOString();
+    this.version++;
     const sets = COLS.split(", ").filter((c) => c !== "id" && c !== "created_at").map((c) => `${c} = :${c}`).join(", ");
     const { created_at: _, ...row } = toRow(m);
     this.db.prepare(`UPDATE meetings SET ${sets} WHERE id = :id`).run(row);

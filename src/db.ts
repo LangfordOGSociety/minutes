@@ -307,6 +307,9 @@ const MIGRATIONS: string[] = [
   `ALTER TABLE feeds ADD COLUMN color TEXT;`,
   // 17: fields an admin edited by hand on a feed's meeting (JSON array of names): the feed no longer overwrites them
   `ALTER TABLE meetings ADD COLUMN edited TEXT;`,
+  // 18: the review queue and slug lookups stay cheap with thousands of meetings (meetings_start exists since 5)
+  `CREATE INDEX IF NOT EXISTS meetings_review ON meetings (review) WHERE review IS NOT NULL;
+   CREATE INDEX IF NOT EXISTS meetings_slug ON meetings (slug);`,
 ];
 
 export function openDb(file: string): DB {

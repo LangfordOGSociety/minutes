@@ -142,6 +142,14 @@ captures).
   first) with an embed builder; `/admin` is tabs (`#overview` default,
   `#captures #recordings #people #audit`, Feeds is its own page);
   `/embed/upcoming` (`pages/embedlist.ts`) is the framable upcoming list.
+- Scale (`docs/scaling.md`, `test/scale.test.ts`, 3000 meetings): `serve.ts`
+  keeps the recordings list and the public model in snapshots (rebuilt on
+  `Meetings.version` / `Scheduler.version` changes, after any write request,
+  or after `snapshotMs`, default 5 s; tests use 0) and treats them as
+  read-only; `Scheduler.jobsOf / jobBySlug / activeSlugs` replace scans of
+  all jobs; `listRecordings` re-reads only folders whose mtimes changed; the
+  admin lists take `?limit=`; `Search.sync` takes a time budget. Don't add a
+  per-meeting or per-recording query or file read to a request path.
 - `src/site.ts` the public site's model (Phase 3): a meeting row + its
   jobs + its recording folder -> `PublicMeeting` with a `stage` (upcoming,
   live, stitching, video_ready, ready, failed, not_recorded, cancelled;

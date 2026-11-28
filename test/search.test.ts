@@ -64,12 +64,31 @@ describe("the index", () => {
   }
   const seg = (start: number, text: string, label = "Speaker 1"): Seg => ({ start, end: start + 5, text, label });
 
+  it("indexes in slices when given a time budget, and drops nothing until it has seen everything", (t) => {
+    const db = openDb(path.join(tmpDir(t), "minutes.db"));
+    t.after(() => db.close());
+    const search = new Search(db);
+    const dir = tmpDir(t);
+    const items = ["a", "b", "c"].map((n) => {
+      const file = path.join(dir, `${n}.transcript.json`);
+      writeFileSync(file, JSON.stringify({ segments: [{ start: 0, end: 5, text: `words from ${n}`, label: "Speaker 1" }] }));
+      return { recSlug: n, meetingId: `m-${n}`, file };
+    });
+    search.sync(items);
+    assert.deepEqual(search.sync([]), { indexed: 0, removed: 3, more: false });
+    // A budget of 0 stops after one transcript each time; the removal pass waits for the last slice.
+    let r = search.sync(items, new Date(), 0), calls = 1;
+    assert.deepEqual([r.indexed, r.more], [1, true]);
+    while (r.more) { r = search.sync(items, new Date(), 0); calls++; }
+    assert.ok(calls >= 3 && search.search("words", { meetingIds: ["m-a", "m-b", "m-c"] }).total === 3);
+  });
+
   it("indexes new and changed files, skips unchanged ones, drops removed ones", (t) => {
     const { write, search, dir } = store(t);
     const a = write("a", [seg(0, "The budget amendment passed."), seg(70, "Public hearing on zoning.")], 1000);
-    assert.deepEqual(search.sync([{ recSlug: "a", meetingId: "m1", file: a }]), { indexed: 1, removed: 0 });
+    assert.deepEqual(search.sync([{ recSlug: "a", meetingId: "m1", file: a }]), { indexed: 1, removed: 0, more: false });
     assert.deepEqual(search.stats(), { recordings: 1, passages: 2 });
-    assert.deepEqual(search.sync([{ recSlug: "a", meetingId: "m1", file: a }]), { indexed: 0, removed: 0 });     // unchanged
+    assert.deepEqual(search.sync([{ recSlug: "a", meetingId: "m1", file: a }]), { indexed: 0, removed: 0, more: false });     // unchanged
     write("a", [seg(0, "Something else entirely.")], 2000);
     assert.equal(search.sync([{ recSlug: "a", meetingId: "m1", file: a }]).indexed, 1);
     assert.equal(search.search("budget", { meetingIds: ["m1"] }).total, 0);                                      // the old text is gone
@@ -80,10 +99,10 @@ describe("the index", () => {
     assert.equal(search.search("entirely", { meetingIds: ["m2"] }).total, 1);
     // A half-written / garbage file is skipped, and the old index kept for next time.
     writeFileSync(a, '{"segments": [', "utf8"); utimesSync(a, 3000, 3000);
-    assert.deepEqual(search.sync([{ recSlug: "a", meetingId: "m2", file: a }]), { indexed: 0, removed: 0 });
+    assert.deepEqual(search.sync([{ recSlug: "a", meetingId: "m2", file: a }]), { indexed: 0, removed: 0, more: false });
     assert.equal(search.search("entirely", { meetingIds: ["m2"] }).total, 1);
     // Gone from disk (or no longer listed): dropped.
-    assert.deepEqual(search.sync([]), { indexed: 0, removed: 1 });
+    assert.deepEqual(search.sync([]), { indexed: 0, removed: 1, more: false });
     assert.deepEqual(search.stats(), { recordings: 0, passages: 0 });
     assert.equal(existsSync(dir), true);
   });

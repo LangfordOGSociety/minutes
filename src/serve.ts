@@ -155,6 +155,9 @@ export interface ServeOpts extends Omit<SchedulerOpts, "entry"> {
   tokenDownloadBps?: number;
   /** Make poster images for recordings that have a video and none yet (thumbs.ts). Default on; tests turn it off. */
   thumbnails?: boolean;
+  /** How long the recordings list and the public model are kept before being rebuilt, in ms (default 5000; 0 = rebuild every time,
+   *  which the tests use). Any write request, and any change to a meeting or a capture, rebuilds them at once. */
+  snapshotMs?: number;
   /** Searches allowed per minute per client address (default 60; 429 beyond). */
   searchesPerMinute?: number;
   /** Also email the operator's messages (captures, transcripts, login, backups, feeds) to this address. Needs mail. */
@@ -208,6 +211,9 @@ const publicAlert = (a: Alert) => ({ id: a.id, query: a.query, body: a.body, cre
 /** A token as its owner (or an admin) sees it: never its hash. */
 const publicToken = (t: ApiToken) => ({ id: t.id, prefix: t.prefix, label: t.label, scopes: t.scopes, createdAt: t.createdAt, expiresAt: t.expiresAt,
   lastUsedAt: t.lastUsedAt, revokedAt: t.revokedAt, active: activeToken(t), downloadBps: t.limits?.downloadBps ?? null });
+
+/** A whole-number query parameter within bounds, else the default. */
+const int = (s: string | null, d: number, lo: number, hi: number) => Math.min(Math.max(Number.parseInt(s ?? "", 10) || d, lo), hi);
 
 function send(res: http.ServerResponse, status: number, body: unknown, headers: Record<string, string> = {}): void {
   const isText = typeof body === "string" || Buffer.isBuffer(body);
@@ -437,7 +443,7 @@ export function createApp(o: ServeOpts, entry: string): App {
   };
   /** A meeting as the admin sees it: the link only as platform + number. */
   const adminMeeting = (m: Meeting) => {
-    const job = sched.activeJobFor(m.id) ?? sched.list().filter((j) => j.meetingRef === m.id).at(-1);
+    const job = sched.activeJobFor(m.id) ?? sched.jobsOf(m.id).at(-1);
     const dup = m.duplicateOf ? sched.meetings.get(m.duplicateOf) : undefined;
     return { id: m.id, title: m.title, body: m.body ?? null, start: m.start, slug: m.slug, status: m.status, review: m.review ?? null,
       removedAt: m.removedAt ?? null, visibility: m.visibility, link: shownLink(m.link), joinLink: joinLinkOf(m.link), joinSource: joinSourceOf(m), streamUrl: m.streamUrl ?? null,
@@ -467,20 +473,56 @@ export function createApp(o: ServeOpts, entry: string): App {
   const sendPage = (res: http.ServerResponse, p: { body: string; csp: string }) =>
     send(res, 200, p.body, { "Content-Type": "text/html; charset=utf-8", "Content-Security-Policy": p.csp });
 
-  const publicRecordings = () => listRecordings(o.out, sched, o.tz).filter((r) => r.public).map(toPublic);
+  // Snapshots: the recordings list and the public model are built from every meeting, job and recording folder, so they are
+  // built once and kept until something changes: a meeting or a capture (their version counters), any write request (`epoch`),
+  // or SNAP_MS passing (files change under us: the capture, the transcriber, and time itself moves a meeting's stage).
+  const SNAP_MS = o.snapshotMs ?? 5000;
+  let epoch = 0;
+  const snapKey = () => `${sched.version}.${sched.meetings.version}.${epoch}`;
+  const snapshot = <T>(build: () => T): (() => T) => {
+    let kept: { key: string; at: number; v: T } | null = null;
+    return () => {
+      const key = snapKey(), now = Date.now();
+      if (kept && kept.key === key && now - kept.at < SNAP_MS) return kept.v;
+      const v = build();
+      kept = { key, at: now, v };
+      return v;
+    };
+  };
+  const recordings = snapshot(() => listRecordings(o.out, sched, o.tz));
+  const publicRecs = snapshot(() => {
+    const list = recordings().filter((r) => r.public).map(toPublic);
+    return { list, bySlug: new Map(list.map((r) => [r.slug, r])) };
+  });
+  const publicRecordings = () => publicRecs().list;
 
   /** Bring the transcript search index in step with the files on disk (cheap when nothing changed). */
   let searchSyncedAt = 0, closed = false;
+  let searchBusy = false;
   const syncSearch = (force = false) => {
-    if (closed || (!force && Date.now() - searchSyncedAt < 30_000)) return;
+    if (closed || searchBusy || (!force && Date.now() - searchSyncedAt < 30_000)) return;
     searchSyncedAt = Date.now();
+    searchBusy = true;
+    let items: Parameters<Search["sync"]>[0];
+    let indexed = 0, removed = 0;
     try {
-      const items = sched.list().map((j) => ({ recSlug: j.slug, meetingId: j.meetingRef, file: path.join(o.out, j.slug, `${j.slug}.transcript.json`), namesFile: path.join(o.out, j.slug, NAMES_FILE) }))
+      items = sched.list().map((j) => ({ recSlug: j.slug, meetingId: j.meetingRef, file: path.join(o.out, j.slug, `${j.slug}.transcript.json`), namesFile: path.join(o.out, j.slug, NAMES_FILE) }))
         .filter((i) => existsSync(i.file));
-      const r = search.sync(items);
-      if (r.indexed || r.removed) log.info(`transcript search: indexed ${r.indexed}, dropped ${r.removed}`);
-      void processAlerts();
-    } catch (e) { log.warn("indexing transcripts for search failed", e); }
+    } catch (e) { searchBusy = false; log.warn("indexing transcripts for search failed", e); return; }
+    // In slices of about 40 ms with the event loop free in between, so a first pass over thousands of transcripts
+    // doesn't stall the site (video included) while it runs.
+    const slice = () => {
+      try {
+        if (closed) { searchBusy = false; return; }
+        const r = search.sync(items, new Date(), 40);
+        indexed += r.indexed; removed += r.removed;
+        if (r.more) { setImmediate(slice); return; }
+        searchBusy = false;
+        if (indexed || removed) log.info(`transcript search: indexed ${indexed}, dropped ${removed}`);
+        void processAlerts();
+      } catch (e) { searchBusy = false; log.warn("indexing transcripts for search failed", e); }
+    };
+    slice();
   };
   /** Email people whose alerts match meetings that got transcripts (alerts.ts). Needs mail; harmless without. */
   let alertsBusy = false;
@@ -518,16 +560,20 @@ export function createApp(o: ServeOpts, entry: string): App {
     log.info(`operator messages are also emailed to ${o.operatorEmail}`);
   }
   /** Put transcription start, finish and failure in the meetings' history, at the times the transcriber wrote. */
+  const transcriptsSeen = new Map<string, string>();
   const recordTranscripts = () => {
     if (closed) return;
     try {
-      const jobs = sched.list();
+      const seen = transcriptsSeen;
       const when = (s: string | null | undefined) => { const d = s ? new Date(s) : null; return d && !Number.isNaN(d.getTime()) ? d : null; };
       for (const r of listRecordings(o.out, sched, o.tz)) {
         const t = r.transcript;
-        const job = jobs.filter((j) => j.slug === r.slug).at(-1);
+        const sig = t ? `${t.status}|${t.started}|${t.finished}|${t.updated}` : "";
+        if (seen.get(r.slug) === sig) continue;   // nothing new since the last pass
+        const job = t ? sched.jobBySlug(r.slug) : undefined;
         const m = t && job ? sched.meetings.get(job.meetingRef) : undefined;
         if (!t || !m) continue;
+        seen.set(r.slug, sig);
         const started = when(t.started);
         if (started) sync.transcriptEvent(m, `${r.slug}:started:${t.started}`, "transcript_started", started, { recording: r.slug }, "transcription started");
         if (t.status === "done" && when(t.finished)) sync.transcriptEvent(m, `${r.slug}:done:${t.finished}`, "transcript_done", when(t.finished)!, { recording: r.slug }, "transcript ready");
@@ -557,25 +603,29 @@ export function createApp(o: ServeOpts, entry: string): App {
 
   /** The feed a meeting came from, by its name: what the public pages call its municipality. */
   const sourceOf = (m: Meeting): string | null => (m.feedId ? feeds.get(m.feedId)?.name ?? null : null);
-  const colorOf = (m: Meeting): string | null => (m.feedId ? feeds.get(m.feedId)?.color ?? null : null);
-  /** Every meeting the public may see, with what became of it (see site.ts). */
-  const publicSite = (now = Date.now()) => {
-    const recs = new Map<string, Recording>(listRecordings(o.out, sched, o.tz).map((r) => [r.slug, r]));
-    const jobsBy = new Map<string, Job[]>();
-    for (const j of sched.list()) jobsBy.set(j.meetingRef, [...(jobsBy.get(j.meetingRef) ?? []), j]);
-    const entries: { m: Meeting; p: PublicMeeting; rec: Recording | undefined; jobs: Job[] }[] = [];
+  /** Every meeting the public may see, with what became of it (see site.ts). Read-only: shared by every request until it is rebuilt. */
+  const publicSite = snapshot(() => {
+    const now = Date.now();
+    const recs = new Map<string, Recording>(recordings().map((r) => [r.slug, r]));
+    const copies = docs.copiesAll();
+    const feedBy = new Map(feeds.list().map((f) => [f.id, f]));
+    const entries: { m: Meeting; p: PublicMeeting; rec: Recording | undefined; jobs: readonly Job[] }[] = [];
+    const bySlug = new Map<string, (typeof entries)[number]>(), byJobSlug = new Map<string, (typeof entries)[number]>();
     for (const m of sched.meetings.list()) {
       if (!visible(m)) continue;
-      const jobs = jobsBy.get(m.id) ?? [], rec = recordingOf(jobs, recs);
+      const jobs = sched.jobsOf(m.id), rec = recordingOf(jobs, recs);
       // Gone from its feed before it happened: nothing to show (a recording keeps it).
       if (m.removedAt && !rec?.video && Date.parse(m.start) > now - OVER_AFTER_MS) continue;
-      entries.push({ m, p: toPublicMeeting(m, jobs, rec, now, docs.copiesOf(m.id), sourceOf(m), colorOf(m)), rec, jobs });
+      const f = m.feedId ? feedBy.get(m.feedId) : undefined;
+      const e = { m, p: toPublicMeeting(m, jobs, rec, now, copies.get(m.id), f?.name ?? null, f?.color ?? null), rec, jobs };
+      entries.push(e);
+      bySlug.set(m.slug, e);
+      for (const j of jobs) if (!byJobSlug.has(j.slug)) byJobSlug.set(j.slug, e);
     }
     // A shared link may carry a capture's folder name (slug-2, or an old recording link).
-    const find = (slug: string) => entries.find((e) => e.m.slug === slug)
-      ?? entries.find((e) => e.jobs.some((j) => j.slug === slug));
+    const find = (slug: string) => bySlug.get(slug) ?? byJobSlug.get(slug);
     return { entries, find, now };
-  };
+  });
 
   const server = http.createServer({ maxHeaderSize: 16 * 1024, requestTimeout: 30_000, headersTimeout: 15_000 }, async (req, res) => {
     for (const [k, v] of Object.entries(SECURITY_HEADERS)) res.setHeader(k, v);
@@ -587,6 +637,7 @@ export function createApp(o: ServeOpts, entry: string): App {
       try { parts = url.pathname.split("/").filter(Boolean).map(decodeURIComponent); } catch { return send(res, 400, "bad URL"); }
       const method = req.method ?? "GET";
       const read = method === "GET" || method === "HEAD";
+      if (!read) { epoch++; res.once("close", () => { epoch++; }); }   // what a write changed shows at once, and once it is done
       const ip = proxies.clientIp(req);
 
       // Who's asking. A user who must change their password can do nothing
@@ -747,7 +798,7 @@ export function createApp(o: ServeOpts, entry: string): App {
       if (parts[0] === "media" && parts.length === 3) {
         if (!allow("watch")) return;
         openCors(res);
-        const r = publicRecordings().find((x) => x.slug === parts[1]);
+        const r = publicRecs().bySlug.get(parts[1]);
         return media(parts[1], parts[2], (_, f) => !!r && publicFiles(r).has(f));
       }
       if (parts[0] === "doc" && parts.length === 3 && read) {
@@ -780,7 +831,6 @@ export function createApp(o: ServeOpts, entry: string): App {
           return m ? zonedTime(o.tz, +m[1], +m[2], +m[3] + plus) : undefined;
         };
         const from = day(sp.get("from")), to = day(sp.get("to"), 1), body = sp.get("body")?.slice(0, 100).toLowerCase();
-        const int = (s: string | null, d: number, lo: number, hi: number) => Math.min(Math.max(Number.parseInt(s ?? "", 10) || d, lo), hi);
         syncSearch();
         const site = publicSite();
         const eligible = site.entries.filter((e) => e.rec?.public && e.rec.files.transcript
@@ -803,8 +853,7 @@ export function createApp(o: ServeOpts, entry: string): App {
             const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s ?? "");
             return m ? zonedTime(o.tz, +m[1], +m[2], +m[3] + plus) : undefined;
           };
-          const int = (s: string | null, d: number, lo: number, hi: number) => Math.min(Math.max(Number.parseInt(s ?? "", 10) || d, lo), hi);
-          const all = site.entries.map((e) => e.p);
+            const all = site.entries.map((e) => e.p);
           const r = filterMeetings(all, {
             scope: sp.get("scope") === "past" ? "past" : "upcoming", body: sp.get("body")?.slice(0, 100) || undefined, source: sp.get("source")?.slice(0, 100) || undefined,
             from: day(sp.get("from")), to: day(sp.get("to"), 1), q: sp.get("q")?.slice(0, 100) || undefined,
@@ -1159,19 +1208,27 @@ export function createApp(o: ServeOpts, entry: string): App {
         if (what === "info" && parts.length === 3 && read) {
           return send(res, 200, { tz: o.tz, tzdata: process.versions.tz ?? null, leadMinutes: o.leadMs / 60_000, maxConcurrent: o.maxConcurrent });
         }
-        if (what === "recordings" && parts.length === 3 && read) return send(res, 200, listRecordings(o.out, sched, o.tz));
+        if (what === "recordings" && parts.length === 3 && read) {
+          // ?limit=N (with ?offset=): the recordings that have something to play or are running, newest first, and the
+          // total in X-Total-Count. Without it, everything on disk (the page used to take it all every few seconds).
+          const lim = url.searchParams.get("limit");
+          if (lim === null) return send(res, 200, recordings());
+          const real = recordings().filter((r) => r.video || r.active || r.parts.length);
+          const off = Math.max(Number.parseInt(url.searchParams.get("offset") ?? "", 10) || 0, 0);
+          return send(res, 200, real.slice(off, off + int(lim, 50, 1, 500)), { "X-Total-Count": String(real.length) });
+        }
         if (what === "recordings" && parts.length === 5 && sub === "retranscribe" && id && SLUG_RE.test(id) && method === "POST") {
           // Ask the transcriber to do this recording again (after it failed, or the models or vocabulary changed). It watches for
           // recordings with a video and no up-to-date status, so removing the status is the whole request; the old transcript files
           // stay in place, and are replaced one by one, atomically, as the new ones are written.
-          const rec = listRecordings(o.out, sched, o.tz).find((r) => r.slug === id);
+          const rec = listRecordings(o.out, sched, o.tz).find((r) => r.slug === id);   // fresh: this decides a write
           if (!rec?.video) return send(res, 404, { error: "that recording has no video to transcribe" });
           if (sched.isActive(id)) return send(res, 409, { error: "that recording is still being captured" });
           const st = rec.transcript?.status;
           if (st && st !== "done" && st !== "failed") return send(res, 409, { error: `the transcriber is already working on it (${st})` });
           if (!rec.transcript) return send(res, 409, { error: "it's already waiting for the transcriber" });
           // The agenda may have been updated since the first pass: take its names again before the transcriber starts.
-          const job = sched.list().filter((j) => j.slug === id).at(-1);
+          const job = sched.jobBySlug(id);
           const meeting = job && sched.meetings.get(job.meetingRef);
           if (meeting?.agendaUrl) await prepareVocab({ dir: path.join(o.out, id), agendaUrl: meeting.agendaUrl }).catch(() => false);
           rmSync(path.join(o.out, id, "transcript.status.json"), { force: true });
@@ -1258,16 +1315,17 @@ export function createApp(o: ServeOpts, entry: string): App {
         if (what === "meetings") {
           if (parts.length === 3 && read) {
             const view = url.searchParams.get("view") ?? "upcoming";
-            const now = Date.now(), all = sched.meetings.list();
+            const now = Date.now();
+            // Each view is its own indexed query: the admin page never loads every meeting.
             // The review queue: waiting meetings still ahead of us, and finished videos (archives) that are only waiting to be imported.
-            const list = view === "review" ? all.filter((m) => m.review === "pending" && m.status !== "cancelled" && (Date.parse(m.start) > now - 3_600_000 || isArchive(m.link)))
-              : view === "recent" ? all.filter((m) => Date.parse(m.start) <= now).slice(-50).reverse()
-              : all.filter((m) => Date.parse(m.start) > now - 3_600_000);
+            const list = view === "review" ? sched.meetings.pendingReview().filter((m) => m.status !== "cancelled" && (Date.parse(m.start) > now - 3_600_000 || isArchive(m.link)))
+              : view === "recent" ? sched.meetings.recent(new Date(now).toISOString(), 50)
+              : sched.meetings.from(new Date(now - 3_600_000).toISOString());
             return send(res, 200, list.map(adminMeeting));
           }
           // By id, or by the slug the public pages use (also a capture's folder name).
           const m = id ? sched.meetings.get(id) ?? sched.meetings.bySlug(id)
-            ?? (() => { const j = sched.list().find((x) => x.slug === id); return j ? sched.meetings.get(j.meetingRef) : undefined; })() : undefined;
+            ?? (() => { const j = sched.jobBySlug(id); return j ? sched.meetings.get(j.meetingRef) : undefined; })() : undefined;
           if (!m) return send(res, 404, { error: "no such meeting" });
           if (parts.length === 4 && read) return send(res, 200, { ...adminMeeting(m), edited: m.edited ?? [] });
           if (parts.length === 4 && method === "DELETE") {
@@ -1415,7 +1473,14 @@ export function createApp(o: ServeOpts, entry: string): App {
           }
         }
         if (what === "jobs") {
-          if (parts.length === 3 && read) return send(res, 200, sched.list().map(adminJob));
+          if (parts.length === 3 && read) {
+            // ?limit=N: every capture that hasn't finished, and the latest N that have (the page shows ten).
+            const all = sched.list(), lim = url.searchParams.get("limit");
+            if (lim === null) return send(res, 200, all.map(adminJob));
+            const live = (j: Job) => ["scheduled", "queued", "running", "stopping"].includes(j.status);
+            const keep = new Set(all.filter((j) => !live(j)).slice(-int(lim, 20, 1, 500)).map((j) => j.id));
+            return send(res, 200, all.filter((j) => live(j) || keep.has(j.id)).map(adminJob), { "X-Total-Count": String(all.length) });
+          }
           if (parts.length === 3 && method === "POST") {
             const body = await jsonBody();
             if (!body) return;

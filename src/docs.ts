@@ -115,6 +115,18 @@ export class DocMirror {
     return new Map(this.list(meetingId).filter((d) => d.status === "stored" && d.name).map((d) => [d.url, `/doc/${d.id}/${encodeURIComponent(d.name!)}`]));
   }
 
+  /** Every meeting's stored copies in one query: meeting id -> (url -> public path). */
+  copiesAll(): Map<string, Map<string, string>> {
+    const out = new Map<string, Map<string, string>>();
+    for (const r of this.o.db.prepare("SELECT * FROM meeting_documents WHERE status = 'stored' AND name IS NOT NULL").all() as Raw[]) {
+      const d = toRow(r);
+      let m = out.get(d.meetingId);
+      if (!m) out.set(d.meetingId, m = new Map());
+      m.set(d.url, `/doc/${d.id}/${encodeURIComponent(d.name!)}`);
+    }
+    return out;
+  }
+
   filePath(d: DocRow): string | null {
     return d.file ? path.join(this.o.dir, d.file) : null;
   }
