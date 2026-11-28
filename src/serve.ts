@@ -445,7 +445,7 @@ export function createApp(o: ServeOpts, entry: string): App {
       duplicateOf: dup ? { id: dup.id, title: dup.title, slug: dup.slug, start: dup.start } : null,
       capture: job ? { id: job.id, slug: job.slug, status: job.status } : null };
   };
-  const feedSnap = (f: Feed) => ({ name: f.name, parser: f.parser, config: f.config, slugPrefix: f.slugPrefix, policy: f.policy,
+  const feedSnap = (f: Feed) => ({ name: f.name, parser: f.parser, config: f.config, slugPrefix: f.slugPrefix, color: f.color, policy: f.policy,
     intervalMin: f.intervalMin, enabled: f.enabled });
   const keeper = new SessionKeeper({ ...o.session, auth: o.auth, out: o.out, leadMs: o.leadMs }, () => sched.list());
   keeper.start();
@@ -556,6 +556,7 @@ export function createApp(o: ServeOpts, entry: string): App {
 
   /** The feed a meeting came from, by its name: what the public pages call its municipality. */
   const sourceOf = (m: Meeting): string | null => (m.feedId ? feeds.get(m.feedId)?.name ?? null : null);
+  const colorOf = (m: Meeting): string | null => (m.feedId ? feeds.get(m.feedId)?.color ?? null : null);
   /** Every meeting the public may see, with what became of it (see site.ts). */
   const publicSite = (now = Date.now()) => {
     const recs = new Map<string, Recording>(listRecordings(o.out, sched, o.tz).map((r) => [r.slug, r]));
@@ -567,7 +568,7 @@ export function createApp(o: ServeOpts, entry: string): App {
       const jobs = jobsBy.get(m.id) ?? [], rec = recordingOf(jobs, recs);
       // Gone from its feed before it happened: nothing to show (a recording keeps it).
       if (m.removedAt && !rec?.video && Date.parse(m.start) > now - OVER_AFTER_MS) continue;
-      entries.push({ m, p: toPublicMeeting(m, jobs, rec, now, docs.copiesOf(m.id), sourceOf(m)), rec, jobs });
+      entries.push({ m, p: toPublicMeeting(m, jobs, rec, now, docs.copiesOf(m.id), sourceOf(m), colorOf(m)), rec, jobs });
     }
     // A shared link may carry a capture's folder name (slug-2, or an old recording link).
     const find = (slug: string) => entries.find((e) => e.m.slug === slug)
@@ -810,7 +811,9 @@ export function createApp(o: ServeOpts, entry: string): App {
           }, site.now);
           const bodies = [...new Set(all.map((p) => p.body).filter((b): b is string => !!b))].sort((a, b) => a.localeCompare(b));
           const sources = [...new Set(all.map((p) => p.source).filter((b): b is string => !!b))].sort((a, b) => a.localeCompare(b));
-          return send(res, 200, { ...r, bodies, sources });
+          const sourceColors: Record<string, string> = {};
+          for (const p of all) if (p.source && p.sourceColor) sourceColors[p.source] = p.sourceColor;
+          return send(res, 200, { ...r, bodies, sources, sourceColors });
         }
         const e = site.find(rp[2]);
         if (!e) return send(res, 404, { error: "no such meeting" });

@@ -10,7 +10,7 @@ import type { AddressInfo } from "node:net";
 import path from "node:path";
 import { describe, it } from "node:test";
 import { feedContext } from "../src/feeds/context.js";
-import { primegov, toMeetings, type PgMeeting } from "../src/feeds/parsers/primegov.js";
+import { attachTeams, parseTeamsLinks, primegov, toMeetings, type PgMeeting } from "../src/feeds/parsers/primegov.js";
 import type { HasAfter } from "./helpers.js";
 
 const FIX = path.resolve("test/fixtures/feeds/primegov");
@@ -97,5 +97,33 @@ describe("primegov", () => {
     const { base } = await portal(t, upcoming);
     const c = primegov.validate({ baseUrl: base + "/nope/", allowOtherHost: true });
     await assert.rejects(primegov.fetch({ ...c, baseUrl: base + "/nope/" }, feedContext({ tz: TZ, label: "t" })), /HTTP 404/);
+  });
+
+  it("Teams links from the municipality's Meeting Links list", () => {
+    const entries = parseTeamsLinks(readFileSync(path.join(FIX, "saanich-links.html"), "utf8"));
+    assert.deepEqual(entries.map((e) => [e.names, e.date, new URL(e.url).pathname.split("/")[1]]), [
+      [["Committee of the Whole", "Special Council"], "2026-11-30", "meet"],
+      [["Advisory Design Panel"], "2026-12-02", "l"],
+    ]);
+    const ms = toMeetings(upcoming, { baseUrl: SAANICH, tz: TZ, titles: [] });
+    assert.equal(attachTeams(ms, entries, TZ), 3);
+    const join = (id: string) => ms.find((m) => m.externalId === id)!.documents!.filter((d) => d.type === "Join link");
+    // One entry for two names: both meetings of that day get it.
+    assert.equal(join("921").length, 1);
+    assert.equal(join("921")[0].title, "Join on Microsoft Teams");
+    assert.equal(join("405").length, 1);
+    assert.equal(join("905").length, 1);
+    assert.ok(ms.every((m) => !m.link), "Teams is not a capture platform: never the link");
+    assert.equal(attachTeams(ms, entries, TZ), 0, "twice adds nothing");
+    assert.deepEqual(parseTeamsLinks("<p>nothing</p>"), []);
+  });
+
+  it("fetch: the links page is read when configured, and a failing page doesn't fail the feed", async (t) => {
+    const { base } = await portal(t, upcoming);
+    const c = primegov.validate({ baseUrl: base + "/public/portal", allowOtherHost: true, timezone: TZ, daysBack: 0, linksUrl: base + "/nolinks" });
+    const ctx = feedContext({ tz: "UTC", now: new Date("2026-11-26T00:00:00Z"), label: "t" });
+    const r = await primegov.fetch(c, ctx);
+    assert.ok("meetings" in r && r.meetings.length === 3);
+    assert.ok(ctx.lines.some((l) => /meeting links page/.test(l)), ctx.lines.join("\n"));
   });
 });

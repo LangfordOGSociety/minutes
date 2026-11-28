@@ -28,6 +28,7 @@ ${PUBLIC_CSS}
 .hero .hsearch { padding: 0; margin: 0 0 14px; max-width: 560px; }
 .chips { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
 .chips .lab { color: var(--muted); font-size: 13px; margin-right: 2px; }
+.chip .dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 6px; }
 .chip { border-radius: 999px; padding: 6px 14px; font-size: 14px; }
 .chip[aria-pressed="true"] { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); font-weight: 600; }
 .home { display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: 20px; align-items: start; }
@@ -106,15 +107,17 @@ function setMuni(v) {
   drawChips();
   loadUpcoming(); loadPast(false); loadUpdates();
 }
-var sourceList = [];
+var sourceList = [], sourceColors = {};
 function drawChips() {
   var box = document.getElementById("chips");
   if (sourceList.length < 2) { box.hidden = true; return; }
   box.hidden = false;
   var kids = [el("span", { "class": "lab", text: "Municipality" })];
   [""].concat(sourceList).forEach(function (s) {
-    kids.push(el("button", { type: "button", "class": "chip", "aria-pressed": String(muni === s), text: s || "All",
-      on: { click: function () { setMuni(s); } } }));
+    var b = el("button", { type: "button", "class": "chip", "aria-pressed": String(muni === s),
+      on: { click: function () { setMuni(s); } } }, s && sourceColors[s] ? el("span", { "class": "dot" }) : null, s || "All");
+    if (s && sourceColors[s]) b.firstChild.style.background = sourceColors[s];
+    kids.push(b);
   });
   fill.apply(null, [box].concat(kids));
 }
@@ -144,7 +147,7 @@ function loadPast(more) {
   var box = document.getElementById("past"), btn = document.getElementById("more");
   var offset = more ? shown : 0;
   return api("GET", "/api/meetings?" + pastQuery(offset)).then(function (d) {
-    if (!haveSources && d.sources) { haveSources = true; sourceList = d.sources; drawChips(); }
+    if (!haveSources && d.sources) { haveSources = true; sourceList = d.sources; sourceColors = d.sourceColors || {}; drawChips(); }
     if (!haveBodies && d.bodies.length) {
       haveBodies = true;
       var sel = document.getElementById("f-body");

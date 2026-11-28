@@ -398,6 +398,20 @@ captures).
   documents from documentList (HTML /Portal/Meeting?meetingTemplateId=,
   PDF /Public/CompiledDocument?...&compileOutputType=1) + videoUrl; link
   from zoomMeetingLink (isZoomMeeting) or an upcoming HTML agenda.
+  Saanich meets on MS Teams and the links are NOT in the agendas: the
+  `primegov` config's `linksUrl` (the city's schedule-agendas-minutes page,
+  "Meeting Links" list: bold name(s), dated line, teams.microsoft.com
+  href) is matched by local day + name (or the day's only meeting) and
+  listed as a document "Join on Microsoft Teams" (type "Join link", never
+  the meeting's `link`: Teams is not a capture platform; never mirrored,
+  `docs.ts`). A failing page is logged, not a feed failure. `site.ts joinOf` turns that
+  document into the public `join` ({platform "Microsoft Teams", id or null,
+  url}) while the meeting is upcoming/live (https teams.microsoft.com /
+  teams.live.com only) and leaves it out of the public `documents`.
+  Feeds have an optional badge `color` (migration 16, `#rrggbb`, set on
+  /admin/feeds): public meetings carry `sourceColor`, the listing
+  `sourceColors` by name; the `.muni` badge and the home chips use it, with
+  black or white text by brightness (`muniBadge` in common.ts).
   Blank types/titles = every meeting, in every parser.
   streamUrl (migration 9, meetings.stream_url): the public live/recorded
   stream page, separate from the join link. eScribe: VideoStream.aspx

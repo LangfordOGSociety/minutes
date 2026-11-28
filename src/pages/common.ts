@@ -379,12 +379,23 @@ function stagePill(stage) {
   return el("span", { "class": "pill s-" + s[1], text: s[0] });
 }
 
+// A municipality's badge in the color its feed was given (readable text: black or white by brightness).
+function inkFor(hex) {
+  var n = parseInt(hex.slice(1), 16), r = n >> 16, g = (n >> 8) & 255, b = n & 255;
+  return (r * 299 + g * 587 + b * 114) / 1000 > 150 ? "#111" : "#fff";
+}
+function muniBadge(m) {
+  var s = el("span", { "class": "muni", text: m.source });
+  if (m.sourceColor && /^#[0-9a-f]{6}$/i.test(m.sourceColor)) { s.style.background = m.sourceColor; s.style.color = inkFor(m.sourceColor); }
+  return s;
+}
+
 function meetingCard(m) {
   var sub = [whenOf(m.start), m.body && m.body !== m.title ? m.body : null, m.duration ? hms(m.duration) : null].filter(Boolean).join(" · ");
   return el("a", { "class": "mcard", href: "/m/" + encodeURIComponent(m.id) },
     m.poster ? el("img", { "class": "p", src: m.poster, alt: "", loading: "lazy", width: "128", height: "72" }) : null,
     el("div", { "class": "b" },
-      el("div", { "class": "mh" }, m.source ? el("span", { "class": "muni", text: m.source }) : null, stagePill(m.stage)),
+      el("div", { "class": "mh" }, m.source ? muniBadge(m) : null, stagePill(m.stage)),
       el("div", { "class": "t", text: m.title }), el("div", { "class": "s", text: sub })));
 }
 

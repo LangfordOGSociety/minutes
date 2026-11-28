@@ -66,8 +66,8 @@ function gone(msg) {
 function joinBox(m) {
   if (!m.join) return null;
   return el("div", { "class": "joinbox" }, el("span", { "class": "l", text: "Join on " + m.join.platform + ": " }),
-    el("a", { href: m.join.url, target: "_blank", rel: "noopener", text: m.join.url.replace("https://", "") }),
-    el("span", { "class": "hint", text: " Meeting ID " + m.join.id + ". Zoom asks for a passcode if the meeting has one." }));
+    el("a", { href: m.join.url, target: "_blank", rel: "noopener", text: m.join.platform === "Zoom" ? m.join.url.replace("https://", "") : "Open the meeting" }),
+    el("span", { "class": "hint", text: (m.join.id ? " Meeting ID " + m.join.id + "." : "") + (m.join.platform === "Zoom" ? " Zoom asks for a passcode if the meeting has one." : "") }));
 }
 
 function cityLinks(m) {

@@ -10,7 +10,7 @@ import type { Job } from "../src/jobs.js";
 import type { Meeting } from "../src/meetings.js";
 import type { Recording } from "../src/recordings.js";
 import { embedAncestors } from "../src/net.js";
-import { isUpcoming, stageOf, visible, type PublicMeeting } from "../src/site.js";
+import { isUpcoming, joinOf, toPublicMeeting, stageOf, visible, type PublicMeeting } from "../src/site.js";
 import { tmpDir, type HasAfter } from "./helpers.js";
 import { fakeSource, fixtures } from "./fixtures.js";
 import { Client, startApp } from "./server.js";
@@ -105,7 +105,7 @@ describe("public meetings API", () => {
     up = (await pub.get("/api/meetings?scope=upcoming")).json;
     assert.deepEqual(up.meetings.map((m: { title: string }) => m.title), ["Council Meeting", "Called off"]);
     const c = up.meetings[0];
-    assert.deepEqual(Object.keys(c).sort(), ["agendaUrl", "body", "cancelled", "documents", "duration", "end", "hasTranscript", "hasVideo", "id", "join", "live", "pageUrl", "poster", "source", "stage", "start", "streamUrl", "title"]);
+    assert.deepEqual(Object.keys(c).sort(), ["agendaUrl", "body", "cancelled", "documents", "duration", "end", "hasTranscript", "hasVideo", "id", "join", "live", "pageUrl", "poster", "source", "sourceColor", "stage", "start", "streamUrl", "title"]);
     assert.deepEqual([c.stage, c.body, c.agendaUrl, c.streamUrl], ["upcoming", "Council", "https://city.example/agenda/1", "https://city.example/video/1"]);
     assert.deepEqual(c.documents, [{ title: "Agenda", type: "Agenda", url: "https://city.example/agenda/1", copy: null }]);   // not the javascript: URL
     assert.equal(up.meetings[1].stage, "cancelled");
@@ -132,6 +132,12 @@ describe("public meetings API", () => {
     for (const m of ups.filter((x) => x.join)) assert.deepEqual(m.join, { platform: "Zoom", id: "870 9316 3922", url: "https://zoom.us/j/87093163922" });
     assert.ok(ups.some((m) => m.join), "an upcoming feed meeting with a link has a join link");
     assert.doesNotMatch(JSON.stringify(ups), /87093163922\?|\?pwd/);
+    // The feed's badge color reaches the listing, per meeting and by municipality.
+    const fid = (await admin.get("/api/admin/feeds")).json.feeds[0].id as string;
+    assert.equal((await admin.req("PATCH", `/api/admin/feeds/${fid}`, { color: "#336699" })).status, 200);
+    const colored = (await pub.get("/api/meetings?scope=upcoming")).json;
+    assert.ok(colored.meetings.filter((m: { source: string | null }) => m.source).every((m: { sourceColor: string }) => m.sourceColor === "#336699"));
+    assert.deepEqual(Object.values(colored.sourceColors), ["#336699"]);
   });
 
   it("the meeting's page data, its history, and /m/:slug", async (t) => {
@@ -315,5 +321,22 @@ describe("permalinks, embeds and oEmbed", () => {
     const page = await c.get("/m/council-a");
     assert.match(page.text, /<link rel="canonical" href="https:\/\/minutes\.example\.org\/m\/council-a">/);
     assert.doesNotMatch(page.text, /127\.0\.0\.1/);
+  });
+
+  it("Teams: a feed's join-link document becomes the join box, only before and during the meeting", () => {
+    const base = { feedId: 1, link: "", slug: "cotw", title: "COTW", start: "2026-11-30T18:30:00Z", status: "scheduled", visibility: "public" } as unknown as Meeting;
+    const doc = (url: string, type = "Join link") => ({ title: "Join on Microsoft Teams", type, url });
+    const m = { ...base, documents: [doc("https://teams.microsoft.com/meet/287377366632373?p=abc"), { title: "Agenda", type: "Agenda", url: "https://city.example/a" }] } as Meeting;
+    assert.deepEqual(joinOf(m, "upcoming"), { platform: "Microsoft Teams", id: "287 377 366 632 373", url: "https://teams.microsoft.com/meet/287377366632373?p=abc" });
+    assert.equal(joinOf(m, "ready"), null);
+    const long = { ...base, documents: [doc("https://teams.microsoft.com/l/meetup-join/19%3ameeting_x%40thread.v2/0?context=%7b%7d")] } as Meeting;
+    assert.equal(joinOf(long, "live")?.id, null);
+    // Not Teams, not https, not typed as a join link: nothing.
+    for (const d of [doc("https://evil.example/meet/123456789"), doc("http://teams.microsoft.com/meet/1"), doc("https://teams.microsoft.com/meet/1", "Agenda")]) {
+      assert.equal(joinOf({ ...base, documents: [d] } as Meeting, "upcoming"), null);
+    }
+    // Hand-entered meetings (no feed) never show one, and the document isn't listed as a plain document.
+    assert.equal(joinOf({ ...m, feedId: undefined } as Meeting, "upcoming"), null);
+    assert.deepEqual(toPublicMeeting(m, [], undefined, Date.parse("2026-11-29T00:00:00Z")).documents.map((d) => d.title), ["Agenda"]);
   });
 });

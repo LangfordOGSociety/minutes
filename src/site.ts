@@ -28,8 +28,10 @@ export const STITCH_WAIT_MS = 6 * 3_600_000;
 
 export interface PublicDoc { title: string; type: string | null; url: string; copy: string | null }
 
-/** How to join a meeting that is about to happen or happening, from its Zoom meeting number only: never the passcode (Zoom asks for that itself). */
-export interface PublicJoin { platform: string; id: string; url: string }
+/** How to join a meeting that is about to happen or happening. Zoom: from the meeting number only, never the passcode (Zoom asks for that itself).
+ *  Microsoft Teams: the join link the municipality itself publishes on its public page (a feed's "Join link" document); `id` is null when
+ *  the link has no number. */
+export interface PublicJoin { platform: string; id: string | null; url: string }
 
 export interface PublicMeeting {
   id: string;                    // the slug
@@ -44,6 +46,8 @@ export interface PublicMeeting {
   streamUrl: string | null;      // the city's own live/recorded video page
   /** Which municipality or feed it comes from (the feed's name, e.g. "Langford Council"); null for a meeting entered by hand. */
   source: string | null;
+  /** The feed's badge color ("#rrggbb"), if an admin chose one. */
+  sourceColor: string | null;
   documents: PublicDoc[];
   join: PublicJoin | null;
   hasVideo: boolean;
@@ -104,7 +108,12 @@ export function isUpcoming(p: PublicMeeting, now: number): boolean {
 
 /** A Zoom join link for an upcoming or live meeting that a feed (or its documents) published; hand-entered links stay private. */
 export function joinOf(m: Meeting, stage: Stage): PublicJoin | null {
-  if (!m.link || !m.feedId || (stage !== "upcoming" && stage !== "live")) return null;
+  if (!m.feedId || (stage !== "upcoming" && stage !== "live")) return null;
+  return zoomJoin(m) ?? teamsJoin(m);
+}
+
+function zoomJoin(m: Meeting): PublicJoin | null {
+  if (!m.link) return null;
   const p = platformFor(m.link);
   if (!p || p.id !== "zoom") return null;
   const url = p.publicUrl?.(m.link), id = p.publicId(m.link);
@@ -113,14 +122,30 @@ export function joinOf(m: Meeting, stage: Stage): PublicJoin | null {
   return { platform: p.label, id: spaced, url };
 }
 
-export function toPublicMeeting(m: Meeting, jobs: Job[], rec: Recording | undefined, now: number, copies?: Map<string, string>, source?: string | null): PublicMeeting {
+/** Document type a feed gives a meeting's join link on a platform minutes can't join (Teams). */
+export const JOIN_DOC = "Join link";
+
+function teamsJoin(m: Meeting): PublicJoin | null {
+  for (const d of m.documents ?? []) {
+    if (d.type !== JOIN_DOC) continue;
+    try {
+      const u = new URL(d.url);
+      if (u.protocol !== "https:" || !/^(teams\.microsoft\.com|teams\.live\.com)$/i.test(u.hostname)) continue;
+      const id = /^\/meet\/(\d{9,20})$/.exec(u.pathname)?.[1];
+      return { platform: "Microsoft Teams", id: id ? id.replace(/(\d{3})(?=\d)/g, "$1 ") : null, url: u.toString() };
+    } catch { /* not a URL */ }
+  }
+  return null;
+}
+
+export function toPublicMeeting(m: Meeting, jobs: Job[], rec: Recording | undefined, now: number, copies?: Map<string, string>, source?: string | null, sourceColor?: string | null): PublicMeeting {
   const stage = stageOf(m, jobs, rec, now);
   return {
     id: m.slug, title: m.title, body: m.body ?? null, start: m.start, end: m.endEst ?? null, stage,
     cancelled: m.status === "cancelled",
     agendaUrl: httpUrl(m.agendaUrl), pageUrl: httpUrl(m.pageUrl), streamUrl: httpUrl(m.streamUrl),
-    documents: (m.documents ?? []).flatMap((d) => { const url = httpUrl(d.url); return url ? [{ title: d.title, type: d.type ?? null, url, copy: copies?.get(d.url) ?? null }] : []; }),
-    source: source ?? null,
+    documents: (m.documents ?? []).flatMap((d) => { if (d.type === JOIN_DOC) return []; const url = httpUrl(d.url); return url ? [{ title: d.title, type: d.type ?? null, url, copy: copies?.get(d.url) ?? null }] : []; }),
+    source: source ?? null, sourceColor: source ? sourceColor ?? null : null,
     join: joinOf(m, stage),
     hasVideo: !!rec?.video && stage !== "cancelled", hasTranscript: !!rec?.files.transcript && stage !== "cancelled",
     poster: rec?.public && rec.files.thumb && stage !== "cancelled" ? `/media/${encodeURIComponent(rec.slug)}/${encodeURIComponent(rec.files.thumb)}` : null,
