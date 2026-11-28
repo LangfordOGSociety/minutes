@@ -64,6 +64,7 @@ video { width: 100%; max-height: 70vh; background: #000; border-radius: 8px; dis
 .player-title { display: flex; justify-content: space-between; gap: 10px; align-items: baseline; flex-wrap: wrap; margin-bottom: 10px; }
 .player-title h3 { margin: 0; font-size: 16px; overflow-wrap: anywhere; }
 .chapters { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+select.quality { margin-top: 8px; font-size: 13px; max-width: 100%; }
 .chapters button { font-size: 13px; }
 pre { background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 10px; font-size: 12px; line-height: 1.4;
   max-height: 260px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; margin: 10px 0 0; }
@@ -194,9 +195,33 @@ function transcriptNote(r) {
 
 // o (optional): { bare: no title or download links, chapters: false hides
 // the chapter buttons, transcript: false leaves the panel out }.
+// Quality: the original and the smaller copies the server made (r.renditions, biggest first). "auto" picks one from the
+// screen and the connection at the start, and steps down if playback keeps stalling. The choice is remembered.
+function wrap_(kids) { var d = document.createDocumentFragment(); kids.forEach(function (k) { d.appendChild(k); }); return d; }
+function qualityOptions(r, base) {
+  var opts = [{ key: "orig", label: "Original", height: 100000, url: mediaUrl(base, r.slug, r.video) }];
+  (r.renditions || []).forEach(function (x) { opts.push({ key: String(x.height), label: x.height + "p", height: x.height, url: mediaUrl(base, r.slug, x.file) }); });
+  return opts;
+}
+function autoQuality(opts) {
+  var c = navigator.connection || {};
+  var low = c.saveData || /^(slow-2g|2g)$/.test(c.effectiveType || "");
+  if (low) return opts[opts.length - 1];
+  var want = Math.min(window.innerWidth, 960) * 9 / 16 * Math.min(window.devicePixelRatio || 1, 2);
+  if (/^3g$/.test(c.effectiveType || "")) want = Math.min(want, 400);
+  var best = opts[0];
+  opts.forEach(function (x) { if (x.height >= want && x.height < best.height) best = x; });   // the smallest that is still sharp enough
+  return best;
+}
+function qualityPref() { try { return localStorage.getItem("minutes.quality") || "auto"; } catch (e) { return "auto"; } }
+function saveQualityPref(k) { try { localStorage.setItem("minutes.quality", k); } catch (e) { /* private window */ } }
+
 function play(r, base, box, extraLinks, o) {
   o = o || {};
-  var src = mediaUrl(base, r.slug, r.video), f = r.files || {};
+  var f = r.files || {};
+  var opts = qualityOptions(r, base), pref = qualityPref();
+  var cur = opts.filter(function (x) { return x.key === pref; })[0] || (opts.length > 1 ? autoQuality(opts) : opts[0]);
+  var src = cur.url;
   var v = el("video", { controls: "", preload: "metadata", src: src, crossorigin: "anonymous", poster: f.thumb ? mediaUrl(base, r.slug, f.thumb) : null });
   // Subtitles: the Whisper transcript on by default; Zoom's own captions as
   // a second, optional track (reference only).
@@ -212,10 +237,44 @@ function play(r, base, box, extraLinks, o) {
     if (f[x[0]]) { links.appendChild(document.createTextNode(" · ")); links.appendChild(el("a", { href: mediaUrl(base, r.slug, f[x[0]]), download: f[x[0]], text: x[1] })); }
   });
   (extraLinks || []).forEach(function (a) { links.appendChild(document.createTextNode(" · ")); links.appendChild(a); });
+  // Switching keeps the place, the speed and whether it was playing.
+  function useQuality(q) {
+    if (q.url === cur.url) return;
+    var t = v.currentTime, was = !v.paused, rate = v.playbackRate;
+    cur = q;
+    v.src = q.url;
+    v.addEventListener("loadedmetadata", function () { v.currentTime = t; v.playbackRate = rate; if (was) v.play(); }, { once: true });
+    if (qsel) qsel.value = pickKey(); 
+  }
+  var auto = pref === "auto" || !opts.some(function (x) { return x.key === pref; });
+  function pickKey() { return auto ? "auto" : cur.key; }
+  var qsel = null;
+  if (opts.length > 1) {
+    qsel = el("select", { "aria-label": "Video quality", "class": "quality" }, el("option", { value: "auto", text: "Quality: Auto" }),
+      wrap_(opts.map(function (x) { return el("option", { value: x.key, text: x.label }); })));
+    qsel.value = pickKey();
+    qsel.addEventListener("change", function () {
+      saveQualityPref(qsel.value);
+      auto = qsel.value === "auto";
+      useQuality(auto ? autoQuality(opts) : opts.filter(function (x) { return x.key === qsel.value; })[0]);
+      qsel.value = pickKey();
+    });
+    // Auto steps down one size after repeated stalls (not the first buffering, and not while paused or seeking).
+    var stalls = [], started = false;
+    v.addEventListener("playing", function () { started = true; });
+    v.addEventListener("waiting", function () {
+      if (!auto || !started || v.seeking) return;
+      var now = Date.now();
+      stalls = stalls.filter(function (x) { return now - x < 30000; }); stalls.push(now);
+      if (stalls.length < 3) return;
+      var i = opts.indexOf(cur);
+      if (i >= 0 && i < opts.length - 1) { stalls = []; useQuality(opts[i + 1]); }
+    });
+  }
   var tpanel = el("div", { "class": "transcript" });
   fill(box,
     o.bare ? null : el("div", { "class": "player-title" }, el("h3", { text: r.title || r.slug }), links),
-    v, showChapters ? chapters : null, o.transcript === false ? null : tpanel);
+    v, qsel, showChapters ? chapters : null, o.transcript === false ? null : tpanel);
   box.hidden = false;
   if (o.transcript === false) return v;
   if (f.transcript) loadTranscript(mediaUrl(base, r.slug, f.transcript), v, tpanel);

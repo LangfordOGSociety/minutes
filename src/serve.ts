@@ -121,6 +121,7 @@ import { OVER_AFTER_MS, PUBLIC_KINDS, filterMeetings, publicChange, recordingOf,
 import type { Recording } from "./recordings.js";
 import { zonedTime } from "./feeds/time.js";
 import { platformFor } from "./platforms/registry.js";
+import { Renditions } from "./renditions.js";
 import { FILE_RE, listRecordings, publicFiles, toPublic } from "./recordings.js";
 import { SessionKeeper, type KeeperOpts } from "./session.js";
 import { API_DOCS_PAGE, openApi } from "./apidocs.js";
@@ -155,6 +156,8 @@ export interface ServeOpts extends Omit<SchedulerOpts, "entry"> {
   tokenDownloadBps?: number;
   /** Make poster images for recordings that have a video and none yet (thumbs.ts). Default on; tests turn it off. */
   thumbnails?: boolean;
+  /** Heights of the smaller copies made of each recording for slow connections, best first (default 720, 480, 360; `false` = none; renditions.ts). */
+  renditions?: number[] | false;
   /** How long the recordings list and the public model are kept before being rebuilt, in ms (default 5000; 0 = rebuild every time,
    *  which the tests use). Any write request, and any change to a meeting or a capture, rebuilds them at once. */
   snapshotMs?: number;
@@ -601,6 +604,23 @@ export function createApp(o: ServeOpts, entry: string): App {
   thumbTimer.unref();
   if (o.thumbnails !== false) setImmediate(() => void syncThumbs());
 
+  /** Smaller copies for slow connections, one at a time and never while a capture runs or is about to (renditions.ts). */
+  const renditions = new Renditions(o.renditions === false ? [] : o.renditions);
+  const captureBusy = () => {
+    const now = Date.now();
+    return sched.list().some((j) => j.status === "running" || j.status === "stopping" || j.status === "queued" ||
+      (j.status === "scheduled" && Date.parse(j.start) - now < 30 * 60_000));
+  };
+  const syncRenditions = (): Promise<number> => {
+    if (o.renditions === false || closed || captureBusy()) return Promise.resolve(0);
+    const todo = listRecordings(o.out, sched, o.tz).filter((r) => r.video && r.public)
+      .map((r) => ({ slug: r.slug, video: r.video!, dir: path.join(o.out, r.slug), duration: r.duration, have: r.renditions.map((x) => x.height) }));
+    return renditions.run(todo, () => closed || captureBusy()).then((n) => { if (n) epoch++; return n; }, (e) => { log.warn("making smaller copies failed", e); return 0; });
+  };
+  const renditionTimer = setInterval(() => void syncRenditions(), 5 * 60_000);
+  renditionTimer.unref();
+  if (o.renditions !== false) setTimeout(() => void syncRenditions(), 30_000).unref();
+
   /** The feed a meeting came from, by its name: what the public pages call its municipality. */
   const sourceOf = (m: Meeting): string | null => (m.feedId ? feeds.get(m.feedId)?.name ?? null : null);
   /** Every meeting the public may see, with what became of it (see site.ts). Read-only: shared by every request until it is rebuilt. */
@@ -743,10 +763,11 @@ export function createApp(o: ServeOpts, entry: string): App {
           const rec = e?.rec?.public ? toPublic(e.rec) : null;
           if (!e || !e.rec || !rec) return send(res, 404, { error: "no recording for that meeting" });
           const listed = ([["video", rec.video], ["subtitles", rec.files.vtt], ["subtitles-srt", rec.files.srt], ["transcript-text", rec.files.txt],
-            ["transcript-json", rec.files.transcript], ["zoom-captions", rec.files.zoomCaptions], ["thumbnail", rec.files.thumb]] as [string, string | null | undefined][])
+            ["transcript-json", rec.files.transcript], ["zoom-captions", rec.files.zoomCaptions], ["thumbnail", rec.files.thumb],
+            ...rec.renditions.map((x) => ["video-smaller", x.file] as [string, string])] as [string, string | null | undefined][])
             .filter((x): x is [string, string] => !!x[1]);
           if (seg.length === 3) {
-            return send(res, 200, listed.map(([kind, name]) => ({ name, kind, bytes: statSync(path.join(o.out, e.rec!.slug, name)).size,
+            return send(res, 200, listed.map(([kind, name]) => ({ name, kind, ...(kind === "video-smaller" ? { height: rec.renditions.find((x) => x.file === name)?.height } : {}), bytes: statSync(path.join(o.out, e.rec!.slug, name)).size,
               url: `/api/v1/meetings/${encodeURIComponent(e.m.slug)}/files/${encodeURIComponent(name)}` })));
           }
           // A download: needs a token with the download scope whose owner may still download.
@@ -1541,6 +1562,7 @@ export function createApp(o: ServeOpts, entry: string): App {
       if (emailOperator) setOperatorSink(null);
       clearInterval(searchTimer);
       clearInterval(thumbTimer);
+      clearInterval(renditionTimer);
       keeper.stop();
       backups?.stop();
       poller.stop();

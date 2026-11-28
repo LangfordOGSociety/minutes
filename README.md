@@ -299,6 +299,16 @@ default: `DOWNLOAD_MAX_BPS` for all API downloads together and
 and an admin can give one token its own cap. Playback (`/media`) is never
 throttled.
 
+**Streaming quality.** Besides the original recording, the server makes
+smaller copies (720p, 480p and 360p H.264, a fraction of the original's
+size) one at a time, at low priority, and never while a capture is running
+or about to start. The player on the meeting page and in embeds has a
+Quality menu: Auto (picks one from the screen size and connection, and
+steps down if playback keeps stalling), Original, or a size; the choice is
+remembered. `RENDITIONS=720,480` changes the sizes, `RENDITIONS=off`
+turns them off. The API lists them as `video-smaller` files. Why plain MP4
+and H.264 rather than HLS or newer codecs: `docs/streaming-quality.md`.
+
 **Permalinks and embedding.** Every public meeting has a permanent page,
 `/m/<slug>` (`?t=90` or `?t=1m30s` starts the video there), and
 `/embed/<slug>` is the video on its own for other sites' iframes, with

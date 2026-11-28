@@ -30,7 +30,7 @@ describe("public vs admin", () => {
     const r = await new Client(base).get("/api/recordings");
     assert.deepEqual(r.json.map((x: { slug: string }) => x.slug).sort(), ["council-a", "live-e"]);
     const a = r.json.find((x: { slug: string }) => x.slug === "council-a");
-    assert.deepEqual(Object.keys(a).sort(), ["active", "chapters", "duration", "files", "scheduledStart", "slug", "title", "transcript", "video", "videoBytes"]);
+    assert.deepEqual(Object.keys(a).sort(), ["active", "chapters", "duration", "files", "renditions", "scheduledStart", "slug", "title", "transcript", "video", "videoBytes"]);
     assert.equal(a.duration, 2760);
     assert.deepEqual(Object.keys(a.files).sort(), ["srt", "transcript", "txt", "vtt", "zoomCaptions"]);
     assert.equal(r.json.find((x: { slug: string }) => x.slug === "live-e").files.live, "live.json");

@@ -264,6 +264,16 @@ captures).
   are not retried for an hour). Used as the player's `poster`, og:image,
   JSON-LD thumbnailUrl, and listed by /api/v1/.../files as `thumbnail`. Meeting lists carry `poster` (a /media path) and the cards show it
   (lazy, 128 px; 88 px on phones).
+- `src/renditions.ts` (#86) smaller copies of each public recording:
+  `<slug>.720p.mp4`, `.480p`, `.360p` (H.264 + AAC progressive MP4,
+  30 fps, faststart), made one at a time at nice 19, never while a capture
+  runs or is within 30 min (`captureBusy` in serve.ts), by heights smaller
+  than the source; `RENDITIONS=720,480,360|off`. Found by name when a
+  folder is read (`Recording.renditions`, public, in `publicFiles`),
+  served by /media, listed by /api/v1 files as `video-smaller`. The
+  player's Quality menu (`play()` in common.ts: Auto / Original / sizes,
+  `localStorage` minutes.quality, Auto steps down after stalls) works in
+  embeds too. Why MP4 + H.264, not HLS or AV1: `docs/streaming-quality.md`.
 - `src/speakers.ts` speaker names added by hand. `<slug>/speaker-names.json`
   maps the transcriber's label ("Speaker 4", or a Zoom name) to a name;
   APPLIED WHEN SERVING (public /media, /admin/media and the API's file
