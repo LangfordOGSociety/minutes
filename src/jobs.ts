@@ -292,6 +292,24 @@ export class Scheduler {
     });
   }
 
+  /** Remove a meeting that was entered by hand, with its attempts that never made a recording. Refused while one is running
+   *  or when one finished (recordings are never deleted this way); the folders of cancelled/failed attempts are left on disk. */
+  deleteMeeting(id: string): void {
+    const m = this.meetings.get(id);
+    if (!m) throw new BadRequest("no such meeting", 404);
+    if (m.feedId) throw new BadRequest("this meeting comes from a feed, which would add it again: hide it instead", 409);
+    const mine = this.jobs.filter((j) => j.meetingRef === id);
+    if (mine.some((j) => j.status === "running" || j.status === "stopping" || this.launching.has(j.id))) throw new BadRequest("a capture of this meeting is running: stop it first", 409);
+    if (mine.some((j) => j.status === "done")) throw new BadRequest("this meeting has a recording: hide it instead", 409);
+    tx(this.db, () => {
+      for (const j of mine) this.db.prepare("DELETE FROM jobs WHERE id = ?").run(j.id);
+      this.db.prepare("DELETE FROM meeting_changes WHERE meeting_id = ?").run(id);
+      this.meetings.delete(id);
+    });
+    this.jobs = this.jobs.filter((j) => j.meetingRef !== id);
+    this.writeActive();
+  }
+
   /** Another attempt at the same meeting, e.g. after a failed or stopped
    *  one. Starts at the meeting's time, or now if that has passed; gets its
    *  own folder (<meeting slug>-2, -3, ...) so nothing is overwritten. */

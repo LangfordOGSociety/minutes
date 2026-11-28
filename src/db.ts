@@ -305,6 +305,8 @@ const MIGRATIONS: string[] = [
      UNIQUE (meeting_id, url)
    );`,
   `ALTER TABLE feeds ADD COLUMN color TEXT;`,
+  // 17: fields an admin edited by hand on a feed's meeting (JSON array of names): the feed no longer overwrites them
+  `ALTER TABLE meetings ADD COLUMN edited TEXT;`,
 ];
 
 export function openDb(file: string): DB {

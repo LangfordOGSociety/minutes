@@ -339,4 +339,52 @@ describe("permalinks, embeds and oEmbed", () => {
     assert.equal(joinOf({ ...m, feedId: undefined } as Meeting, "upcoming"), null);
     assert.deepEqual(toPublicMeeting(m, [], undefined, Date.parse("2026-11-29T00:00:00Z")).documents.map((d) => d.title), ["Agenda"]);
   });
+
+  it("admins edit and delete a meeting from its page; nobody else can", async (t) => {
+    const { app, admin, pub, mk, run, src } = await setup(t);
+    const hand = app.sched.meetings.create({ title: "By hand", platform: "zoom", link: "", start: at(48), slug: "by-hand" });
+    const url = `/api/admin/meetings/${hand.slug}`;
+    // Not for the public, and not for a signed-in non-admin.
+    assert.equal((await pub.req("PATCH", url, { title: "x" })).status, 401);
+    assert.equal((await pub.req("DELETE", url)).status, 401);
+    await app.accounts.create({ email: "u@example.com", role: "user", password: "user password 1" });
+    const user = new Client(pub.base);
+    await user.login("u@example.com", "user password 1");
+    assert.equal((await user.req("PATCH", url, { title: "x" })).status, 403);
+    assert.equal((await user.req("DELETE", url)).status, 403);
+
+    // Edit by slug: details, the start in the server's timezone, validated.
+    assert.equal((await admin.req("PATCH", url, { title: "" })).status, 400);
+    assert.equal((await admin.req("PATCH", url, { agendaUrl: "javascript:alert(1)" })).status, 400);
+    assert.equal((await admin.req("PATCH", url, { startLocal: "tomorrow" })).status, 400);
+    const r = await admin.req("PATCH", url, { title: "Renamed", body: "Parks", agendaUrl: "https://city.example/a", startLocal: "2027-01-12T16:30" });
+    assert.equal(r.status, 200);
+    const got = app.sched.meetings.get(hand.id)!;
+    assert.deepEqual([got.title, got.body, got.agendaUrl], ["Renamed", "Parks", "https://city.example/a"]);
+    assert.match(new Date(got.start).toISOString(), /^2027-01-1[23]T/);
+    assert.equal((await admin.req("PATCH", url, { body: "" })).status, 200);
+    assert.equal(app.sched.meetings.get(hand.id)!.body, undefined);
+    assert.ok((await admin.get(`/api/admin/audit?limit=20`)).text.includes("meeting.edit"));
+
+    // A feed's meeting: its start is the feed's; what is edited survives the next check.
+    const feed = await mk("auto");
+    src.state.meetings = [{ id: "a", title: "Council Meeting", body: "Council", start: at(72), link: ZOOM }];
+    await run(feed);
+    const fm = app.sched.meetings.list().find((m) => m.feedId)!;
+    assert.equal((await admin.req("PATCH", `/api/admin/meetings/${fm.slug}`, { startLocal: "2027-01-12T16:30" })).status, 409);
+    assert.equal((await admin.req("PATCH", `/api/admin/meetings/${fm.slug}`, { title: "Our title" })).status, 200);
+    src.state.meetings = [{ id: "a", title: "Council Meeting v2", body: "Council", start: at(72), link: ZOOM }];
+    await run(feed);
+    assert.equal(app.sched.meetings.get(fm.id)!.title, "Our title");
+    assert.deepEqual(app.sched.meetings.get(fm.id)!.edited, ["title"]);
+    // ...and it can't be deleted (the feed would add it again).
+    assert.equal((await admin.req("DELETE", `/api/admin/meetings/${fm.slug}`)).status, 409);
+
+    // Delete the hand-made one: gone, with its captures; the public page 404s.
+    assert.equal((await admin.req("DELETE", url)).status, 200);
+    assert.equal(app.sched.meetings.get(hand.id), undefined);
+    assert.equal((await pub.get("/api/meetings/by-hand")).status, 404);
+    assert.equal((await admin.req("DELETE", url)).status, 404);
+  });
 });
+

@@ -73,6 +73,7 @@
  *   GET    /api/admin/meetings?view=review|upcoming|recent
  *   POST   /api/admin/meetings/:id/approve | reject   the review queue
  *   POST   /api/admin/meetings/:id/merge {into} | split   dedup by hand
+ *   GET|PATCH|DELETE /api/admin/meetings/:id   (id or slug) edit details {title, body, agendaUrl, pageUrl, streamUrl, startLocal}; delete
  *   POST   /api/admin/meetings/:id/hide | show        pull a meeting (and its files) from the public site
  *   GET    /api/admin/meetings/:id/changes            its history
  *   GET    /api/admin/users          accounts
@@ -1264,8 +1265,56 @@ export function createApp(o: ServeOpts, entry: string): App {
               : all.filter((m) => Date.parse(m.start) > now - 3_600_000);
             return send(res, 200, list.map(adminMeeting));
           }
-          const m = id ? sched.meetings.get(id) : undefined;
+          // By id, or by the slug the public pages use (also a capture's folder name).
+          const m = id ? sched.meetings.get(id) ?? sched.meetings.bySlug(id)
+            ?? (() => { const j = sched.list().find((x) => x.slug === id); return j ? sched.meetings.get(j.meetingRef) : undefined; })() : undefined;
           if (!m) return send(res, 404, { error: "no such meeting" });
+          if (parts.length === 4 && read) return send(res, 200, { ...adminMeeting(m), edited: m.edited ?? [] });
+          if (parts.length === 4 && method === "DELETE") {
+            try { sched.deleteMeeting(m.id); } catch (e) { if (e instanceof BadRequest) return send(res, e.status, { error: e.message }); throw e; }
+            audit.record(actor, "meeting.delete", { type: "meeting", id: m.id, label: m.slug }, { title: m.title, start: m.start }, null);
+            return send(res, 200, { ok: true });
+          }
+          if (parts.length === 4 && method === "PATCH") {
+            const body = await jsonBody();
+            if (!body) return;
+            const text = (k: string, max: number, required = false): string | null | undefined => {
+              if (body[k] === undefined) return undefined;
+              const v = typeof body[k] === "string" ? (body[k] as string).trim() : null;
+              if (v === null || v.length > max) throw new BadRequest(`${k} must be text of at most ${max} characters`);
+              if (!v && required) throw new BadRequest(`${k} can't be empty`);
+              return v || null;
+            };
+            const url = (k: string): string | null | undefined => {
+              const v = text(k, 1000);
+              if (v && !/^https?:\/\/[^\s]+$/i.test(v)) throw new BadRequest(`${k} must be a web address (https://...)`);
+              return v;
+            };
+            const next = { title: text("title", 200, true), body: text("body", 100), agendaUrl: url("agendaUrl"), pageUrl: url("pageUrl"), streamUrl: url("streamUrl") };
+            let start: string | undefined;
+            if (body.startLocal !== undefined) {
+              if (m.feedId) throw new BadRequest("the start of a feed's meeting comes from the feed", 409);
+              const t = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})$/.exec(String(body.startLocal));
+              if (!t) throw new BadRequest("startLocal must look like 2026-11-24T16:30");
+              const d = zonedTime(o.tz, +t[1], +t[2], +t[3], +t[4], +t[5]);
+              if (Number.isNaN(d.getTime())) throw new BadRequest("startLocal isn't a date and time");
+              if (d.toISOString() !== m.start) start = d.toISOString();
+            }
+            const before: Record<string, unknown> = {}, after: Record<string, unknown> = {};
+            for (const [k, v] of Object.entries(next)) {
+              if (v === undefined || (v ?? null) === ((m as unknown as Record<string, unknown>)[k] ?? null)) continue;
+              before[k] = (m as unknown as Record<string, unknown>)[k] ?? null; after[k] = v;
+            }
+            if (start) { before.start = m.start; after.start = start; }
+            if (!Object.keys(after).length) return send(res, 200, { ...adminMeeting(m), edited: m.edited ?? [] });
+            if (start) sched.updateMeeting(m.id, { start });   // moves the captures that haven't launched
+            const cur = sched.meetings.get(m.id)!;
+            for (const [k, v] of Object.entries(next)) if (k in after) (cur as unknown as Record<string, unknown>)[k] = v ?? undefined;
+            if (cur.feedId) cur.edited = [...new Set([...(cur.edited ?? []), ...Object.keys(after).filter((k) => k !== "start")])];
+            sched.meetings.save(cur);
+            audit.record(actor, "meeting.edit", { type: "meeting", id: m.id, label: m.slug }, before, after);
+            return send(res, 200, { ...adminMeeting(cur), edited: cur.edited ?? [] });
+          }
           if (parts.length === 5 && sub === "changes" && read) return send(res, 200, sync.changes({ meetingId: m.id }));
           if (parts.length === 5 && method === "POST" && ["approve", "reject", "merge", "split", "hide", "show"].includes(sub)) {
             const body = await jsonBody();

@@ -39,6 +39,8 @@ export interface Meeting {
   lastSeenAt?: string;
   /** The documents its feed last listed (see DetectedMeeting.documents). */
   documents?: { title: string; type?: string; url: string }[];
+  /** Fields an admin set by hand (title, body, agendaUrl, pageUrl, streamUrl): the feed's sync leaves them alone. */
+  edited?: string[];
   createdAt: string;
   updatedAt: string;
 }
@@ -53,11 +55,11 @@ type Row = {
   platform: string; method: string | null; link: string; start: string; end_est: string | null;
   agenda_url: string | null; status: string; visibility: string; slug: string; created_at: string; updated_at: string;
   page_url: string | null; review: string | null; duplicate_of: string | null; removed_at: string | null; last_seen_at: string | null;
-  documents: string | null; stream_url: string | null;
+  documents: string | null; stream_url: string | null; edited: string | null;
 };
 
 const COLS = "id, feed_id, external_id, title, body, platform, method, link, start, end_est, agenda_url, status, visibility, slug, created_at, updated_at, " +
-  "page_url, review, duplicate_of, removed_at, last_seen_at, documents, stream_url";
+  "page_url, review, duplicate_of, removed_at, last_seen_at, documents, stream_url, edited";
 
 function toRow(m: Meeting): Row {
   return {
@@ -68,6 +70,7 @@ function toRow(m: Meeting): Row {
     page_url: m.pageUrl ?? null, review: m.review ?? null, duplicate_of: m.duplicateOf ?? null,
     removed_at: m.removedAt ?? null, last_seen_at: m.lastSeenAt ?? null,
     documents: m.documents ? JSON.stringify(m.documents) : null, stream_url: m.streamUrl ?? null,
+    edited: m.edited?.length ? JSON.stringify(m.edited) : null,
   };
 }
 
@@ -90,6 +93,7 @@ function fromRow(r: Row): Meeting {
   if (r.last_seen_at !== null) m.lastSeenAt = r.last_seen_at;
   if (r.documents !== null) { try { m.documents = JSON.parse(r.documents); } catch { /* ignore a bad row */ } }
   if (r.stream_url !== null) m.streamUrl = r.stream_url;
+  if (r.edited !== null) { try { m.edited = JSON.parse(r.edited); } catch { /* ignore a bad row */ } }
   return m;
 }
 
@@ -99,6 +103,15 @@ export class Meetings {
   get(id: string): Meeting | undefined {
     const r = this.db.prepare(`SELECT ${COLS} FROM meetings WHERE id = ?`).get(id) as Row | undefined;
     return r && fromRow(r);
+  }
+
+  bySlug(slug: string): Meeting | undefined {
+    const r = this.db.prepare(`SELECT ${COLS} FROM meetings WHERE slug = ?`).get(slug) as Row | undefined;
+    return r && fromRow(r);
+  }
+
+  delete(id: string): void {
+    this.db.prepare("DELETE FROM meetings WHERE id = ?").run(id);
   }
 
   list(): Meeting[] {

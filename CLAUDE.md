@@ -166,6 +166,15 @@ captures).
   (net.ts `embedAncestors`: `*` default, `none`, or origins), X-Frame-
   Options removed for it only; no sign-in, no admin calls. `/oembed?url=`
   (JSON, CORS *) for sites that support oEmbed.
+  Admin edit/delete from the meeting page (`#adminbox`, admins only; the
+  routes need `admin.manage` to change, `admin.view` to read):
+  `PATCH /api/admin/meetings/:id|slug` (title, body, three URLs, and
+  `startLocal` in the server tz for hand-made meetings only). On a feed's
+  meeting the edited field names go to `meetings.edited` (migration 17) and
+  `sync` no longer overwrites them. `DELETE` (`Scheduler.deleteMeeting`) is
+  refused for a feed's meeting (it would come back: hide it), while a
+  capture runs, or when a capture finished (recordings are never deleted
+  this way). Both audited (`meeting.edit`, `meeting.delete`).
   Admin override: `POST /api/admin/meetings/:id/hide|show` (page, listing
   and /media all 404 while hidden). Public types have no link/feed fields:
   keep it that way (test/site.test.ts greps the JSON).

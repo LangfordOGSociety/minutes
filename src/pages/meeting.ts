@@ -29,6 +29,13 @@ __HEAD__
 ${BASE_CSS}
 ${PUBLIC_CSS}
 #player[hidden], #livebox[hidden] { display: none; }
+.adminbox { border: 1px dashed var(--line, #8886); border-radius: 10px; padding: 10px 14px; }
+.adminbox h2 { font-size: 14px; margin: 0 0 8px; }
+.adminbox .btns { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.adminbox form { display: grid; gap: 6px; margin-top: 10px; max-width: 560px; }
+.adminbox label { font-size: 13px; color: var(--muted); }
+.adminbox input[type=text], .adminbox input[type=url], .adminbox input[type=datetime-local] { width: 100%; }
+.adminbox .err { color: var(--bad); font-size: 13px; }
 </style>
 </head>
 <body>
@@ -39,6 +46,7 @@ ${PUBLIC_CSS}
 <main>
   <p class="crumbs"><a href="/">&larr; All meetings</a> &middot; <a href="/search">Search transcripts</a></p>
   <section id="head"><div class="empty">Loading...</div></section>
+  <section id="adminbox" hidden></section>
   <section id="player" hidden></section>
   <section id="livebox" hidden></section>
   <section id="share" hidden></section>
@@ -211,8 +219,73 @@ function renderHistory(m) {
   box.hidden = false;
 }
 
+// Admins only: edit a meeting's details or delete it. The server checks the capability on every call;
+// this only decides whether to show the controls.
+var ADMIN = false, editing = false, adminKey = "";
+function localInput(iso) {
+  var p = {};
+  new Intl.DateTimeFormat("en-CA", { timeZone: TZ, hourCycle: "h23", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" })
+    .formatToParts(new Date(iso)).forEach(function (x) { p[x.type] = x.value; });
+  return p.year + "-" + p.month + "-" + p.day + "T" + p.hour + ":" + p.minute;
+}
+function renderAdmin(m) {
+  var box = document.getElementById("adminbox");
+  if (!ADMIN) { box.hidden = true; fill(box); return; }
+  var key = m.id + "|" + editing;
+  if (key === adminKey) return;
+  adminKey = key;
+  box.className = "adminbox";
+  box.hidden = false;
+  var msg = el("div", { "class": "err", role: "alert" });
+  var edit = el("button", { text: "Edit details", on: { click: function () { editing = true; renderAdmin(M); openForm(); } } });
+  var del = el("button", { "class": "danger", text: "Delete meeting", on: { click: function () {
+    if (!confirm("Delete " + m.title + "? This can't be undone.")) return;
+    api("DELETE", "/api/admin/meetings/" + encodeURIComponent(m.id)).then(function () { location.href = "/"; },
+      function (e) { msg.textContent = e.message; });
+  } } });
+  fill(box, el("h2", { text: "Admin" }), el("div", { "class": "btns" }, editing ? null : edit, editing ? null : del,
+    el("a", { href: "/admin#recordings", text: "Open in admin" })), el("div", { id: "editform" }), msg);
+  if (editing) openForm();
+}
+function openForm() {
+  var host = document.getElementById("editform");
+  var msg = host.parentNode.querySelector(".err");
+  api("GET", "/api/admin/meetings/" + encodeURIComponent(M.id)).then(function (d) {
+    var f = {};
+    function field(name, label, type, value, hint) {
+      var input = el("input", { type: type, id: "ed-" + name, value: value || "" });
+      f[name] = input;
+      return [el("label", { "for": "ed-" + name, text: label }), input, hint ? el("div", { "class": "hint", text: hint }) : null];
+    }
+    var kids = [].concat(
+      field("title", "Title", "text", d.title),
+      field("body", "Body or committee", "text", d.body),
+      d.feedId ? [el("div", { "class": "hint", text: "Starts at " + whenOf(d.start) + ". The start comes from " + d.feedName + " and can't be edited here." })]
+        : field("start", "Starts (" + TZ + ")", "datetime-local", localInput(d.start)),
+      field("agendaUrl", "Agenda address", "url", d.agendaUrl),
+      field("pageUrl", "Meeting page address", "url", d.pageUrl),
+      field("streamUrl", "Video page address", "url", d.streamUrl));
+    var save = el("button", { type: "submit", "class": "primary", text: "Save" });
+    var cancel = el("button", { type: "button", text: "Cancel", on: { click: function () { editing = false; adminKey = ""; renderAdmin(M); } } });
+    var form = wrap("form", {}, kids.filter(Boolean).concat([
+      d.feedId ? el("div", { "class": "hint", text: "Details you change stay as you set them when the feed is checked again." }) : null,
+      el("div", { "class": "btns" }, save, cancel)].filter(Boolean)));
+    form.addEventListener("submit", function (ev) {
+      ev.preventDefault();
+      var body = { title: f.title.value, body: f.body.value, agendaUrl: f.agendaUrl.value, pageUrl: f.pageUrl.value, streamUrl: f.streamUrl.value };
+      if (f.start && f.start.value) body.startLocal = f.start.value;
+      save.disabled = true; msg.textContent = "";
+      api("PATCH", "/api/admin/meetings/" + encodeURIComponent(M.id), body).then(function () {
+        editing = false; adminKey = ""; load();
+      }, function (e) { save.disabled = false; msg.textContent = e.message; });
+    });
+    fill(host, form);
+  }, function (e) { msg.textContent = e.message; });
+}
+
 function render(m) {
   M = m;
+  renderAdmin(m);
   renderHead(m); renderPlayer(m); renderLive(m); renderShare(m); renderLinks(m); renderHistory(m);
   schedule();
 }
@@ -247,6 +320,10 @@ function schedule() {
 }
 
 renderMe(document.getElementById("me"), false);
+api("GET", "/api/me").then(function (d) {
+  ADMIN = !!d.user && d.user.caps.indexOf("admin.view") >= 0;
+  if (M) renderAdmin(M);
+}, function () {});
 load();
 </script>
 </body>

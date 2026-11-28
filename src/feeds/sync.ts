@@ -190,7 +190,7 @@ export class Sync implements Applier {
       }
       const det: [string, unknown, unknown][] = [["title", ex.title, d.title], ["body", ex.body, d.body], ["agendaUrl", ex.agendaUrl, d.agendaUrl],
         ["pageUrl", ex.pageUrl, d.pageUrl], ["streamUrl", ex.streamUrl, d.streamUrl], ["end", ex.endEst, d.end?.toISOString()]];
-      const diff = det.filter(([, a, b]) => b !== undefined && (a ?? null) !== b);
+      const diff = det.filter(([name, a, b]) => b !== undefined && (a ?? null) !== b && !ex.edited?.includes(name));
       if (diff.length) {
         changes.push({ kind: "details_changed", meeting: ex, detected: d, action: "none", effect: "recorded",
           before: Object.fromEntries(diff.map(([k, a]) => [k, a ?? null])), after: Object.fromEntries(diff.map(([k, , b]) => [k, b])) });
