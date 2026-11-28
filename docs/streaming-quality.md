@@ -60,8 +60,10 @@ Reading it:
    segment files per recording. For a transcript-synced player with seeking and chapters, and
    viewers who mostly watch on one connection, a menu plus an automatic first choice is enough.
    If this is ever wanted, the copies here can be segmented without re-encoding.
-3. **The original stays as recorded** (and is the Video download link). Copies are only made
-   for sizes smaller than the original.
+3. **The original stays as recorded** (and is the Video download link). Copies are made for
+   sizes smaller than the original, and for the original's own size when its video rate is
+   more than 2.5 times what our copy would cost (`planHeights`): a city's 2.5 Mbps 720p
+   stream gets a 720p copy of about 0.35 Mbps, so the 720p viewer is not sent the original.
 4. **Made in the background, politely**: one ffmpeg at a time, `nice -n 19`, four threads, not
    while a capture runs or starts within 30 minutes, written under a temporary name and
    renamed, a failure retried after an hour. Existing recordings are backfilled the same way
@@ -77,6 +79,9 @@ Reading it:
 
 ## Not done, and why
 
+- **Re-encoding the originals.** Langford's are 0.9 Mbps already, and a newer codec saves only
+  10-15% for 3-7 times the CPU and a generation of quality. The raw capture parts are the real
+  duplicate (the MP4 is a stream copy of them): `KEEP_PARTS_DAYS` removes them (`src/parts.ts`).
 - **Audio-only version.** Easy to add the same way if there is a need.
 - **A storage budget.** The three copies add roughly 55% of the original's size (about 0.34 +
   0.14 + 0.07 Mbps against 1 Mbps); a 46 minute meeting adds about 190 MB. Check the volume if

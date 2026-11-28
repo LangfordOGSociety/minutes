@@ -121,6 +121,7 @@ import { OVER_AFTER_MS, PUBLIC_KINDS, filterMeetings, publicChange, recordingOf,
 import type { Recording } from "./recordings.js";
 import { zonedTime } from "./feeds/time.js";
 import { platformFor } from "./platforms/registry.js";
+import { pruneParts } from "./parts.js";
 import { Renditions } from "./renditions.js";
 import { FILE_RE, listRecordings, publicFiles, toPublic } from "./recordings.js";
 import { SessionKeeper, type KeeperOpts } from "./session.js";
@@ -158,6 +159,8 @@ export interface ServeOpts extends Omit<SchedulerOpts, "entry"> {
   thumbnails?: boolean;
   /** Heights of the smaller copies made of each recording for slow connections, best first (default 720, 480, 360; `false` = none; renditions.ts). */
   renditions?: number[] | false;
+  /** Delete a recording's raw capture parts once its MP4 is verified and this many days old (parts.ts). Unset = keep them. */
+  keepPartsDays?: number;
   /** How long the recordings list and the public model are kept before being rebuilt, in ms (default 5000; 0 = rebuild every time,
    *  which the tests use). Any write request, and any change to a meeting or a capture, rebuilds them at once. */
   snapshotMs?: number;
@@ -620,6 +623,22 @@ export function createApp(o: ServeOpts, entry: string): App {
   const renditionTimer = setInterval(() => void syncRenditions(), 5 * 60_000);
   renditionTimer.unref();
   if (o.renditions !== false) setTimeout(() => void syncRenditions(), 30_000).unref();
+
+  /** Raw parts of finished, verified recordings, when KEEP_PARTS_DAYS says to (parts.ts). One pass at a time, an hour apart. */
+  let pruning = false;
+  const syncParts = async () => {
+    if (!o.keepPartsDays || closed || pruning) return;
+    pruning = true;
+    try {
+      const gone = await pruneParts({ out: o.out, days: o.keepPartsDays, isBusy: (slug) => sched.activeSlugs().has(slug) || sched.jobBySlug(slug)?.status !== "done" });
+      if (gone.length) audit.record({ id: null, label: "system", ip: null }, "recording.parts.prune", { type: "recording", id: "", label: `${gone.length} recording(s)` }, null,
+        { recordings: gone.map(([s, b]) => `${s} (${Math.round(b / 1e6)} MB)`).join(", ").slice(0, 500) });
+    } catch (e) { log.warn("removing raw parts failed", e); }
+    finally { pruning = false; }
+  };
+  const partsTimer = setInterval(() => void syncParts(), 3_600_000);
+  partsTimer.unref();
+  if (o.keepPartsDays) setTimeout(() => void syncParts(), 120_000).unref();
 
   /** The feed a meeting came from, by its name: what the public pages call its municipality. */
   const sourceOf = (m: Meeting): string | null => (m.feedId ? feeds.get(m.feedId)?.name ?? null : null);
@@ -1563,6 +1582,7 @@ export function createApp(o: ServeOpts, entry: string): App {
       clearInterval(searchTimer);
       clearInterval(thumbTimer);
       clearInterval(renditionTimer);
+      clearInterval(partsTimer);
       keeper.stop();
       backups?.stop();
       poller.stop();

@@ -308,6 +308,13 @@ steps down if playback keeps stalling), Original, or a size; the choice is
 remembered. `RENDITIONS=720,480` changes the sizes, `RENDITIONS=off`
 turns them off. The API lists them as `video-smaller` files. Why plain MP4
 and H.264 rather than HLS or newer codecs: `docs/streaming-quality.md`.
+A source already at one of those sizes gets a copy at its own size when it
+is much heavier than ours would be (a city's 2.5 Mbps 720p stream becomes
+about 0.35 Mbps). Each recording also keeps its raw capture part
+(`part_001.mkv`) next to the stitched MP4: the same bytes twice. Set
+`KEEP_PARTS_DAYS=7` to delete the parts of finished recordings whose MP4 is
+that old and checked (same length as the stitch recorded, same size as the
+parts); off by default.
 
 **Permalinks and embedding.** Every public meeting has a permanent page,
 `/m/<slug>` (`?t=90` or `?t=1m30s` starts the video there), and
