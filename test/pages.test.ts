@@ -549,4 +549,29 @@ describe("redesigned pages in Chromium", { skip: skipReason() }, () => {
     await page.waitForSelector("#t-audit:not([hidden])");
     assert.match(await page.textContent("#sitenav") ?? "", /Admin/);
   });
+
+  it("meeting page: edit and delete controls for admins only", async () => {
+    const hand = app.sched.meetings.create({ title: "Parks hearing", platform: "zoom", link: "", start: new Date(Date.now() + 72 * 3_600_000).toISOString(), slug: "parks-hearing" });
+    // The public never sees the controls.
+    const anon = await (await browser.newContext()).newPage();
+    await anon.goto(base + "/m/parks-hearing");
+    await anon.waitForSelector(".mtitle");
+    assert.equal(await anon.isHidden("#adminbox"), true);
+    // An admin edits the title and start, then deletes it.
+    await app.accounts.create({ email: "editor@example.com", role: "admin", password: "editor password 1", verified: true });
+    const page = await signIn("editor@example.com", "editor password 1", "/m/parks-hearing");
+    await page.waitForSelector("#adminbox:not([hidden])");
+    await page.click("#adminbox button:has-text('Edit details')");
+    await page.waitForSelector("#ed-title");
+    assert.equal(await page.inputValue("#ed-title"), "Parks hearing");
+    await page.fill("#ed-title", "Parks and trails hearing");
+    await page.fill("#ed-body", "Parks");
+    await page.click("#adminbox button:has-text('Save')");
+    await page.waitForSelector(".mtitle:has-text('Parks and trails hearing')");
+    assert.equal(app.sched.meetings.get(hand.id)!.body, "Parks");
+    await page.click("#adminbox button:has-text('Delete meeting')");   // the dialog is accepted
+    await page.waitForURL(base + "/");
+    assert.equal(app.sched.meetings.get(hand.id), undefined);
+  });
 });
+
